@@ -721,8 +721,15 @@ class JarvisAgent:
             for skill in enabled_skills:
                 if skill in skill_to_tools:
                     child_allowed.update(skill_to_tools[skill])
+                from backend.mcp_client import mcp_clients, mcp_tool_to_server
+                if skill in mcp_clients:
+                    child_allowed.update([t["name"] for t in mcp_clients[skill].tools])
+                elif skill == "mcp_all":
+                    child_allowed.update(mcp_tool_to_server.keys())
         else:
             child_allowed = safe_tool_names.copy()
+            from backend.mcp_client import mcp_tool_to_server
+            child_allowed.update(mcp_tool_to_server.keys())
 
         # Intersect with parent_skills if the parent orchestrator has specified restrictions
         if parent_skills:
@@ -731,6 +738,11 @@ class JarvisAgent:
             for skill in enabled_parent_skills:
                 if skill in skill_to_tools:
                     parent_allowed.update(skill_to_tools[skill])
+                from backend.mcp_client import mcp_clients, mcp_tool_to_server
+                if skill in mcp_clients:
+                    parent_allowed.update([t["name"] for t in mcp_clients[skill].tools])
+                elif skill == "mcp_all":
+                    parent_allowed.update(mcp_tool_to_server.keys())
             allowed_tools = child_allowed.intersection(parent_allowed)
         else:
             allowed_tools = child_allowed

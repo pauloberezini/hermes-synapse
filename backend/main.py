@@ -77,12 +77,18 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Obsidian startup sync failed (non-fatal): {e}")
     asyncio.create_task(_obsidian_startup_sync())
     
+    from backend.mcp_client import init_mcp_servers, shutdown_mcp_servers
+    await init_mcp_servers()
+
     yield
     # Shutdown: Stop Telegram bot
     await shutdown_bot()
     
     # Stop price alert monitor background task
     price_monitor.stop()
+
+    # Shutdown MCP servers
+    await shutdown_mcp_servers()
 
 
 app = FastAPI(

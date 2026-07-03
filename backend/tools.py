@@ -1581,5 +1581,10 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         return execute_command(arguments.get("command", ""))
 
     else:
+        # Check if it is an MCP tool
+        from backend.mcp_client import mcp_tool_to_server, handle_mcp_tool
+        if name in mcp_tool_to_server:
+            return _run_async(handle_mcp_tool(name, arguments))
+
         return json.dumps({"error": f"Tool '{name}' not found."})
 

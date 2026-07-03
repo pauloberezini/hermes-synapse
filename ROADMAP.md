@@ -23,7 +23,7 @@ graph TD
     style Stage4 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage5 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage6 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
-    style Stage7 fill:#1e1b4b,stroke:#8b5cf6,stroke-width:2px,color:#fff
+    style Stage7 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
 ```
 
 ### 🟢 Completed Milestones (Core System)
@@ -46,6 +46,9 @@ graph TD
    * Spotify playback commands (playlists, play/pause controls).
    * Crypto and stock price alerts (Bitcoin, TON monitoring and thresholds).
    * Google custom search tool via Serper API and daily RSS news digests.
+7. **Stage 7: Public Release & Promo**
+   * Codebase cleaned and licensed under MIT on GitHub (`hermes-synapse`).
+   * Marketing campaigns and posts launched on LinkedIn, Facebook, Medium, Reddit, X (Twitter), and Telegram.
 
 ---
 
