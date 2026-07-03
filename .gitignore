@@ -79,3 +79,8 @@ backend/data/plots/
 backend/data/uploads/
 !backend/data/.gitkeep
 obsidian/
+
+# Private BCM Trading module
+backend/bcm/
+backend/logs/
+

@@ -726,10 +726,23 @@ class JarvisAgent:
                     child_allowed.update([t["name"] for t in mcp_clients[skill].tools])
                 elif skill == "mcp_all":
                     child_allowed.update(mcp_tool_to_server.keys())
+                
+                # Local BCM tools support
+                if skill in ("bcm", "bcm-trader"):
+                    try:
+                        from backend.bcm.tools import BCM_TOOLS
+                        child_allowed.update([t["name"] for t in BCM_TOOLS])
+                    except ImportError:
+                        pass
         else:
             child_allowed = safe_tool_names.copy()
             from backend.mcp_client import mcp_tool_to_server
             child_allowed.update(mcp_tool_to_server.keys())
+            try:
+                from backend.bcm.tools import BCM_TOOLS
+                child_allowed.update([t["name"] for t in BCM_TOOLS])
+            except ImportError:
+                pass
 
         # Intersect with parent_skills if the parent orchestrator has specified restrictions
         if parent_skills:
@@ -743,6 +756,14 @@ class JarvisAgent:
                     parent_allowed.update([t["name"] for t in mcp_clients[skill].tools])
                 elif skill == "mcp_all":
                     parent_allowed.update(mcp_tool_to_server.keys())
+                
+                # Local BCM tools support
+                if skill in ("bcm", "bcm-trader"):
+                    try:
+                        from backend.bcm.tools import BCM_TOOLS
+                        parent_allowed.update([t["name"] for t in BCM_TOOLS])
+                    except ImportError:
+                        pass
             allowed_tools = child_allowed.intersection(parent_allowed)
         else:
             allowed_tools = child_allowed

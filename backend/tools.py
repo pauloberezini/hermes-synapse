@@ -987,6 +987,22 @@ TOOLS_SCHEMA = [
     }
 ]
 
+# Try to load private BCM tools if present locally
+try:
+    if os.path.exists(os.path.join(os.path.dirname(__file__), "bcm")):
+        from backend.bcm.tools import BCM_TOOLS
+        for tool in BCM_TOOLS:
+            TOOLS_SCHEMA.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["inputSchema"]
+                }
+            })
+except Exception as e:
+    pass
+
 async def _scrape_ddg(query: str) -> str:
     url = "https://html.duckduckgo.com/html/"
     headers = {
@@ -1431,6 +1447,13 @@ def execute_command(command: str) -> str:
 
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
     logger.info(f"Executing tool '{name}' with args: {arguments}")
+
+    if name.startswith("ctrader_") or name.startswith("bcm_"):
+        try:
+            from backend.bcm.tools import bcm_execute_tool
+            return bcm_execute_tool(name, arguments)
+        except ImportError:
+            return json.dumps({"error": f"Tool '{name}' is not configured locally."}, ensure_ascii=False)
 
     if name == "get_system_stats":
         return get_system_stats()
