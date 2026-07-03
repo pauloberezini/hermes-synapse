@@ -1,0 +1,75 @@
+digraph JarvisAgentNetwork {
+    rankdir=TB;
+    fontname="Helvetica,Arial,sans-serif";
+    label="Jarvis Multi-Agent Network Map";
+    labelloc="t";
+    fontsize=20;
+    
+    // Nodes style settings
+    node [
+        fontname="Helvetica,Arial,sans-serif",
+        fontsize=11,
+        shape=box,
+        style="filled,rounded",
+        color="#2C3E50",
+        fillcolor="#ECF0F1",
+        fontcolor="#2C3E50",
+        penwidth=1.5
+    ];
+    
+    edge [
+        fontname="Helvetica,Arial,sans-serif",
+        fontsize=10,
+        color="#34495E",
+        penwidth=1.2,
+        arrowsize=0.8
+    ];
+
+    // Orchestrator Node Style
+    node [fillcolor="#E74C3C", fontcolor="#FFFFFF", color="#C0392B", shape=hexagon];
+    jarvis [label="🤖 Джарвис (Основной)\n[Orchestrator]\nModel: gemini-2.5-flash"];
+
+    // Connected Subagents Style
+    node [fillcolor="#3498DB", fontcolor="#FFFFFF", color="#2980B9", shape=box];
+    research [label="🔍 Поисковый Агент (research)\nModel: gemini-2.5-flash\nSkills: web_search"];
+    code [label="💻 Код-Инженер (code)\nModel: gemini-2.5-flash\nSkills: python_sandbox"];
+    analyst [label="📊 Визуализатор (analyst)\nModel: gemini-2.5-flash\nSkills: python_sandbox"];
+
+    // Hierarchical Links
+    jarvis -> research [label="coordinates"];
+    jarvis -> code [label="coordinates"];
+    jarvis -> analyst [label="coordinates"];
+
+    // Standalone Agents Style (different color)
+    node [fillcolor="#9B59B6", fontcolor="#FFFFFF", color="#8E44AD", shape=box];
+    
+    sports_analyst [label="⚽ Sport Analyst\nModel: deepseek-r1\nSkills: All Safe Tools"];
+    language_tutor [label="🗣️ Языковой Репетитор\nModel: gemini-2.5-pro\nSkills: All Safe Tools"];
+    linear_ticket_manager [label="🎟️ Linear Ticket Manager\nModel: deepseek-v4-flash\nSkills: All Safe Tools"];
+    betting_tracker [label="📈 Трекинг Ставок\nModel: deepseek-v4-flash\nSkills: All Safe Tools"];
+    pm_analyst [label="📊 Polymarket Analyst\nModel: deepseek-v4-flash\nSkills: All Safe Tools"];
+    knowledge_curator [label="📚 Куратор Базы Знаний\nModel: gemini-2.5-pro\nSkills: All Safe Tools"];
+    quantum_stock_mcp [label="🏦 QuantumStock MCP Analyst\nModel: gemini-2.5-pro\nSkills: All Safe Tools"];
+    oil_trader [label="🛢️ Нефтяной Трейдер\nModel: gemini-2.5-pro\nSkills: All Safe Tools"];
+    petro_macro [label="🔬 Petro-Macro Аналитик\nModel: gemini-2.5-pro\nSkills: All Safe Tools"];
+    petro_macro_analyst [label="🔌 Аналитик Petro-Macro\nModel: gemini-2.5-pro\nSkills: All Safe Tools"];
+
+    // Group standalone nodes in a visual boundary/subgraph
+    subgraph cluster_standalone {
+        label="Standalone (Unconnected) Agents";
+        style="dashed,rounded";
+        color="#BDC3C7";
+        bgcolor="#F8F9F9";
+        
+        sports_analyst;
+        language_tutor;
+        linear_ticket_manager;
+        betting_tracker;
+        pm_analyst;
+        knowledge_curator;
+        quantum_stock_mcp;
+        oil_trader;
+        petro_macro;
+        petro_macro_analyst;
+    }
+}

@@ -1,0 +1,316 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+
+:root {
+  /* Core Color System */
+  --bg-deep: #060913;
+  --bg-surface: #0c1122;
+  --bg-card: rgba(16, 22, 42, 0.65);
+  --bg-card-hover: rgba(22, 32, 60, 0.8);
+  
+  --accent-cyan: #00f0ff;
+  --accent-blue: #1e90ff;
+  --accent-orange: #ff9f00;
+  
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  
+  --glow-cyan: 0 0 15px rgba(0, 240, 255, 0.4);
+  --glow-blue: 0 0 15px rgba(30, 144, 255, 0.4);
+  --glow-cyan-strong: 0 0 25px rgba(0, 240, 255, 0.7);
+  
+  --glass-border: 1px solid rgba(0, 240, 255, 0.08);
+  --glass-border-focus: 1px solid rgba(0, 240, 255, 0.3);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  
+  /* Fonts */
+  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  height: 100vh;
+  width: 100vw;
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 90% 80%, rgba(255, 159, 0, 0.03) 0%, transparent 50%);
+  background-attachment: fixed;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(8, 10, 15, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+/* Base Layout Classes */
+.app-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* Glass Card styling */
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 12px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-panel:hover {
+  border-color: rgba(0, 240, 255, 0.15);
+}
+
+/* Hologram scanline effect */
+.scanlines {
+  position: relative;
+  overflow: hidden;
+}
+.scanlines::before {
+  content: " ";
+  display: none;
+  position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: none;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Glowing text */
+.glow-text-cyan {
+  color: var(--accent-cyan);
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+}
+
+.glow-text-blue {
+  color: var(--accent-blue);
+  text-shadow: 0 0 8px rgba(30, 144, 255, 0.5);
+}
+
+/* Custom interactive elements */
+.btn-primary {
+  background: rgba(0, 240, 255, 0.1);
+  border: 1px solid var(--accent-cyan);
+  color: var(--accent-cyan);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.8rem;
+  box-shadow: inset 0 0 0px var(--accent-cyan);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-cyan);
+  color: var(--bg-deep);
+  box-shadow: var(--glow-cyan-strong);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  border-color: var(--text-dim);
+  color: var(--text-dim);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.form-input {
+  background: rgba(6, 9, 19, 0.6);
+  border: var(--glass-border);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.form-input:focus {
+  border: var(--glass-border-focus);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent-cyan);
+  border-radius: 50%;
+  box-shadow: var(--glow-cyan);
+  animation: pulse-glow 2s infinite ease-in-out;
+}
+
+.pulse-dot.danger {
+  background-color: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+}
+
+/* Cyberpunk HUD Loader */
+@keyframes rotate-clockwise {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes rotate-counter-clockwise {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
+}
+
+@keyframes pulse-core {
+  0%, 100% { transform: scale(0.9); opacity: 0.5; filter: drop-shadow(0 0 2px var(--accent-cyan)); }
+  50% { transform: scale(1.1); opacity: 1; filter: drop-shadow(0 0 8px var(--accent-cyan)); }
+}
+
+@keyframes text-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes bar-grow {
+  0% { width: 10%; }
+  50% { width: 75%; }
+  100% { width: 92%; }
+}
+
+.hud-container {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  background: rgba(6, 9, 19, 0.45);
+  border: var(--glass-border);
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: 8px;
+  width: 100%;
+  margin-top: 16px;
+  box-shadow: 0 4px 20px rgba(0, 240, 255, 0.05);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.hud-scanner {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.hud-ring-outer {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border: 2px dashed rgba(0, 240, 255, 0.35);
+  border-radius: 50%;
+  animation: rotate-clockwise 8s linear infinite;
+}
+
+.hud-ring-inner {
+  position: absolute;
+  width: 75%;
+  height: 75%;
+  border: 2px dotted rgba(255, 159, 0, 0.45);
+  border-radius: 50%;
+  animation: rotate-counter-clockwise 4s linear infinite;
+}
+
+.hud-core {
+  width: 14px;
+  height: 14px;
+  background-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: pulse-core 1.5s infinite ease-in-out;
+}
+
+.hud-telemetry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 4px rgba(0, 240, 255, 0.3);
+}
+
+.hud-title {
+  font-weight: 700;
+  letter-spacing: 2px;
+  animation: text-blink 1.5s infinite ease-in-out;
+}
+
+.hud-status {
+  color: var(--text-muted);
+}
+
+.hud-bar-wrapper {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+  border: 1px solid rgba(0, 240, 255, 0.1);
+}
+
+.hud-bar-fill {
+  height: 100%;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+  animation: bar-grow 8s ease-in-out infinite;
+}
