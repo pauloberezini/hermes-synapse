@@ -12,6 +12,8 @@ Unlike deterministic workflow builders (like n8n), Hermes resolves complex user 
 
 ## 📸 Dashboard Preview
 
+[![Hermes Synapse Demo Video](https://img.youtube.com/vi/3GFh-1Gglno/maxresdefault.jpg)](https://youtu.be/3GFh-1Gglno)
+
 The built-in Web Dashboard is running on port `9119` and features:
 1. **Communication Hub**: Live chat interface with the main orchestrator (Jarvis) or isolated sub-agents.
 2. **Core Config**: Real-time adjustment of system prompts, models, and active system properties.
