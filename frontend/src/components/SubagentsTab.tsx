@@ -106,7 +106,7 @@ function ModelSelect({ value, onChange, className, models }: {
   className?: string;
   models: { id: string; name: string }[];
 }) {
-  const listToUse = models && models.length > 0 ? models : [];
+  const listToUse = React.useMemo(() => models && models.length > 0 ? models : [], [models]);
   const isCustom = listToUse.length > 0 
     ? !listToUse.some(m => m.id === value)
     : !AVAILABLE_MODELS.slice(0, -1).some(m => m.value === value);
@@ -124,7 +124,7 @@ function ModelSelect({ value, onChange, className, models }: {
     } else {
       setShowCustom(false);
     }
-  }, [value, models]);
+  }, [value, listToUse]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

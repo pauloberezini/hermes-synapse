@@ -129,7 +129,6 @@ export function ObsidianTab({ authToken }: ObsidianTabProps) {
     setCreating(false);
   };
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchStatus(); fetchNotes(); }, [fetchStatus, fetchNotes]);
 
   const panelBtnStyle = (active: boolean): React.CSSProperties => ({

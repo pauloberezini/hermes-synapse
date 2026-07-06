@@ -603,6 +603,7 @@ export default function App() {
         wsRef.current.close();
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
   const fetchDocuments = () => {
@@ -907,6 +908,20 @@ export default function App() {
       .catch(err => console.log('Error clearing activity logs:', err));
   };
 
+  const fetchModels = () => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    fetch('http://localhost:8000/api/models', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setModels(data);
+        }
+      })
+      .catch(err => console.error('Error fetching models:', err));
+  };
+
   // Fetch initial logs & config from REST API as fallback
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -937,20 +952,6 @@ export default function App() {
     fetchChatSessions();
     fetchModels();
   }, [isAuthenticated]);
-
-  const fetchModels = () => {
-    const token = localStorage.getItem('jarvis_auth_token');
-    fetch('http://localhost:8000/api/models', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setModels(data);
-        }
-      })
-      .catch(err => console.error('Error fetching models:', err));
-  };
 
   // Fetch system stats and timers when the "tools" tab is active
   useEffect(() => {
