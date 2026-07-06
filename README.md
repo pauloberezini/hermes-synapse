@@ -127,7 +127,41 @@ If you wish to allow Hermes to manage your calendars:
 
 ---
 
+## 🤖 Default Agents
+
+On first launch, Hermes seeds the following 9 agents into the database automatically. All agents work out of the box — skills that require API keys will gracefully degrade to mock data until the key is provided.
+
+| Agent | Description | Required Keys |
+|-------|-------------|---------------|
+| 🏛️ **Jarvis (Main)** | Root orchestrator — routes tasks to sub-agents | `OPENROUTER_API_KEY` |
+| 🔍 **Search Agent** | Web search, weather, RSS news digest | `SERPER_API_KEY`, `OPENWEATHERMAP_API_KEY` |
+| 💻 **Code Engineer** | Writes and executes Python code in a sandbox | `OPENROUTER_API_KEY` |
+| 📊 **Data Analyst** | Data analysis, statistics, charts (matplotlib, pandas) | `OPENROUTER_API_KEY` |
+| ⏰ **Scheduler** | Timers, reminders, and alarms | `OPENROUTER_API_KEY` |
+| 📈 **Market Monitor** | Real-time stock & crypto prices, price alerts | `OPENROUTER_API_KEY` *(powered by yfinance, no extra key)* |
+| 📅 **Daily Planner** | Google Calendar events + Todoist task management | `TODOIST_API_TOKEN`, Google OAuth |
+| 🖥️ **Sys Ops** | System stats (CPU / RAM / Disk), shell command execution | `OPENROUTER_API_KEY` |
+| ⚽ **Football Analyst** | Match results, standings, tactics, transfer news | `SERPER_API_KEY` |
+
+### 🔑 API Keys Quick Reference
+
+| Key | Where to Get It | Required For |
+|-----|-----------------|--------------|
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | **All agents** (LLM inference) |
+| `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) on Telegram | Telegram interface |
+| `TELEGRAM_CHAT_ID` | [@userinfobot](https://t.me/userinfobot) on Telegram | Telegram interface |
+| `SERPER_API_KEY` | [serper.dev](https://serper.dev) — 2,500 free queries/month | Search Agent, Football Analyst |
+| `OPENWEATHERMAP_API_KEY` | [openweathermap.org/api](https://home.openweathermap.org/api_keys) — free tier | Search Agent (weather) |
+| `TODOIST_API_TOKEN` | Todoist → Settings → Integrations → [Developer](https://app.todoist.com/app/settings/integrations/developer) | Daily Planner (tasks) |
+| `OBSIDIAN_API_KEY` | Obsidian → Settings → [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) | Obsidian RAG skill |
+| Google OAuth credentials | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → OAuth 2.0 Desktop Client | Daily Planner (Calendar) |
+
+> **Tip:** Only `OPENROUTER_API_KEY` is strictly required. Every other key is optional — agents with missing keys will still start and return a clear message explaining what needs to be configured.
+
+---
+
 ## 📂 Project Structure
+
 
 * `/backend`: FastAPI server, agents, tools registry, DB migrations, Telegram listeners.
 * `/frontend`: React + Vite client web dashboard.

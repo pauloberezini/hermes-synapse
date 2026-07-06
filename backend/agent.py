@@ -786,7 +786,7 @@ class JarvisAgent:
                     payload = {
                         "model": subagent_model,
                         "messages": messages,
-                        "temperature": 0.7,
+                        "temperature": subagent.get("temperature", 0.7),
                         "tools": subagent_tools
                     }
                     

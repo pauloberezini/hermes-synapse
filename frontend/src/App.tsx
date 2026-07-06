@@ -9,7 +9,8 @@ import {
   Layers,
   Wrench,
   BookOpen,
-  Network
+  Network,
+  Server
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig } from './types';
@@ -32,12 +33,13 @@ import { ToolsTab } from './components/ToolsTab';
 import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
+import { MCPTab } from './components/MCPTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>('chat');
   const [chatSessions, setChatSessions] = useState<string[]>(['dashboard']);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
@@ -118,7 +120,9 @@ export default function App() {
   const [newAgentId, setNewAgentId] = useState('');
   const [newAgentName, setNewAgentName] = useState('');
   const [newAgentPrompt, setNewAgentPrompt] = useState('');
-  const [newAgentModel, setNewAgentModel] = useState('google/gemini-2.5-pro');
+  const [newAgentModel, setNewAgentModel] = useState('google/gemini-2.5-flash');
+  const [newAgentSkills, setNewAgentSkills] = useState('');
+  const [newAgentTemperature, setNewAgentTemperature] = useState(0.7);
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
 
   // Connection channel session states
@@ -128,8 +132,11 @@ export default function App() {
   const [editingAgentId, setEditingAgentId] = useState('');
   const [editAgentName, setEditAgentName] = useState('');
   const [editAgentPrompt, setEditAgentPrompt] = useState('');
-  const [editAgentModel, setEditAgentModel] = useState('google/gemini-2.5-pro');
+  const [editAgentModel, setEditAgentModel] = useState('google/gemini-2.5-flash');
+  const [editAgentSkills, setEditAgentSkills] = useState('');
+  const [editAgentTemperature, setEditAgentTemperature] = useState(0.7);
   const [isUpdatingAgent, setIsUpdatingAgent] = useState(false);
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => { currentChatIdRef.current = currentChatId; }, [currentChatId]);
 
@@ -702,18 +709,22 @@ export default function App() {
       const cleanId = newAgentId.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
       const res = await fetch('http://localhost:8000/api/subagents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
         body: JSON.stringify({
           id: cleanId,
           name: newAgentName,
           system_prompt: newAgentPrompt,
-          model: newAgentModel
+          model: newAgentModel,
+          skills: newAgentSkills,
+          temperature: newAgentTemperature,
         })
       });
       if (res.ok) {
         setNewAgentId('');
         setNewAgentName('');
         setNewAgentPrompt('');
+        setNewAgentSkills('');
+        setNewAgentTemperature(0.7);
         alert('Sub-agent successfully created.');
         
         fetch('http://localhost:8000/api/subagents')
@@ -766,12 +777,14 @@ export default function App() {
     try {
       const res = await fetch('http://localhost:8000/api/subagents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
         body: JSON.stringify({
           id: editingAgentId,
           name: editAgentName,
           system_prompt: editAgentPrompt,
-          model: editAgentModel
+          model: editAgentModel,
+          skills: editAgentSkills,
+          temperature: editAgentTemperature,
         })
       });
       if (res.ok) {
@@ -922,7 +935,22 @@ export default function App() {
     fetchUploads();
     fetchSubagents();
     fetchChatSessions();
+    fetchModels();
   }, [isAuthenticated]);
+
+  const fetchModels = () => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    fetch('http://localhost:8000/api/models', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setModels(data);
+        }
+      })
+      .catch(err => console.error('Error fetching models:', err));
+  };
 
   // Fetch system stats and timers when the "tools" tab is active
   useEffect(() => {
@@ -1341,6 +1369,14 @@ export default function App() {
           </button>
 
           <button 
+            style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
+            onClick={() => setActiveTab('mcp')}
+          >
+            <Server size={18} />
+            <span>MCP Servers</span>
+          </button>
+
+          <button 
             style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
             onClick={() => setActiveTab('obsidian')}
           >
@@ -1420,6 +1456,7 @@ export default function App() {
             setEditedPrompt={setEditedPrompt}
             isSavingConfig={isSavingConfig}
             handleSaveConfig={handleSaveConfig}
+            models={models}
           />
         )}
 
@@ -1500,6 +1537,10 @@ export default function App() {
             setNewAgentPrompt={setNewAgentPrompt}
             newAgentModel={newAgentModel}
             setNewAgentModel={setNewAgentModel}
+            newAgentSkills={newAgentSkills}
+            setNewAgentSkills={setNewAgentSkills}
+            newAgentTemperature={newAgentTemperature}
+            setNewAgentTemperature={setNewAgentTemperature}
             isCreatingAgent={isCreatingAgent}
             editingAgentId={editingAgentId}
             setEditingAgentId={setEditingAgentId}
@@ -1509,6 +1550,10 @@ export default function App() {
             setEditAgentPrompt={setEditAgentPrompt}
             editAgentModel={editAgentModel}
             setEditAgentModel={setEditAgentModel}
+            editAgentSkills={editAgentSkills}
+            setEditAgentSkills={setEditAgentSkills}
+            editAgentTemperature={editAgentTemperature}
+            setEditAgentTemperature={setEditAgentTemperature}
             isUpdatingAgent={isUpdatingAgent}
             speakText={speakText}
             handleSendMessage={handleSendMessage}
@@ -1518,6 +1563,7 @@ export default function App() {
             handleDeleteSubagent={handleDeleteSubagent}
             setCurrentChatId={setCurrentChatId}
             subagentChatEndRef={subagentChatEndRef}
+            models={models}
           />
         )}
 
@@ -1527,6 +1573,10 @@ export default function App() {
 
         {activeTab === 'network' && (
           <NetworkTab subagents={subagents} setSubagents={setSubagents} fetchSubagents={fetchSubagents} />
+        )}
+
+        {activeTab === 'mcp' && (
+          <MCPTab />
         )}
       </main>
 

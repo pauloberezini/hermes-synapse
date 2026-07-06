@@ -31,6 +31,7 @@ class SubagentUpdate(BaseModel):
     skills: str = ""
     x: int = 100
     y: int = 100
+    temperature: float = 0.7
 
 class SubagentPosition(BaseModel):
     id: str
@@ -79,6 +80,20 @@ async def lifespan(app: FastAPI):
     
     from backend.mcp_client import init_mcp_servers, shutdown_mcp_servers
     await init_mcp_servers()
+
+    # Start BCM Session Scheduler in background (non-blocking)
+    async def _bcm_session_scheduler_task():
+        import sys
+        import subprocess
+        logger.info("BCM Session Scheduler background loop started.")
+        while True:
+            try:
+                # Runs the session_scheduler checking rules every minute
+                subprocess.run([sys.executable, "/app/backend/bcm/session_scheduler.py"], capture_output=True)
+            except Exception as e:
+                logger.error(f"Error in BCM session scheduler task: {e}")
+            await asyncio.sleep(60)
+    asyncio.create_task(_bcm_session_scheduler_task())
 
     yield
     # Shutdown: Stop Telegram bot
@@ -350,7 +365,8 @@ async def save_subagent_api(subagent: SubagentUpdate):
         subagent.parent_id,
         subagent.skills,
         subagent.x,
-        subagent.y
+        subagent.y,
+        subagent.temperature,
     )
     return {"status": "success", "id": clean_id}
 
@@ -375,6 +391,192 @@ async def delete_subagent_api(subagent_id: str):
     from backend.database import delete_subagent
     ok = delete_subagent(subagent_id)
     return {"status": "success" if ok else "failed"}
+
+@app.get("/api/skills")
+async def get_skills_api():
+    """Returns all available built-in skill names and which tools each unlocks."""
+    skill_to_tools = {
+        "web_search":       ["web_search", "get_current_time_israel", "get_weather", "get_rss_digest"],
+        "market_monitor":   ["get_market_prices", "add_price_alert"],
+        "obsidian_rag":     ["search_obsidian", "read_obsidian_note", "create_obsidian_note", "sync_obsidian_vault"],
+        "todoist_sync":     ["get_todoist_tasks", "add_todoist_task", "delete_todoist_task"],
+        "google_calendar":  ["get_calendar_events", "add_calendar_event"],
+        "timers_alarms":    ["set_timer", "set_alarm", "cancel_timer_or_alarm"],
+        "shell_execution":  ["get_system_stats", "execute_command"],
+        "python_sandbox":   ["execute_command"],
+        "bcm":              ["bcm tools (crypto trading)"],
+        "mcp_all":          ["all connected MCP server tools"],
+    }
+    # Append any live MCP servers as selectable skills
+    from backend.mcp_client import mcp_clients
+    for name in mcp_clients:
+        if name not in skill_to_tools:
+            skill_to_tools[name] = [f"MCP: {name}"]
+    return skill_to_tools
+
+_models_cache = {"data": None, "timestamp": 0}
+
+@app.get("/api/models")
+async def get_models_api():
+    """Returns all available models from OpenRouter (or user provider) using user keys."""
+    import time, os, httpx
+    now = time.time()
+    if _models_cache["data"] and (now - _models_cache["timestamp"] < 3600):
+        return _models_cache["data"]
+
+    api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+
+    url = f"{api_base}/models"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict) and "data" in data:
+                    models = data["data"]
+                    result = []
+                    for m in models:
+                        m_id = m.get("id")
+                        m_name = m.get("name") or m_id
+                        result.append({"id": m_id, "name": m_name})
+                    
+                    rec_models = [
+                        "google/gemini-2.5-flash",
+                        "google/gemini-2.5-pro",
+                        "anthropic/claude-sonnet-4-5",
+                        "anthropic/claude-opus-4",
+                        "openai/gpt-4o",
+                        "openai/gpt-4o-mini",
+                        "deepseek/deepseek-r1",
+                        "deepseek/deepseek-v3-0324",
+                        "meta-llama/llama-3.3-70b-instruct"
+                    ]
+                    
+                    recommended = []
+                    others = []
+                    
+                    for item in result:
+                        if item["id"] in rec_models:
+                            recommended.append(item)
+                        else:
+                            others.append(item)
+                            
+                    recommended.sort(key=lambda x: rec_models.index(x["id"]))
+                    others.sort(key=lambda x: x["id"].lower())
+                    
+                    final_result = recommended + others
+                    _models_cache["data"] = final_result
+                    _models_cache["timestamp"] = now
+                    return final_result
+    except Exception as e:
+        logger.error(f"Error fetching models: {e}")
+
+    # Fallback list if request fails
+    return [
+        {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash (default)"},
+        {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
+        {"id": "anthropic/claude-sonnet-4-5", "name": "Anthropic: Claude Sonnet 4.5"},
+        {"id": "anthropic/claude-opus-4", "name": "Anthropic: Claude Opus 4"},
+        {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},
+        {"id": "openai/gpt-4o-mini", "name": "OpenAI: GPT-4o-Mini"},
+        {"id": "deepseek/deepseek-r1", "name": "DeepSeek: R1"},
+        {"id": "deepseek/deepseek-v3-0324", "name": "DeepSeek: V3"},
+        {"id": "meta-llama/llama-3.3-70b-instruct", "name": "Meta Llama 3.3 70B"},
+    ]
+
+# ─── MCP CONFIG API ───────────────────────────────────────────────────────────
+
+class MCPServerConfig(BaseModel):
+    name: str
+    command: str
+    args: list = []
+    env: dict = {}
+
+@app.get("/api/mcp/servers")
+async def get_mcp_servers():
+    """Returns current MCP server configs and live connection status."""
+    import json, os
+    from backend.mcp_client import mcp_clients
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mcp_config.json")
+    config = {}
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = json.load(f)
+    servers = config.get("mcpServers", {})
+    result = []
+    for name, cfg in servers.items():
+        result.append({
+            "name": name,
+            "command": cfg.get("command", ""),
+            "args": cfg.get("args", []),
+            "env": {k: v for k, v in cfg.get("env", {}).items() if "key" not in k.lower() and "secret" not in k.lower() and "token" not in k.lower()},
+            "connected": name in mcp_clients,
+            "tools_count": len(mcp_clients[name].tools) if name in mcp_clients else 0,
+        })
+    return result
+
+@app.post("/api/mcp/servers")
+async def add_mcp_server(server: MCPServerConfig):
+    """Adds or updates an MCP server config and reconnects."""
+    import json, os
+    from backend.mcp_client import mcp_clients, mcp_tool_to_server, MCPServerClient
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mcp_config.json")
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    config = {}
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = json.load(f)
+    config.setdefault("mcpServers", {})
+    config["mcpServers"][server.name] = {
+        "command": server.command,
+        "args": server.args,
+        "env": server.env,
+    }
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    # Connect the new server live
+    try:
+        if server.name in mcp_clients:
+            await mcp_clients[server.name].shutdown()
+        client = MCPServerClient(server.name, config["mcpServers"][server.name])
+        await client.start()
+        mcp_clients[server.name] = client
+        from backend.tools import TOOLS_SCHEMA
+        for tool in client.tools:
+            tool_name = tool["name"]
+            mcp_tool_to_server[tool_name] = server.name
+            if not any(t.get("function", {}).get("name") == tool_name for t in TOOLS_SCHEMA):
+                TOOLS_SCHEMA.append({"type": "function", "function": {"name": tool_name, "description": tool.get("description", ""), "parameters": tool.get("inputSchema", {"type": "object", "properties": {}})}})
+        return {"status": "success", "name": server.name, "tools": len(client.tools)}
+    except Exception as e:
+        logger.error(f"MCP server connect error: {e}")
+        return {"status": "config_saved", "warning": str(e)}
+
+@app.delete("/api/mcp/servers/{name}")
+async def delete_mcp_server(name: str):
+    """Removes an MCP server from config and disconnects it."""
+    import json, os
+    from backend.mcp_client import mcp_clients, mcp_tool_to_server
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mcp_config.json")
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        config.get("mcpServers", {}).pop(name, None)
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+    if name in mcp_clients:
+        await mcp_clients[name].shutdown()
+        del mcp_clients[name]
+        # Remove its tools from registry
+        dead = [t for t, s in mcp_tool_to_server.items() if s == name]
+        for t in dead:
+            mcp_tool_to_server.pop(t, None)
+    return {"status": "success", "name": name}
 
 @app.get("/api/system/stats")
 async def get_system_stats_api():

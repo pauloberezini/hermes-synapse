@@ -89,7 +89,8 @@ def init_db():
         ("parent_id", "TEXT"),
         ("skills", "TEXT DEFAULT ''"),
         ("x", "INTEGER DEFAULT 100"),
-        ("y", "INTEGER DEFAULT 100")
+        ("y", "INTEGER DEFAULT 100"),
+        ("temperature", "REAL DEFAULT 0.7"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
@@ -104,30 +105,112 @@ def init_db():
         logger.info("Pre-populating default subagents.")
         default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
         default_agents = [
-            ("jarvis", "Jarvis (Main)", "You are Jarvis, a highly intelligent personal assistant to Tony Stark.", default_model, "orchestrator", None, "", 100, 200),
-            ("research", "Search Agent", "You are a research agent. Search for information on the internet using web_search.", default_model, "agent", "jarvis", "web_search", 400, 100),
-            ("code", "Code Engineer", "You are a Code Engineer. Write and execute Python scripts.", default_model, "agent", "jarvis", "python_sandbox", 400, 250),
-            ("analyst", "Visualizer", "You are an Analyst-Visualizer. Create charts.", default_model, "agent", "jarvis", "python_sandbox", 400, 400),
+            (
+                "jarvis", "Jarvis (Main)",
+                "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+                default_model, "orchestrator", None, "", 100, 350
+            ),
+            (
+                "research", "Search Agent",
+                "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
+                default_model, "agent", "jarvis", "web_search", 450, 100
+            ),
+            (
+                "code", "Code Engineer",
+                "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
+                default_model, "agent", "jarvis", "python_sandbox", 450, 220
+            ),
+            (
+                "analyst", "Data Analyst",
+                "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
+                default_model, "agent", "jarvis", "python_sandbox", 450, 340
+            ),
+            (
+                "scheduler", "Scheduler",
+                "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
+                default_model, "agent", "jarvis", "timers_alarms", 450, 460
+            ),
+            (
+                "monitor", "Market Monitor",
+                "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
+                default_model, "agent", "jarvis", "market_monitor", 450, 580
+            ),
+            (
+                "planner", "Daily Planner",
+                "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
+                default_model, "agent", "jarvis", "google_calendar,todoist_sync", 450, 700
+            ),
+            (
+                "sysops", "Sys Ops",
+                "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
+                default_model, "agent", "jarvis", "shell_execution", 450, 820
+            ),
+            (
+                "football", "Football Analyst",
+                "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
+                default_model, "agent", "jarvis", "web_search", 450, 940
+            ),
         ]
         cursor.executemany("""
-            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, default_agents)
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [t + (0.7,) for t in default_agents])
         logger.info("Successfully seeded default agents.")
     else:
-        # Migration: update existing default subagents to English if they still have the Russian defaults
-        updates = [
-            ("jarvis", "Jarvis (Main)", "You are Jarvis, a highly intelligent personal assistant to Tony Stark.", "Джарвис (Основной)", "Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка."),
-            ("research", "Search Agent", "You are a research agent. Search for information on the internet using web_search.", "Поисковый Агент", "Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search."),
-            ("code", "Code Engineer", "You are a Code Engineer. Write and execute Python scripts.", "Код-Инженер", "Вы — Код-Инженер. Пишите и выполняйте Python скрипты."),
-            ("analyst", "Visualizer", "You are an Analyst-Visualizer. Create charts.", "Визуализатор", "Вы — Аналитик-Визуализатор. Создавайте графики.")
+        # Migration: upsert new default agents that don't exist yet,
+        # and update existing ones if they still have old prompts.
+        upserts = [
+            ("jarvis", "Jarvis (Main)",
+             "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+             "orchestrator", None, "", 100, 350),
+            ("research", "Search Agent",
+             "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
+             "agent", "jarvis", "web_search", 450, 100),
+            ("code", "Code Engineer",
+             "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
+             "agent", "jarvis", "python_sandbox", 450, 220),
+            ("analyst", "Data Analyst",
+             "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
+             "agent", "jarvis", "python_sandbox", 450, 340),
+            ("scheduler", "Scheduler",
+             "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
+             "agent", "jarvis", "timers_alarms", 450, 460),
+            ("monitor", "Market Monitor",
+             "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
+             "agent", "jarvis", "market_monitor", 450, 580),
+            ("planner", "Daily Planner",
+             "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
+             "agent", "jarvis", "google_calendar,todoist_sync", 450, 700),
+            ("sysops", "Sys Ops",
+             "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
+             "agent", "jarvis", "shell_execution", 450, 820),
+            ("football", "Football Analyst",
+             "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
+             "agent", "jarvis", "web_search", 450, 940),
         ]
-        for agent_id, new_name, new_prompt, old_name, old_prompt in updates:
-            cursor.execute(
-                "UPDATE subagents SET name = ?, system_prompt = ? WHERE id = ? AND (name = ? OR system_prompt = ?)",
-                (new_name, new_prompt, agent_id, old_name, old_prompt)
-            )
-        logger.info("Checked and migrated existing default subagents to English.")
+        default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+        for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
+            cursor.execute("""
+                INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    system_prompt = excluded.system_prompt,
+                    agent_type = excluded.agent_type,
+                    parent_id = excluded.parent_id,
+                    skills = excluded.skills
+                WHERE subagents.system_prompt IN (
+                    'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
+                    'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
+                    'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
+                    'You are a research agent. Search for information on the internet using web_search.',
+                    'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
+                    'You are a Code Engineer. Write and execute Python scripts.',
+                    'Вы — Аналитик-Визуализатор. Создавайте графики.',
+                    'You are an Analyst-Visualizer. Create charts.'
+                )
+            """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
+        logger.info("Checked and migrated default subagents.")
 
     # Create subagent memory table
     cursor.execute("""
@@ -332,15 +415,16 @@ def save_subagent(
     parent_id: Optional[str] = None,
     skills: str = "",
     x: int = 100,
-    y: int = 100
+    y: int = 100,
+    temperature: float = 0.7,
 ):
     """Saves or updates a subagent's configuration in the database."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET 
                 name=excluded.name,
                 system_prompt=excluded.system_prompt,
@@ -349,8 +433,9 @@ def save_subagent(
                 parent_id=excluded.parent_id,
                 skills=excluded.skills,
                 x=excluded.x,
-                y=excluded.y
-        """, (id, name, system_prompt, model, agent_type, parent_id, skills, x, y))
+                y=excluded.y,
+                temperature=excluded.temperature
+        """, (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature))
         conn.commit()
         conn.close()
         logger.info(f"Subagent saved: {id} ({name})")
@@ -363,7 +448,7 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y 
+            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
             FROM subagents WHERE id = ?
         """, (id,))
         row = cursor.fetchone()
@@ -379,7 +464,8 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
                 "parent_id": row[6],
                 "skills": row[7] or "",
                 "x": row[8] if row[8] is not None else 100,
-                "y": row[9] if row[9] is not None else 100
+                "y": row[9] if row[9] is not None else 100,
+                "temperature": row[10] if row[10] is not None else 0.7,
             }
         return None
     except Exception as e:
@@ -392,7 +478,7 @@ def get_all_subagents() -> List[Dict[str, Any]]:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y 
+            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
             FROM subagents ORDER BY id ASC
         """)
         rows = cursor.fetchall()
@@ -408,7 +494,8 @@ def get_all_subagents() -> List[Dict[str, Any]]:
                 "parent_id": r[6],
                 "skills": r[7] or "",
                 "x": r[8] if r[8] is not None else 100,
-                "y": r[9] if r[9] is not None else 100
+                "y": r[9] if r[9] is not None else 100,
+                "temperature": r[10] if r[10] is not None else 0.7,
             }
             for r in rows
         ]
