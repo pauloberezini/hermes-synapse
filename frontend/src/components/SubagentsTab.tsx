@@ -265,7 +265,7 @@ export function SubagentsTab({
 
   useEffect(() => {
     const token = localStorage.getItem('jarvis_auth_token');
-    fetch('http://localhost:8000/api/skills', {
+    fetch('/api/skills', {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then(r => r.json())

@@ -308,7 +308,7 @@ export function ChatTab({
                             e.stopPropagation();
                             setActiveMenu(null);
                             try {
-                              const res = await fetch(`http://localhost:8000/api/history/${s}/fork`, { method: 'POST' });
+                              const res = await fetch(`/api/history/${s}/fork`, { method: 'POST' });
                               if (res.ok) {
                                 const data = await res.json();
                                 fetchChatSessions();
@@ -328,7 +328,7 @@ export function ChatTab({
                               setActiveMenu(null);
                               if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
                                 try {
-                                  const res = await fetch(`http://localhost:8000/api/history/dashboard`, { method: 'DELETE' });
+                                  const res = await fetch(`/api/history/dashboard`, { method: 'DELETE' });
                                   if (res.ok) {
                                     selectChat('dashboard');
                                   }
@@ -347,7 +347,7 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Archive session "${label}"?`)) {
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/history/${s}/archive`, { method: 'POST' });
+                                    const res = await fetch(`/api/history/${s}/archive`, { method: 'POST' });
                                     if (res.ok) {
                                       if (currentChatId === s) selectChat('dashboard');
                                       fetchChatSessions();
@@ -366,7 +366,7 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Are you sure you want to delete session "${label}"?`)) {
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/history/${s}`, { method: 'DELETE' });
+                                    const res = await fetch(`/api/history/${s}`, { method: 'DELETE' });
                                     if (res.ok) {
                                       if (currentChatId === s) selectChat('dashboard');
                                       fetchChatSessions();

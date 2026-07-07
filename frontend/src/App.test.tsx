@@ -52,7 +52,7 @@ describe('App Component', () => {
       expect(screen.getByText(/authorization code sent to your trusted telegram chat/i)).toBeInTheDocument();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/api/auth/request-code', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/request-code', expect.any(Object));
   });
 
   it('renders main application when authenticated', async () => {

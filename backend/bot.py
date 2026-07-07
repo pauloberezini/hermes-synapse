@@ -45,9 +45,22 @@ def admin_only(func):
         return await func(update, context, *args, **kwargs)
     return wrapper
 
+def _is_allowed_chat(update: Update) -> bool:
+    """Return True only for the configured private Telegram chat."""
+    allowed_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not allowed_chat_id:
+        return True
+    if not update.effective_chat:
+        return False
+    return str(update.effective_chat.id) == allowed_chat_id
+
 @admin_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends a greeting when /start is run."""
+    if not _is_allowed_chat(update):
+        logger.warning("Ignoring /start from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
+        return
+
     chat_id = update.effective_chat.id
     username = update.effective_user.username or "creator"
     
@@ -72,6 +85,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clears history context."""
+    if not _is_allowed_chat(update):
+        logger.warning("Ignoring /clear from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
+        return
+
     chat_id = update.effective_chat.id
     agent_instance.clear_history(str(chat_id))
     
@@ -88,6 +105,10 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Replies with basic diagnostic info."""
+    if not _is_allowed_chat(update):
+        logger.warning("Ignoring /status from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
+        return
+
     chat_id = update.effective_chat.id
     history_len = len(agent_instance.get_history(str(chat_id)))
     
@@ -112,6 +133,10 @@ def get_report_filename(query: str) -> str:
 @admin_only
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes any text message, runs agent loop, sends response, and broadcasts to dashboard."""
+    if not _is_allowed_chat(update):
+        logger.warning("Ignoring message from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
+        return
+
     if not update.message or not update.message.text:
         return
 

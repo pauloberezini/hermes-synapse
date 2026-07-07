@@ -420,7 +420,7 @@ export default function App() {
     setAuthStatus('sending');
     setAuthError('');
     try {
-      const res = await fetch('http://localhost:8000/api/auth/request-code', {
+      const res = await fetch('/api/auth/request-code', {
         method: 'POST'
       });
       const data = await res.json();
@@ -441,7 +441,7 @@ export default function App() {
     setAuthStatus('verifying');
     setAuthError('');
     try {
-      const res = await fetch('http://localhost:8000/api/auth/verify-code', {
+      const res = await fetch('/api/auth/verify-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code })
@@ -486,7 +486,7 @@ export default function App() {
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const token = localStorage.getItem('jarvis_auth_token') || '';
-      const wsUrl = `${protocol}//${window.location.hostname}:8000/api/ws?token=${encodeURIComponent(token)}`;
+      const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${encodeURIComponent(token)}`;
       
       console.log(`Connecting to WebSocket: ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
@@ -630,21 +630,21 @@ export default function App() {
   }, [isAuthenticated]);
 
   const fetchDocuments = () => {
-    fetch('http://localhost:8000/api/documents')
+    fetch('/api/documents')
       .then(res => res.json())
       .then(data => setDocuments(data))
       .catch(err => console.log('Error fetching documents:', err));
   };
 
   const fetchUploads = () => {
-    fetch('http://localhost:8000/api/uploads')
+    fetch('/api/uploads')
       .then(res => res.json())
       .then(data => setUploads(data))
       .catch(err => console.log('Error fetching uploads:', err));
   };
 
   const fetchChatSessions = () => {
-    fetch('http://localhost:8000/api/history/sessions')
+    fetch('/api/history/sessions')
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -695,7 +695,7 @@ export default function App() {
   };
 
   const fetchSubagents = () => {
-    fetch('http://localhost:8000/api/subagents')
+    fetch('/api/subagents')
       .then(res => res.json())
       .then(data => setSubagents(data))
       .catch(err => console.log('Error fetching subagents:', err));
@@ -705,7 +705,7 @@ export default function App() {
     const listToSearch = currentSubagentsList || subagents;
     setCurrentChatId(chatId);
     setMessages([]); // clear temporarily
-    fetch(`http://localhost:8000/api/history/${chatId}`)
+    fetch(`/api/history/${chatId}`)
       .then(res => res.json())
       .then(data => {
         if (data && data.length > 0) {
@@ -731,7 +731,7 @@ export default function App() {
     setIsCreatingAgent(true);
     try {
       const cleanId = newAgentId.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
-      const res = await fetch('http://localhost:8000/api/subagents', {
+      const res = await fetch('/api/subagents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
         body: JSON.stringify({
@@ -751,7 +751,7 @@ export default function App() {
         setNewAgentTemperature(0.7);
         alert('Sub-agent successfully created.');
         
-        fetch('http://localhost:8000/api/subagents')
+        fetch('/api/subagents')
           .then(r => r.json())
           .then(data => {
             setSubagents(data);
@@ -773,7 +773,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:8000/api/subagents/${id}`, {
+      const res = await fetch(`/api/subagents/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -799,7 +799,7 @@ export default function App() {
     }
     setIsUpdatingAgent(true);
     try {
-      const res = await fetch('http://localhost:8000/api/subagents', {
+      const res = await fetch('/api/subagents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
         body: JSON.stringify({
@@ -813,7 +813,7 @@ export default function App() {
       });
       if (res.ok) {
         alert('Sub-agent successfully updated.');
-        fetch('http://localhost:8000/api/subagents')
+        fetch('/api/subagents')
           .then(r => r.json())
           .then(data => {
             setSubagents(data);
@@ -839,7 +839,7 @@ export default function App() {
     formData.append('file', file);
     
     try {
-      const res = await fetch('http://localhost:8000/api/upload', {
+      const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
       });
@@ -858,7 +858,7 @@ export default function App() {
   };
 
   const handleCancelTimer = (id: string) => {
-    fetch(`http://localhost:8000/api/timers/${id}`, {
+    fetch(`/api/timers/${id}`, {
       method: 'DELETE',
     })
       .then(res => res.json())
@@ -870,15 +870,56 @@ export default function App() {
       .catch(err => console.error('Error cancelling timer:', err));
   };
 
+  const fetchMarketPrices = () => {
+    fetch('/api/market/prices?symbols=TON,BTC,ETH,AAPL,TSLA')
+      .then(res => res.json())
+      .then(data => setMarketPrices(data))
+      .catch(err => console.log('Error fetching market prices:', err));
+  };
+
   const fetchMarketAlerts = () => {
-    fetch('http://localhost:8000/api/market/alerts')
+    fetch('/api/market/alerts')
       .then(res => res.json())
       .then(data => setPriceAlerts(data))
       .catch(err => console.log('Error fetching market alerts:', err));
   };
 
+  const handleCreateAlert = () => {
+    if (!alertPrice) return;
+    fetch('/api/market/alerts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: alertSymbol,
+        target_price: parseFloat(alertPrice),
+        condition: alertCondition
+      })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          setAlertPrice('');
+          fetchMarketAlerts();
+        }
+      })
+      .catch(err => console.log('Error creating alert:', err));
+  };
+
+  const handleCancelAlert = (id: string) => {
+    fetch(`/api/market/alerts/${id}`, {
+      method: 'DELETE'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          fetchMarketAlerts();
+        }
+      })
+      .catch(err => console.log('Error cancelling alert:', err));
+  };
+
   const handleClearActivityLogs = () => {
-    fetch('http://localhost:8000/api/activity/logs', {
+    fetch('/api/activity/logs', {
       method: 'DELETE'
     })
       .then(res => res.json())
@@ -892,7 +933,7 @@ export default function App() {
 
   const fetchModels = () => {
     const token = localStorage.getItem('jarvis_auth_token');
-    fetch('http://localhost:8000/api/models', {
+    fetch('/api/models', {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then(res => res.json())
@@ -908,7 +949,7 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    fetch('http://localhost:8000/api/config')
+    fetch('/api/config')
       .then(res => res.json())
       .then(data => {
         if (data && data.system_prompt !== undefined) {
@@ -919,7 +960,7 @@ export default function App() {
       })
       .catch(() => console.log('REST config fetch skipped/failed (using WS instead)'));
 
-    fetch('http://localhost:8000/api/logs')
+    fetch('/api/logs')
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -945,14 +986,14 @@ export default function App() {
     if (activeTab !== 'tools') return;
 
     const fetchStats = () => {
-      fetch('http://localhost:8000/api/system/stats')
+      fetch('/api/system/stats')
         .then(res => res.json())
         .then(data => setSystemStats(data))
         .catch(err => console.log('Error fetching system stats:', err));
     };
 
     const fetchTimersData = () => {
-      fetch('http://localhost:8000/api/timers')
+      fetch('/api/timers')
         .then(res => res.json())
         .then(data => setTimers(data))
         .catch(err => console.log('Error fetching timers:', err));
@@ -1000,7 +1041,7 @@ export default function App() {
     if (!noteTitle.trim() || !noteContent.trim()) return;
     setIsIndexing(true);
     try {
-      const res = await fetch('http://localhost:8000/api/documents', {
+      const res = await fetch('/api/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: noteTitle, content: noteContent })
@@ -1024,7 +1065,7 @@ export default function App() {
   const handleDeleteDocument = async (docId: string) => {
     if (!window.confirm('Delete document from long-term memory?')) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/documents/${docId}`, {
+      const res = await fetch(`/api/documents/${docId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1044,7 +1085,7 @@ export default function App() {
     if (!memorySearchQuery.trim()) return;
     setIsSearchingMemory(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/documents/search?q=${encodeURIComponent(memorySearchQuery)}`);
+      const res = await fetch(`/api/documents/search?q=${encodeURIComponent(memorySearchQuery)}`);
       if (res.ok) {
         const data = await res.json();
         setMemorySearchResults(data);
@@ -1108,7 +1149,7 @@ export default function App() {
     
     setMessages([]);
     try {
-      const res = await fetch(`http://localhost:8000/api/history/${currentChatId}`, {
+      const res = await fetch(`/api/history/${currentChatId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1129,7 +1170,7 @@ export default function App() {
     e.preventDefault();
     setIsSavingConfig(true);
     try {
-      const response = await fetch('http://localhost:8000/api/config', {
+      const response = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
