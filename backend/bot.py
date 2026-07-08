@@ -2,6 +2,7 @@ import os
 import logging
 import io
 import re
+from functools import wraps
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,6 +20,32 @@ logger = logging.getLogger("hermes.bot")
 # Global Telegram Application instance
 telegram_app: Application = None
 
+# ponytail: Admin security decorator to block unauthorized users before calling agent/changing state. Supports multiple comma-separated IDs.
+def admin_only(func):
+    """Decorator to restrict handler access only to the authorized admin(s)."""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        admin_id_str = os.getenv("TELEGRAM_ADMIN_ID") or os.getenv("TELEGRAM_CHAT_ID")
+        if not admin_id_str:
+            logger.error("TELEGRAM_ADMIN_ID or TELEGRAM_CHAT_ID must be configured in environment.")
+            if update.message:
+                await update.message.reply_text("System Configuration Error. Access denied.")
+            return
+        
+        # Split by comma and strip whitespace to support multiple admin IDs
+        admin_ids = [aid.strip() for aid in admin_id_str.split(",") if aid.strip()]
+        
+        user = update.effective_user
+        if not user or str(user.id) not in admin_ids:
+            user_info = f"@{user.username}" if user and user.username else f"ID {user.id if user else 'Unknown'}"
+            logger.warning(f"Unauthorized message attempt from {user_info}")
+            if update.message:
+                await update.message.reply_text("Access denied, Sir. I only respond to my designated Creator.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+@admin_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends a greeting when /start is run."""
     chat_id = update.effective_chat.id
@@ -42,6 +69,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "suppress_tts": True
     })
 
+@admin_only
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clears history context."""
     chat_id = update.effective_chat.id
@@ -57,6 +85,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "chat_id": chat_id
     })
 
+@admin_only
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Replies with basic diagnostic info."""
     chat_id = update.effective_chat.id
@@ -80,6 +109,7 @@ def get_report_filename(query: str) -> str:
         return "report.md"
     return f"{clean[:30].lower()}_report.md"
 
+@admin_only
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes any text message, runs agent loop, sends response, and broadcasts to dashboard."""
     if not update.message or not update.message.text:
