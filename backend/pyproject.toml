@@ -1,6 +1,6 @@
 [project]
 name = "hermes-backend"
-version = "0.1.0"
+version = "1.1.0"
 description = "Jarvis personal assistant backend (Hermes)"
 readme = "README.md"
 requires-python = ">=3.10"

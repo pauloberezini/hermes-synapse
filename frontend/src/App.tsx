@@ -1254,7 +1254,7 @@ export default function App() {
           <div className="pulse-dot" style={{ width: 14, height: 14 }} />
           <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>
         </div>
-        <p style={styles.logoSubtitle}>SYSTEM CONSOLE v1.0</p>
+        <p style={styles.logoSubtitle}>SYSTEM CONSOLE v1.1.0</p>
         
         <nav style={styles.navMenu}>
           <button 
