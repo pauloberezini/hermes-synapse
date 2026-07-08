@@ -1,13 +1,10 @@
 import { 
   Activity, 
   Database, 
-  Clock, 
-  Trash2, 
   Shield, 
   Settings 
 } from 'lucide-react';
 import { styles } from '../styles';
-import { formatTimeLeft } from '../utils';
 
 interface ToolsTabProps {
   systemStats: { 
@@ -20,24 +17,11 @@ interface ToolsTabProps {
     status: string;
   } | null;
   uploads: { name: string; size_bytes: number }[];
-  timers: { 
-    id: string; 
-    label: string; 
-    duration?: number; 
-    time_left: number; 
-    status: string; 
-    created_at: string; 
-    type?: string; 
-    target_time?: string; 
-  }[];
-  handleCancelTimer: (id: string) => void;
 }
 
 export function ToolsTab({
   systemStats,
-  uploads,
-  timers,
-  handleCancelTimer
+  uploads
 }: ToolsTabProps) {
   return (
     <div style={styles.tabWrapper}>
@@ -49,7 +33,7 @@ export function ToolsTab({
       </div>
 
       <div style={styles.toolsLayout}>
-        {/* Left Column wrapper */}
+        {/* Left Column: Telemetry & Datasets */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', height: '100%', overflowY: 'auto', paddingRight: '4px' }}>
           
           {/* System Metrics Telemetry */}
@@ -81,10 +65,10 @@ export function ToolsTab({
                   </div>
                 </div>
 
-                {/* RAM usage */}
+                {/* Memory RAM Loader */}
                 <div style={styles.metricItem}>
                   <div style={styles.metricLabelRow}>
-                    <span>RAM Usage</span>
+                    <span>RAM Utilization</span>
                     <span style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
                       {systemStats.ram_used_percent}%
                     </span>
@@ -94,17 +78,17 @@ export function ToolsTab({
                       style={{
                         ...styles.progressBarFill,
                         width: `${systemStats.ram_used_percent}%`,
-                        backgroundColor: systemStats.ram_used_percent > 85 ? 'var(--danger)' : 'var(--accent-cyan)',
-                        boxShadow: '0 0 10px rgba(0, 240, 255, 0.4)'
+                        backgroundColor: systemStats.ram_used_percent > 85 ? 'var(--danger)' : (systemStats.ram_used_percent > 60 ? 'var(--warning)' : 'var(--accent-cyan)'),
+                        boxShadow: systemStats.ram_used_percent > 85 ? '0 0 10px var(--danger)' : '0 0 10px rgba(0, 240, 255, 0.4)'
                       }}
                     />
                   </div>
                   <div style={styles.metricHelpText}>
-                    Total capacity: {systemStats.ram_total_gb} GB
+                    Used {(systemStats.ram_total_gb * systemStats.ram_used_percent / 100).toFixed(1)} GB of {systemStats.ram_total_gb} GB
                   </div>
                 </div>
 
-                {/* Disk Usage */}
+                {/* Disk Loader */}
                 <div style={styles.metricItem}>
                   <div style={styles.metricLabelRow}>
                     <span>Disk Storage</span>
@@ -175,108 +159,9 @@ export function ToolsTab({
 
         </div>
 
-        {/* Center/Right Column: Active Timers & Available Tools */}
+        {/* Right Column: Active Sub-agents & Core Tools */}
         <div style={styles.toolsContentRight}>
           
-          {/* Active Timers List */}
-          <div style={styles.toolsTimersWrapper} className="glass-panel">
-            <h3 style={styles.toolsPanelTitle}>
-              <Clock size={18} style={{ color: 'var(--accent-cyan)' }} />
-              <span>Active Timers and Alerts</span>
-            </h3>
-
-            <div style={styles.timersList}>
-              {timers.length === 0 ? (
-                <div style={styles.emptyTimersMsg}>
-                  No active timers found, Sir. You can ask Jarvis to set a timer or alarm in the chat or via Telegram.
-                </div>
-              ) : (
-                timers.map((timer) => (
-                  <div 
-                    key={timer.id} 
-                    style={{
-                      ...styles.timerCard,
-                      borderColor: timer.status === 'running' 
-                        ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.2)' : 'rgba(0, 240, 255, 0.2)') 
-                        : 'rgba(255, 255, 255, 0.05)',
-                      backgroundColor: timer.status === 'running' 
-                        ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : 'rgba(0, 240, 255, 0.02)') 
-                        : 'rgba(255, 255, 255, 0.01)'
-                    }}
-                  >
-                    <div style={styles.timerHeader}>
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <span style={styles.timerLabel}>{timer.label}</span>
-                        {timer.status === 'running' && (
-                          <button 
-                            onClick={() => handleCancelTimer(timer.id)}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: 'rgba(239, 68, 68, 0.65)',
-                              cursor: 'pointer',
-                              padding: '4px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderRadius: '4px',
-                              transition: 'all 0.2s',
-                              marginLeft: '8px',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.color = '#ef4444';
-                              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.color = 'rgba(239, 68, 68, 0.65)';
-                              e.currentTarget.style.backgroundColor = 'transparent';
-                            }}
-                            title="Cancel"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </div>
-                      <span style={{
-                        ...styles.timerStatusBadge,
-                        color: timer.status === 'running' 
-                            ? (timer.type === 'alarm' ? '#f97316' : 'var(--accent-cyan)') 
-                            : 'var(--success)',
-                        borderColor: timer.status === 'running' 
-                            ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.3)' : 'rgba(0, 240, 255, 0.3)') 
-                            : 'rgba(16, 185, 129, 0.3)'
-                      }}>
-                        {timer.status === 'running' 
-                          ? (timer.type === 'alarm' ? 'WAITING' : 'COUNTDOWN') 
-                          : 'COMPLETED'}
-                      </span>
-                    </div>
-
-                    <div style={styles.timerBody}>
-                      <div style={styles.countdownBox}>
-                        <span style={styles.countdownVal}>
-                          {timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
-                        </span>
-                        <span style={styles.countdownUnit}>
-                          {timer.type === 'alarm' ? 'until ring' : 'remaining'}
-                        </span>
-                      </div>
-                      <div style={styles.timerMeta}>
-                        {timer.type === 'alarm' ? (
-                          <div>Triggers at: {timer.target_time}</div>
-                        ) : (
-                          <div>Duration: {timer.duration} sec</div>
-                        )}
-                        <div>Started at: {timer.created_at}</div>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-
           {/* Active Sub-agents (Orchestrator Graph) */}
           <div className="glass-panel" style={{ ...styles.toolsRegistryWrapper, marginBottom: '0px' }}>
             <h3 style={styles.toolsPanelTitle}>

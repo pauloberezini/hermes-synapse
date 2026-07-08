@@ -41,6 +41,15 @@ class SubagentPosition(BaseModel):
 class SubagentPositionsUpdate(BaseModel):
     positions: List[SubagentPosition]
 
+class ScheduledTaskCreate(BaseModel):
+    type: str  # "one-shot" | "alarm" | "recurring"
+    label: str
+    agent_id: str
+    prompt: str
+    duration_seconds: Optional[int] = None
+    time_str: Optional[str] = None
+    interval_hours: Optional[float] = None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -340,10 +349,37 @@ async def cancel_reminder_api(reminder_id: str):
     ok = cancel_recurring_reminder(reminder_id)
     return {"status": "cancelled" if ok else "not_found", "reminder_id": reminder_id}
 
+@app.post("/api/timers")
+async def create_timer_api(task: ScheduledTaskCreate):
+    from backend.scheduler import add_timer, add_alarm, add_recurring_reminder
+    chat_id = "dashboard"
+    try:
+        if task.type == "one-shot":
+            if task.duration_seconds is None:
+                raise ValueError("duration_seconds is required for one-shot timer")
+            timer_id = add_timer(task.label, task.duration_seconds, chat_id, task.agent_id, task.prompt)
+            return {"status": "success", "id": timer_id}
+        elif task.type == "alarm":
+            if not task.time_str:
+                raise ValueError("time_str is required for alarm timer")
+            alarm_id = add_alarm(task.time_str, task.label, chat_id, task.agent_id, task.prompt)
+            return {"status": "success", "id": alarm_id}
+        elif task.type == "recurring":
+            if task.interval_hours is None:
+                raise ValueError("interval_hours is required for recurring timer")
+            reminder_id = add_recurring_reminder(task.label, task.interval_hours, chat_id, task.agent_id, task.prompt)
+            return {"status": "success", "id": reminder_id}
+        else:
+            return JSONResponse(status_code=400, content={"status": "failed", "error": f"Invalid type: {task.type}"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
+
 @app.delete("/api/timers/{timer_id}")
 async def cancel_timer_api(timer_id: str):
-    from backend.scheduler import cancel_timer_or_alarm
+    from backend.scheduler import cancel_timer_or_alarm, cancel_recurring_reminder
     ok = cancel_timer_or_alarm(timer_id)
+    if not ok:
+        ok = cancel_recurring_reminder(timer_id)
     return {"status": "cancelled" if ok else "not_found", "timer_id": timer_id}
 
 @app.get("/api/subagents")

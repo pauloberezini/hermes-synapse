@@ -10,7 +10,8 @@ import {
   Wrench,
   BookOpen,
   Network,
-  Server
+  Server,
+  Clock
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig } from './types';
@@ -30,6 +31,7 @@ import { LogsTab } from './components/LogsTab';
 import { ActivityTab } from './components/ActivityTab';
 import { MemoryTab } from './components/MemoryTab';
 import { ToolsTab } from './components/ToolsTab';
+import { ScheduleTab } from './components/ScheduleTab';
 import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
@@ -39,7 +41,7 @@ import { MCPTab } from './components/MCPTab';
 initFetchInterceptor();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>('chat');
   const [chatSessions, setChatSessions] = useState<string[]>(['dashboard']);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
@@ -66,7 +68,7 @@ export default function App() {
   const [isSearchingMemory, setIsSearchingMemory] = useState(false);
 
   // Tools and system stats states
-  const [timers, setTimers] = useState<{ id: string; label: string; duration?: number; time_left: number; status: string; created_at: string; type?: string; target_time?: string }[]>([]);
+  const [timers, setTimers] = useState<{ id: string; label: string; duration?: number; time_left: number; status: string; created_at: string; type?: string; target_time?: string; interval_hours?: number; fire_count?: number; agent_id?: string; prompt?: string }[]>([]);
   const [systemStats, setSystemStats] = useState<{ cpu_load_percent: number; ram_used_percent: number; ram_total_gb: number; disk_used_percent: number; disk_total_gb: number; disk_used_gb: number; status: string } | null>(null);
 
   // Market & Price Alert States (only alerts count is kept for ActivityTab)
@@ -1264,6 +1266,14 @@ export default function App() {
           </button>
           
           <button 
+            style={{...styles.navBtn, ...(activeTab === 'schedule' ? styles.navBtnActive : {})}}
+            onClick={() => setActiveTab('schedule')}
+          >
+            <Clock size={18} />
+            <span>Schedules & Automation</span>
+          </button>
+          
+          <button 
             style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
             onClick={() => setActiveTab('config')}
           >
@@ -1450,12 +1460,18 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'schedule' && (
+          <ScheduleTab
+            timers={timers}
+            subagents={subagents}
+            handleCancelTimer={handleCancelTimer}
+          />
+        )}
+
         {activeTab === 'tools' && (
           <ToolsTab
             systemStats={systemStats}
             uploads={uploads}
-            timers={timers}
-            handleCancelTimer={handleCancelTimer}
           />
         )}
 
