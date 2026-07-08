@@ -4,14 +4,12 @@ import { styles } from '../styles';
 
 interface ActivityTabProps {
   isGenerating: boolean;
-  priceAlerts: any[];
   activityLogs: ActivityLog[];
   handleClearActivityLogs: () => void;
 }
 
 export function ActivityTab({
   isGenerating,
-  priceAlerts,
   activityLogs,
   handleClearActivityLogs
 }: ActivityTabProps) {
@@ -22,22 +20,14 @@ export function ActivityTab({
           <h2 className="glow-text-cyan" style={styles.tabTitle}>CORE ACTIVITY AND COGNITION LOGS</h2>
           <p style={styles.tabSubtitle}>Real-time monitoring of background processes and chain-of-thought</p>
         </div>
-        <div style={{ display: 'flex', gap: '16px' }}>
-          <div style={{ ...styles.detailStatBox, minWidth: '140px' }}>
-            <span style={styles.detailStatLabel}>Current Status</span>
-            <span style={{ 
-              ...styles.detailStatValue, 
-              color: isGenerating ? 'var(--accent-cyan)' : 'var(--accent-green)' 
-            }}>
-              {isGenerating ? '🧠 COGNITION' : '🟢 STANDBY'}
-            </span>
-          </div>
-          <div style={{ ...styles.detailStatBox, minWidth: '140px' }}>
-            <span style={styles.detailStatLabel}>Active Alerts</span>
-            <span style={styles.detailStatValue}>
-              {priceAlerts.length} alerts
-            </span>
-          </div>
+        <div style={{ ...styles.detailStatBox, minWidth: '140px' }}>
+          <span style={styles.detailStatLabel}>Current Status</span>
+          <span style={{ 
+            ...styles.detailStatValue, 
+            color: isGenerating ? 'var(--accent-cyan)' : 'var(--accent-green)' 
+          }}>
+            {isGenerating ? '🧠 COGNITION' : '🟢 STANDBY'}
+          </span>
         </div>
       </div>
 

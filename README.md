@@ -153,9 +153,11 @@ If you wish to allow Hermes to manage your calendars:
 3. Complete the login flow. The generated `google_token.json` is automatically mapped into the docker container.
 
 ### 📓 Local Obsidian REST Integration
-1. Install the **Local REST API** plugin in Obsidian.
-2. Enable HTTPS and copy the generated API key.
-3. Configure `OBSIDIAN_API_KEY`, `OBSIDIAN_PORT`, and `OBSIDIAN_VAULT_PATH` in `.env`. Hermes will sync and index your vault chunks into the Qdrant RAG index in the background.
+1. With the root `hermes-web/docker-compose.yml`, Obsidian runs as a local web app at `https://127.0.0.1:3001`.
+2. The Obsidian config and vault data are stored under `hermes-web/obsidian`.
+3. Install the **Local REST API** plugin in Obsidian.
+4. Enable HTTPS, set the plugin port to `27124`, and copy the generated API key.
+5. Configure `OBSIDIAN_API_KEY`, `OBSIDIAN_PORT`, and `OBSIDIAN_VAULT_PATH` in `.env`. Hermes will sync and index your vault chunks into the Qdrant RAG index in the background.
 
 ---
 

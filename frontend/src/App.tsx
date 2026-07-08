@@ -44,7 +44,6 @@ import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
-import { SettingsTab } from './components/SettingsTab';
 import { AgentsAdminTab } from './components/AgentsAdminTab';
 import { OfficeTab } from './components/OfficeTab';
 
@@ -100,9 +99,6 @@ export default function App() {
   // Tools and system stats states
   const [timers, setTimers] = useState<{ id: string; label: string; duration?: number; time_left: number; status: string; created_at: string; type?: string; target_time?: string; interval_hours?: number; fire_count?: number; agent_id?: string; prompt?: string }[]>([]);
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
-
-  // Market & Price Alert States (only alerts count is kept for ActivityTab)
-  const [priceAlerts, setPriceAlerts] = useState<{ id: string; symbol: string; display_name: string; target_price: number; condition: string; created_at: string }[]>([]);
 
   const [uploads, setUploads] = useState<{ name: string; size_bytes: number }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -898,54 +894,6 @@ export default function App() {
       .catch(err => console.error('Error cancelling timer:', err));
   };
 
-  const fetchMarketPrices = () => {
-    fetch('/api/market/prices?symbols=TON,BTC,ETH,AAPL,TSLA')
-      .then(res => res.json())
-      .then(data => setMarketPrices(data))
-      .catch(err => console.log('Error fetching market prices:', err));
-  };
-
-  const fetchMarketAlerts = () => {
-    fetch('/api/market/alerts')
-      .then(res => res.json())
-      .then(data => setPriceAlerts(data))
-      .catch(err => console.log('Error fetching market alerts:', err));
-  };
-
-  const handleCreateAlert = () => {
-    if (!alertPrice) return;
-    fetch('/api/market/alerts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: alertSymbol,
-        target_price: parseFloat(alertPrice),
-        condition: alertCondition
-      })
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'success') {
-          setAlertPrice('');
-          fetchMarketAlerts();
-        }
-      })
-      .catch(err => console.log('Error creating alert:', err));
-  };
-
-  const handleCancelAlert = (id: string) => {
-    fetch(`/api/market/alerts/${id}`, {
-      method: 'DELETE'
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'success') {
-          fetchMarketAlerts();
-        }
-      })
-      .catch(err => console.log('Error cancelling alert:', err));
-  };
-
   const handleClearActivityLogs = () => {
     fetch('/api/activity/logs', {
       method: 'DELETE'
@@ -1051,21 +999,16 @@ export default function App() {
     fetchStats();
     fetchTimersData();
     fetchUploads();
-    fetchMarketAlerts();
 
     const statsInterval = setInterval(() => {
       fetchStats();
       fetchUploads();
     }, 5000);
     const timersInterval = setInterval(fetchTimersData, 2000);
-    const marketInterval = setInterval(() => {
-      fetchMarketAlerts();
-    }, 10000);
 
     return () => {
       clearInterval(statsInterval);
       clearInterval(timersInterval);
-      clearInterval(marketInterval);
     };
   }, [activeTab]);
 
@@ -1668,7 +1611,6 @@ export default function App() {
         {activeTab === 'activity' && (
           <ActivityTab
             isGenerating={isGenerating}
-            priceAlerts={priceAlerts}
             activityLogs={activityLogs}
             handleClearActivityLogs={handleClearActivityLogs}
           />
@@ -1772,9 +1714,6 @@ export default function App() {
           <MCPTab />
         )}
 
-        {activeTab === 'settings' && (
-          <SettingsTab language={language} setLanguage={setLanguage} t={t} />
-        )}
       </main>
 
       {/* New Session Custom Modal */}
