@@ -114,7 +114,7 @@ export function ConfigTab({
             className="form-input"
             rows={10}
           />
-          <span style={styles.formHelp}>Hardcodes the character, tone of communication, response style of Jarvis, and user addressing rules.</span>
+          <span style={styles.formHelp}>Hardcodes the character, tone of communication, response style of Vexa, and user addressing rules.</span>
         </div>
 
         <button type="submit" className="btn-primary" disabled={isSavingConfig} style={{ alignSelf: 'flex-start' }}>

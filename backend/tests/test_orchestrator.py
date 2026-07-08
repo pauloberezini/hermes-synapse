@@ -6,7 +6,7 @@ from backend.orchestrator import run_orchestration, AgentState
 async def test_orchestration_loop_success():
     # Mock call_llm inside orchestrator
     mock_plan = '{"steps": [{"agent": "research", "instructions": "поиск погоды"}, {"agent": "code", "instructions": "вычислить среднее"}]}'
-    mock_synth = "Ответ Джарвиса: погода умеренная, среднее значение 5."
+    mock_synth = "Ответ Vexa: погода умеренная, среднее значение 5."
     
     # We will mock the sub-agents and call_llm
     with patch("backend.orchestrator.call_llm") as mock_call, \
@@ -80,7 +80,7 @@ async def test_orchestration_loop_validation_retry_success():
     # Third response: synthesis response
     invalid_plan = '{"steps": [{"agent": "research"'
     valid_plan = '{"steps": [{"agent": "research", "instructions": "поиск погоды"}]}'
-    mock_synth = "Ответ Джарвиса: погода отличная."
+    mock_synth = "Ответ Vexa: погода отличная."
     
     with patch("backend.orchestrator.call_llm") as mock_call, \
          patch("backend.orchestrator.ResearchAgent.run", new_callable=AsyncMock) as mock_res_run, \
@@ -135,4 +135,3 @@ async def test_orchestration_loop_validation_retry_failure():
         
         traces = result["traces"]
         assert any(t["agent"] == "Orchestrator" and t["action"] == "Planning" and "Failed to generate structured plan after" in t["message"] for t in traces)
-

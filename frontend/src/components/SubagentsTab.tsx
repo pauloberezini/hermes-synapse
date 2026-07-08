@@ -308,7 +308,7 @@ export function SubagentsTab({
           >
             <MessageSquare size={16} style={{ color: 'var(--accent-cyan)' }} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Jarvis (Main)</span>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Vexa (Main)</span>
               <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>Personal Assistant</span>
             </div>
           </button>
@@ -489,7 +489,7 @@ export function SubagentsTab({
                           <div style={styles.msgHeader}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={msg.role === 'user' ? styles.userLabel : styles.assistantLabel}>
-                                {msg.role === 'user' ? 'CREATOR' : (currentChatId === 'dashboard' ? 'JARVIS' : (subagents.find(a => a.id === currentChatId)?.name.toUpperCase() || 'SUB-AGENT'))}
+                                {msg.role === 'user' ? 'CREATOR' : (currentChatId === 'dashboard' ? 'VEXA' : (subagents.find(a => a.id === currentChatId)?.name.toUpperCase() || 'SUB-AGENT'))}
                               </span>
                               {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
                                 <span style={{ fontSize: '0.7rem', color: 'var(--success)', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1px 5px', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.5px' }}>
@@ -539,7 +539,7 @@ export function SubagentsTab({
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
-                  placeholder={`Request for assistant "${currentChatId === 'dashboard' ? 'Jarvis' : (subagents.find(a => a.id === currentChatId)?.name || 'Sub-agent')}"...`}
+                  placeholder={`Request for assistant "${currentChatId === 'dashboard' ? 'Vexa' : (subagents.find(a => a.id === currentChatId)?.name || 'Sub-agent')}"...`}
                   style={styles.chatInput}
                   className="form-input"
                   disabled={!isConnected}

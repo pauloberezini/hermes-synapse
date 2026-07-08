@@ -120,7 +120,7 @@ export function ObsidianTab({ authToken }: ObsidianTabProps) {
     try {
       const r = await fetch('/api/obsidian/notes', {
         method: 'POST', headers,
-        body: JSON.stringify({ title: newTitle, content: newContent, folder: 'Jarvis' })
+        body: JSON.stringify({ title: newTitle, content: newContent, folder: 'Vexa' })
       });
       const data = await r.json();
       setCreateResult(data.message || data.error || JSON.stringify(data));

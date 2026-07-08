@@ -80,7 +80,9 @@ export interface SystemStats {
   disk_total_gb?: number | null;
   disk_used_gb?: number | null;
   status: string;
+  scope?: string;
   source?: string;
+  warning?: string;
   unavailable?: string[];
   error?: string | null;
 }

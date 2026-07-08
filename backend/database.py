@@ -128,8 +128,8 @@ def init_db():
         default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
         default_agents = [
             (
-                "jarvis", "Jarvis (Main)",
-                "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+                "jarvis", "Vexa (Main)",
+                "You are Vexa, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
                 default_model, "orchestrator", None, "", 100, 350
             ),
             (
@@ -182,8 +182,8 @@ def init_db():
         # Migration: upsert new default agents that don't exist yet,
         # and update existing ones if they still have old prompts.
         upserts = [
-            ("jarvis", "Jarvis (Main)",
-             "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+            ("jarvis", "Vexa (Main)",
+             "You are Vexa, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
              "orchestrator", None, "", 100, 350),
             ("research", "Search Agent",
              "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
@@ -224,6 +224,7 @@ def init_db():
                 WHERE subagents.system_prompt IN (
                     'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
                     'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
+                    'You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user''s request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.',
                     'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
                     'You are a research agent. Search for information on the internet using web_search.',
                     'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',

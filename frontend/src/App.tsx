@@ -17,14 +17,15 @@ import {
   ChevronDown,
   ChevronRight,
   Building2,
-  UserCog
+  UserCog,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AgentModel, SystemStats } from './types';
 import { styles } from './styles';
 import { translate, type Language } from './i18n';
 import { 
-  WAKE_WORDS, 
   playBeep, 
   playAlarmSound, 
   stopAlarmSound, 
@@ -57,8 +58,16 @@ export default function App() {
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => localStorage.getItem('hermes_sidebar_collapsed') === '1');
   const [language, setLanguageState] = useState<Language>(() => (localStorage.getItem('hermes_language') as Language) || 'ru');
   const t = useCallback((key: string) => translate(language, key), [language]);
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarCollapsed(prev => {
+      const next = !prev;
+      localStorage.setItem('hermes_sidebar_collapsed', next ? '1' : '0');
+      return next;
+    });
+  }, []);
   const setLanguage = useCallback((nextLanguage: Language) => {
     localStorage.setItem('hermes_language', nextLanguage);
     setLanguageState(nextLanguage);
@@ -102,7 +111,7 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [playingMsgIndex, setPlayingMsgIndex] = useState<number | null>(null);
   const [micEnabled, setMicEnabled] = useState(false);
-  const [micState, setMicState] = useState<'off' | 'listening' | 'capturing'>('off');
+  const [micState, setMicState] = useState<'off' | 'listening' | 'capturing' | 'transcribing'>('off');
   
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
@@ -117,10 +126,10 @@ export default function App() {
   const subagentChatEndRef = useRef<HTMLDivElement | null>(null);
   const lastSentTimeRef = useRef<number>(0);
   const ttsEnabledRef = useRef(true);       // ref so WS handler always sees current value
-  const recognitionRef = useRef<any>(null); // SpeechRecognition instance
-  const micStateRef = useRef<'off' | 'listening' | 'capturing'>('off');
-  const captureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingCommandRef = useRef('');
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const micStateRef = useRef<'off' | 'listening' | 'capturing' | 'transcribing'>('off');
 
   const [subagents, setSubagents] = useState<AgentModel[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string>(() => {
@@ -148,6 +157,12 @@ export default function App() {
   const [editAgentTemperature, setEditAgentTemperature] = useState(0.7);
   const [isUpdatingAgent, setIsUpdatingAgent] = useState(false);
   const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+
+  const navStyle = useCallback((tab: typeof activeTab) => ({
+    ...styles.navBtn,
+    ...(isSidebarCollapsed ? styles.navBtnCollapsed : {}),
+    ...(activeTab === tab ? styles.navBtnActive : {})
+  }), [activeTab, isSidebarCollapsed]);
 
   useEffect(() => {
     currentChatIdRef.current = currentChatId;
@@ -241,160 +256,171 @@ export default function App() {
   }, [playingMsgIndex]);
 
   // ── Voice command helpers ───────────────────────────────────────────────────
-  const sendVoiceCommand = useCallback((text: string) => {
-    const command = text.trim();
-    pendingCommandRef.current = '';
-    micStateRef.current = 'listening';
-    setMicState('listening');
-    if (!command) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    // Interrupt TTS before sending so Jarvis doesn't talk over himself
-    window.speechSynthesis?.cancel();
-    wsRef.current.send(JSON.stringify({ type: 'chat_message', content: command, chat_id: currentChatIdRef.current }));
-    setIsGenerating(true);
-  }, []);
-
-  const sendVoiceCommandRef = useRef(sendVoiceCommand);
-  useEffect(() => { sendVoiceCommandRef.current = sendVoiceCommand; }, [sendVoiceCommand]);
-
-  const scheduleSend = useCallback(() => {
-    if (captureTimerRef.current) clearTimeout(captureTimerRef.current);
-    captureTimerRef.current = setTimeout(() => {
-      sendVoiceCommandRef.current(pendingCommandRef.current);
-    }, 1800);
-  }, []);
-
-  const scheduleSendRef = useRef(scheduleSend);
-  useEffect(() => { scheduleSendRef.current = scheduleSend; }, [scheduleSend]);
-
-  // ── Mic useEffect — starts/stops SpeechRecognition ─────────────────────────
   useEffect(() => {
-    console.log('[Mic] useEffect fired, micEnabled=', micEnabled);
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { if (micEnabled) alert('Voice input is not supported by your browser'); return; }
-    if (!micEnabled) {
-      micStateRef.current = 'off';
+    micStateRef.current = micState;
+  }, [micState]);
+
+  const sendChatText = useCallback((text: string) => {
+    const command = text.trim();
+    if (!command || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
+
+    const now = Date.now();
+    if (now - lastSentTimeRef.current < 300) {
+      console.warn("Prevented duplicate message submission");
+      return false;
+    }
+    lastSentTimeRef.current = now;
+
+    window.speechSynthesis?.cancel();
+    setIsSpeaking(false);
+    setPlayingMsgIndex(null);
+    wsRef.current.send(JSON.stringify({
+      type: 'chat_message',
+      content: command,
+      chat_id: currentChatIdRef.current
+    }));
+    setIsGenerating(true);
+    return true;
+  }, []);
+
+  const resetVoiceRecorder = useCallback(() => {
+    voiceStreamRef.current?.getTracks().forEach(track => track.stop());
+    voiceStreamRef.current = null;
+    mediaRecorderRef.current = null;
+    voiceChunksRef.current = [];
+  }, []);
+
+  const submitVoiceBlob = useCallback(async (blob: Blob) => {
+    if (!blob.size) {
+      setMicEnabled(false);
       setMicState('off');
-      if (captureTimerRef.current) clearTimeout(captureTimerRef.current);
-      try { recognitionRef.current?.abort(); } catch (_) {}
-      recognitionRef.current = null;
       return;
     }
 
-    let active = true;
+    setMicEnabled(true);
+    setMicState('transcribing');
+    const formData = new FormData();
+    formData.append('file', blob, `vexa-voice-${Date.now()}.webm`);
 
-    const recognition = new SR();
-    recognitionRef.current = recognition;
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'ru-RU';
-    recognition.maxAlternatives = 1;
-
-    const stopWords = [
-      '\u0441\u0442\u043e\u043f',
-      '\u043c\u043e\u043b\u0447\u0438',
-      '\u043f\u043e\u043c\u043e\u043b\u0447\u0438',
-      '\u0445\u0432\u0430\u0442\u0438\u0442',
-      '\u0442\u0438\u0445\u043e',
-      '\u0432\u044b\u043a\u043b\u044e\u0447\u0438',
-      '\u043f\u0440\u0435\u043a\u0440\u0430\u0442\u0438',
-      '\u043e\u0442\u043c\u0435\u043d\u0430',
-      'stop', 'quiet', 'cancel'
-    ];
-
-    recognition.onresult = (event: any) => {
-      let interim = '';
-      let final = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) final += t; else interim += t;
-      }
-      const text = (final || interim).toLowerCase().trim();
-      console.log('[Mic] onresult text=', text, 'state=', micStateRef.current);
-      if (!text) return;
-
-      const words = text.split(/\s+/);
-      const isStopWord = words.some(w => stopWords.includes(w));
-      const hasWake = WAKE_WORDS.some(w => text.includes(w));
-
-      if ((hasWake && isStopWord) || (micStateRef.current === 'capturing' && isStopWord && words.length <= 2)) {
-        playBeep(600, 0.15);
-        setTimeout(() => playBeep(450, 0.20), 150);
-        window.speechSynthesis?.cancel();
-        setIsSpeaking(false);
-        setPlayingMsgIndex(null);
-        stopAlarmSound();
-        if (captureTimerRef.current) clearTimeout(captureTimerRef.current);
-        pendingCommandRef.current = '';
-        micStateRef.current = 'listening';
-        setMicState('listening');
-        return;
+    try {
+      const res = await fetch('/api/voice/transcribe', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Voice transcription failed.');
       }
 
-      if (micStateRef.current === 'listening') {
-        const hit = WAKE_WORDS.find(w => text.includes(w));
-        if (hit) {
-          const afterWake = text.substring(text.indexOf(hit) + hit.length).trim();
-          playBeep(880, 0.18);
-          setTimeout(() => playBeep(1100, 0.12), 200);
-          micStateRef.current = 'capturing';
-          setMicState('capturing');
-          pendingCommandRef.current = afterWake;
-          if (afterWake && final) { scheduleSendRef.current(); }
-        }
-      } else if (micStateRef.current === 'capturing') {
-        if (final) {
-          pendingCommandRef.current = (pendingCommandRef.current + ' ' + final.trim()).trim();
-          scheduleSendRef.current();
-        } else {
-          if (captureTimerRef.current) clearTimeout(captureTimerRef.current);
-          captureTimerRef.current = setTimeout(() => {
-            sendVoiceCommandRef.current(pendingCommandRef.current);
-          }, 1800);
-        }
+      const text = String(data.text || '').trim();
+      if (!text) {
+        throw new Error('No speech detected in recording.');
       }
-    };
 
-    recognition.onstart = () => console.log('[Mic] recognition STARTED');
-
-    recognition.onend = () => {
-      console.log('[Mic] recognition ENDED, active=', active);
-      if (active) {
-        setTimeout(() => {
-          if (active) {
-            console.log('[Mic] restarting recognition...');
-            try { recognition.start(); } catch (e) { console.error('[Mic] restart error:', e); }
-          }
-        }, 150);
-      }
-    };
-
-    recognition.onerror = (e: any) => {
-      console.warn('[Mic] recognition ERROR:', e.error);
-      if (e.error === 'no-speech' || e.error === 'aborted') return;
-      if (active) {
-        setTimeout(() => {
-          if (active) {
-            try { recognition.start(); } catch (err) { console.error('[Mic] restart after error failed:', err); }
-          }
-        }, 300);
-      }
-    };
-
-    micStateRef.current = 'listening';
-    setMicState('listening');
-    console.log('[Mic] calling recognition.start()');
-    try { recognition.start(); } catch (e) { console.error('[Mic] initial start error:', e); }
-
-    return () => {
-      console.log('[Mic] cleanup called, setting active=false');
-      active = false;
-      micStateRef.current = 'off';
+      const sent = sendChatText(text);
+      setInputValue(sent ? '' : text);
+      if (sent) playBeep(1040, 0.12);
+    } catch (err) {
+      console.error('Voice transcription error:', err);
+      alert(err instanceof Error ? err.message : 'Voice transcription failed.');
+    } finally {
+      setMicEnabled(false);
       setMicState('off');
-      try { recognition.abort(); } catch (_) {}
-      recognitionRef.current = null;
+    }
+  }, [sendChatText]);
+
+  const stopVoiceRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+  }, []);
+
+  const startVoiceRecording = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      alert('Voice recording is not supported by this browser.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
+
+      const mimeCandidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+      ];
+      const mimeType = mimeCandidates.find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const recordedType = recorder.mimeType || mimeType || 'audio/webm';
+        const blob = new Blob(voiceChunksRef.current, { type: recordedType });
+        resetVoiceRecorder();
+        submitVoiceBlob(blob);
+      };
+
+      recorder.onerror = (event) => {
+        console.error('Voice recorder error:', event);
+        resetVoiceRecorder();
+        setMicEnabled(false);
+        setMicState('off');
+        alert('Voice recorder failed.');
+      };
+
+      recorder.start();
+      setMicEnabled(true);
+      setMicState('capturing');
+      window.speechSynthesis?.cancel();
+      setIsSpeaking(false);
+      setPlayingMsgIndex(null);
+      stopAlarmSound();
+      playBeep(880, 0.12);
+    } catch (err) {
+      console.error('Microphone permission error:', err);
+      resetVoiceRecorder();
+      setMicEnabled(false);
+      setMicState('off');
+      alert('Microphone access was denied or is unavailable.');
+    }
+  }, [resetVoiceRecorder, submitVoiceBlob]);
+
+  const handleVoiceToggle = useCallback(() => {
+    if (micStateRef.current === 'capturing') {
+      playBeep(560, 0.10);
+      stopVoiceRecording();
+      return;
+    }
+    if (micStateRef.current === 'transcribing') return;
+    startVoiceRecording();
+  }, [startVoiceRecording, stopVoiceRecording]);
+
+  useEffect(() => {
+    return () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        try { recorder.stop(); } catch (_) {}
+      }
+      resetVoiceRecorder();
     };
-  }, [micEnabled]);
+  }, [resetVoiceRecorder]);
 
   // Request browser notification permission once on mount
   useEffect(() => {
@@ -554,8 +580,8 @@ export default function App() {
                   .replace(/\*\*|__|\*|_|`/g, '')
                   .trim()
                   .slice(0, 80);
-                new Notification('JARVIS', {
-                  body: preview || 'New Jarvis response',
+                new Notification('VEXA', {
+                  body: preview || 'New Vexa response',
                   icon: '/favicon.ico',
                   tag: 'jarvis-reply',
                   silent: false,
@@ -989,9 +1015,30 @@ export default function App() {
 
     const fetchStats = () => {
       fetch('/api/system/stats')
-        .then(res => res.json())
+        .then(async res => {
+          const contentType = res.headers.get('content-type') || '';
+          if (!res.ok || !contentType.includes('application/json')) {
+            throw new Error(`Telemetry API unavailable (${res.status})`);
+          }
+          return res.json();
+        })
         .then(data => setSystemStats(data))
-        .catch(err => console.log('Error fetching system stats:', err));
+        .catch(err => {
+          console.log('Error fetching system stats:', err);
+          setSystemStats({
+            available: false,
+            cpu_load_percent: null,
+            ram_used_percent: null,
+            ram_total_gb: null,
+            disk_used_percent: null,
+            disk_total_gb: null,
+            disk_used_gb: null,
+            status: 'unavailable',
+            source: 'backend telemetry API',
+            unavailable: ['cpu', 'ram', 'disk'],
+            error: err instanceof Error ? err.message : 'Telemetry API unavailable'
+          });
+        });
     };
 
     const fetchTimersData = () => {
@@ -1123,27 +1170,9 @@ export default function App() {
   // Send message through WebSocket
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    const now = Date.now();
-    if (now - lastSentTimeRef.current < 300) {
-      console.warn("Prevented duplicate message submission");
-      return;
+    if (sendChatText(inputValue)) {
+      setInputValue('');
     }
-    lastSentTimeRef.current = now;
-
-    window.speechSynthesis?.cancel();
-    setIsSpeaking(false);
-    setPlayingMsgIndex(null);
-
-    wsRef.current.send(JSON.stringify({
-      type: 'chat_message',
-      content: inputValue,
-      chat_id: currentChatId
-    }));
-    
-    setIsGenerating(true);
-    setInputValue('');
   };
 
   const handleClearChat = async () => {
@@ -1366,62 +1395,82 @@ export default function App() {
       )}
 
       {/* 1. Left Sidebar */}
-      <aside style={styles.sidebar} className={`glass-panel sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <aside
+        style={{ ...styles.sidebar, ...(isSidebarCollapsed ? styles.sidebarCollapsed : {}) }}
+        className={`glass-panel sidebar ${sidebarOpen ? 'sidebar-open' : ''} ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+      >
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          style={styles.sidebarToggle}
+          title={isSidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню до иконок'}
+          aria-label={isSidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню до иконок'}
+        >
+          {isSidebarCollapsed ? <ChevronsRight size={17} /> : <ChevronsLeft size={17} />}
+        </button>
         <div style={styles.logoArea}>
-          <div className="pulse-dot" style={{ width: 14, height: 14 }} />
-          <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>
+          <div className="hermes-logo-mark">
+            <div className="pulse-dot" />
+          </div>
+          <h1 className="glow-text-cyan sidebar-title" style={styles.logoTitle}>HERMES</h1>
         </div>
-        <p style={styles.logoSubtitle}>{t('appSubtitle')}</p>
+        <p className="sidebar-subtitle" style={styles.logoSubtitle}>{t('appSubtitle')}</p>
         
-        <nav style={styles.navMenu}>
+        <nav style={{ ...styles.navMenu, ...(isSidebarCollapsed ? styles.navMenuCollapsed : {}) }}>
           <button
-            style={{...styles.navBtn, ...(activeTab === 'chat' ? styles.navBtnActive : {})}}
+            style={navStyle('chat')}
             onClick={() => { setActiveTab('chat'); setSidebarOpen(false); }}
+            title={t('navChat')}
           >
             <MessageSquare size={18} />
             <span>{t('navChat')}</span>
           </button>
 
           <button
-            style={{...styles.navBtn, ...(activeTab === 'office' ? styles.navBtnActive : {})}}
+            style={navStyle('office')}
             onClick={() => { setActiveTab('office'); setSidebarOpen(false); }}
+            title={t('navOffice')}
           >
             <Building2 size={18} />
             <span>{t('navOffice')}</span>
           </button>
 
           <button
-            style={{...styles.navBtn, ...(activeTab === 'agents' ? styles.navBtnActive : {})}}
+            style={navStyle('agents')}
             onClick={() => { setActiveTab('agents'); setSidebarOpen(false); }}
+            title={t('navAgents')}
           >
             <UserCog size={18} />
             <span>{t('navAgents')}</span>
           </button>
           
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'schedule' ? styles.navBtnActive : {})}}
+          <button
+            style={navStyle('schedule')}
             onClick={() => { setActiveTab('schedule'); setSidebarOpen(false); }}
+            title="Schedules & Automation"
           >
             <Clock size={18} />
             <span>Schedules & Automation</span>
           </button>
 
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'network' ? styles.navBtnActive : {})}}
+          <button
+            style={navStyle('network')}
             onClick={() => { setActiveTab('network'); setSidebarOpen(false); }}
+            title={t('navArchitecture')}
           >
             <Network size={18} />
             <span>{t('navArchitecture')}</span>
           </button>
           
-          <button 
+          <button
             style={{
-              ...styles.navBtn, 
-              justifyContent: 'space-between', 
+              ...navStyle('settings'),
+              justifyContent: 'space-between',
               paddingRight: '12px',
               ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'settings'].includes(activeTab)) ? styles.navBtnActive : {})
             }}
             onClick={() => setSettingsOpen(!settingsOpen)}
+            title={t('navSettings')}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <Settings size={18} />
@@ -1431,78 +1480,87 @@ export default function App() {
           </button>
 
           {settingsOpen && (
-            <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
+            <div style={{ paddingLeft: isSidebarCollapsed ? 0 : '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
               <button
-                style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
+                style={navStyle('config')}
                 onClick={() => { setActiveTab('config'); setSidebarOpen(false); }}
+                title={t('navConfig')}
               >
                 <Settings size={18} />
                 <span>{t('navConfig')}</span>
               </button>
 
               <button
-                style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
+                style={navStyle('subagents')}
                 onClick={() => {
                   setActiveTab('subagents');
                   selectChat(currentChatId === 'dashboard' ? 'dashboard' : currentChatId);
                   setSidebarOpen(false);
                 }}
+                title={t('navSubagents')}
               >
                 <Layers size={18} />
                 <span>{t('navSubagents')}</span>
               </button>
 
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
+              <button
+                style={navStyle('mcp')}
                 onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); }}
+                title={t('navMcp')}
               >
                 <Server size={18} />
                 <span>{t('navMcp')}</span>
               </button>
 
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
+              <button
+                style={navStyle('obsidian')}
                 onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); }}
+                title={t('navObsidian')}
               >
                 <BookOpen size={18} />
                 <span>{t('navObsidian')}</span>
               </button>
               
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'memory' ? styles.navBtnActive : {})}}
+              <button
+                style={navStyle('memory')}
                 onClick={() => { setActiveTab('memory'); setSidebarOpen(false); }}
+                title={t('navMemory')}
               >
                 <Database size={18} />
                 <span>{t('navMemory')}</span>
               </button>
               
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'tools' ? styles.navBtnActive : {})}}
+              <button
+                style={navStyle('tools')}
                 onClick={() => { setActiveTab('tools'); setSidebarOpen(false); }}
+                title={t('navTools')}
               >
                 <Wrench size={18} />
                 <span>{t('navTools')}</span>
               </button>
 
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'logs' ? styles.navBtnActive : {})}}
+              <button
+                style={navStyle('logs')}
                 onClick={() => { setActiveTab('logs'); setSidebarOpen(false); }}
+                title={t('navLogs')}
               >
                 <Terminal size={18} />
                 <span>{t('navLogs')}</span>
               </button>
               
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
+              <button
+                style={navStyle('activity')}
                 onClick={() => { setActiveTab('activity'); setSidebarOpen(false); }}
+                title={t('navActivity')}
               >
                 <Activity size={18} />
                 <span>{t('navActivity')}</span>
               </button>
 
               <button
-                style={{...styles.navBtn, ...(activeTab === 'settings' ? styles.navBtnActive : {})}}
+                style={navStyle('settings')}
                 onClick={() => { setActiveTab('settings'); setSidebarOpen(false); }}
+                title={t('navSettings')}
               >
                 <Settings size={18} />
                 <span>{t('navSettings')}</span>
@@ -1512,12 +1570,12 @@ export default function App() {
         </nav>
 
         {/* Sidebar Status Info */}
-        <div style={styles.statusBox} className="glass-panel">
+        <div style={styles.statusBox} className="glass-panel sidebar-status">
           <div style={styles.statusRow}>
             <span style={styles.statusLabel}>{t('network')}:</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
-              <span style={{ fontSize: '0.85rem', color: isConnected ? '#10b981' : '#ef4444' }}>
+              <span style={{ fontSize: '0.85rem', color: isConnected ? 'var(--success)' : 'var(--danger)' }}>
                 {isConnected ? t('connected') : t('disconnected')}
               </span>
             </div>
@@ -1526,14 +1584,14 @@ export default function App() {
           <div style={styles.statusRow}>
             <span style={styles.statusLabel}>{t('llmCore')}:</span>
             <div style={styles.modelTag}>
-              <Cpu size={12} style={{ color: '#00f0ff' }} />
+              <Cpu size={12} style={{ color: 'var(--accent-cyan)' }} />
               <span style={styles.modelName}>{config.model.split('/').pop()}</span>
             </div>
           </div>
           
           <div style={styles.statusRow}>
             <span style={styles.statusLabel}>{t('callLogs')}:</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#00f0ff' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--accent-cyan)' }}>
               {logs.length} logs
             </span>
           </div>
@@ -1553,7 +1611,7 @@ export default function App() {
             setIsSpeaking={setIsSpeaking}
             micState={micState}
             micEnabled={micEnabled}
-            setMicEnabled={setMicEnabled}
+            onVoiceToggle={handleVoiceToggle}
             isTTSEnabled={isTTSEnabled}
             setIsTTSEnabled={setIsTTSEnabled}
             isGenerating={isGenerating}
@@ -1575,7 +1633,7 @@ export default function App() {
         )}
 
         {activeTab === 'office' && (
-          <OfficeTab t={t} />
+          <OfficeTab t={t} selectChat={selectChat} />
         )}
 
         {activeTab === 'agents' && (
@@ -1737,10 +1795,10 @@ export default function App() {
           <div style={{
             width: '400px',
             padding: '24px',
-            backgroundColor: 'rgba(15, 23, 42, 0.95)',
-            border: '1px solid rgba(0, 240, 255, 0.3)',
-            borderRadius: '12px',
-            boxShadow: '0 0 25px rgba(0, 240, 255, 0.25)',
+            backgroundColor: 'rgba(24, 23, 38, 0.96)',
+            border: '1px solid rgba(155, 136, 255, 0.34)',
+            borderRadius: '8px',
+            boxShadow: '0 22px 60px rgba(0, 0, 0, 0.4), 0 0 28px rgba(155, 136, 255, 0.2)',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px'
@@ -1803,8 +1861,8 @@ export default function App() {
                 style={{
                   padding: '8px 16px',
                   borderRadius: '6px',
-                  border: '1px solid rgba(0, 240, 255, 0.4)',
-                  backgroundColor: 'rgba(0, 240, 255, 0.1)',
+                  border: '1px solid rgba(155, 136, 255, 0.45)',
+                  backgroundColor: 'rgba(155, 136, 255, 0.14)',
                   color: '#fff',
                   cursor: 'pointer',
                   fontSize: '0.8rem',

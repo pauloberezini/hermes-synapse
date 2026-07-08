@@ -17,7 +17,7 @@ describe('ChatTab Component', () => {
     setIsSpeaking: vi.fn(),
     micState: 'off' as const,
     micEnabled: false,
-    setMicEnabled: vi.fn(),
+    onVoiceToggle: vi.fn(),
     isTTSEnabled: true,
     setIsTTSEnabled: vi.fn(),
     isGenerating: false,
@@ -43,14 +43,14 @@ describe('ChatTab Component', () => {
     expect(screen.getByText('Hello, Sir.')).toBeInTheDocument();
     expect(screen.getByText('What is the weather today?')).toBeInTheDocument();
     
-    expect(screen.getByText('JARVIS')).toBeInTheDocument();
+    expect(screen.getByText('VEXA')).toBeInTheDocument();
     expect(screen.getByText('CREATOR')).toBeInTheDocument();
   });
 
   it('triggers setInputValue on text entry', () => {
     render(<ChatTab {...defaultProps} />);
     
-    const input = screen.getByPlaceholderText(/Enter command or request for Jarvis/i);
+    const input = screen.getByPlaceholderText(/Enter command or request for Vexa/i);
     fireEvent.change(input, { target: { value: 'New message' } });
     
     expect(defaultProps.setInputValue).toHaveBeenCalledWith('New message');

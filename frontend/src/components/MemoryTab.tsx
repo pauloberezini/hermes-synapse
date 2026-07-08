@@ -41,7 +41,7 @@ export function MemoryTab({
       <div style={styles.tabHeader}>
         <div>
           <h2 className="glow-text-cyan" style={styles.tabTitle}>KNOWLEDGE BASE AND DOCUMENTS (RAG)</h2>
-          <p style={styles.tabSubtitle}>Adding notes and documents to Jarvis's long-term memory</p>
+          <p style={styles.tabSubtitle}>Adding notes and documents to Vexa's long-term memory</p>
         </div>
       </div>
 
@@ -67,7 +67,7 @@ export function MemoryTab({
             <textarea 
               value={noteContent} 
               onChange={e => setNoteContent(e.target.value)} 
-              placeholder="Enter memory text, facts, or instructions for Jarvis to remember..." 
+              placeholder="Enter memory text, facts, or instructions for Vexa to remember..." 
               style={styles.formTextarea} 
               className="form-input" 
               rows={8}
@@ -158,7 +158,7 @@ export function MemoryTab({
               )
             ) : (
               documents.length === 0 ? (
-                <div style={styles.emptyLogs}>Jarvis's memory is empty, Sir. Add a note on the left.</div>
+                <div style={styles.emptyLogs}>Vexa's memory is empty, Sir. Add a note on the left.</div>
               ) : (
                 documents.map((doc, idx) => (
                   <div 

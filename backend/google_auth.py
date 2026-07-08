@@ -179,7 +179,7 @@ def _verify(service):
         for c in items[:5]:
             flag = " ← primary" if c.get("primary") else ""
             print(f"    • {c.get('summary','(unnamed)')}{flag}")
-        print("\n🚀  Jarvis is authorized to read and write your Google Calendar!\n")
+        print("\n🚀  Vexa is authorized to read and write your Google Calendar!\n")
     except Exception as e:
         print(f"⚠️   Connected but list failed: {e}")
 

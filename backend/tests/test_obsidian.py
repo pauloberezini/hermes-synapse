@@ -100,7 +100,7 @@ async def test_create_note(mock_http):
     mock_resp = MagicMock(status_code=200)
     class_inst.put.return_value = mock_resp
     
-    success = await obsidian.create_note("Jarvis/Test.md", "# Test")
+    success = await obsidian.create_note("Vexa/Test.md", "# Test")
     assert success is True
     class_inst.put.assert_called_once()
 

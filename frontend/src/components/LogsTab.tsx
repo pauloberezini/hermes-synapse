@@ -120,7 +120,7 @@ export function LogsTab({
               )}
 
               <div style={styles.detailBlock}>
-                <h4 style={styles.detailBlockTitle}>Jarvis Generation Result</h4>
+                <h4 style={styles.detailBlockTitle}>Vexa Generation Result</h4>
                 <div style={{ ...styles.codeBlock, borderLeft: '3px solid var(--accent-cyan)' }}>
                   {selectedLog.assistant_response}
                 </div>

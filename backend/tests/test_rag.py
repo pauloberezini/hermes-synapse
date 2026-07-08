@@ -44,7 +44,7 @@ def test_chunk_text_empty():
 def test_index_and_search_rag():
     doc_id = "test-doc-123"
     title = "Секреты Тони"
-    content = "Мой секретный кодовый ключ от сейфа: 1080-Star-Jarvis."
+    content = "Мой секретный кодовый ключ от сейфа: 1080-Star-Vexa."
     
     # Index document
     success = rag.index_document(doc_id, title, content)
@@ -57,7 +57,7 @@ def test_index_and_search_rag():
     assert len(hits) == 1
     assert hits[0]["title"] == "Секреты Тони"
     assert hits[0]["doc_id"] == doc_id
-    assert "1080-Star-Jarvis" in hits[0]["content"]
+    assert "1080-Star-Vexa" in hits[0]["content"]
 
 def test_delete_document():
     doc_id = "test-doc-delete"

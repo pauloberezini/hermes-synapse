@@ -29,9 +29,9 @@ interface ChatTabProps {
   setInputValue: (val: string) => void;
   isSpeaking: boolean;
   setIsSpeaking: (val: boolean) => void;
-  micState: 'off' | 'listening' | 'capturing';
+  micState: 'off' | 'listening' | 'capturing' | 'transcribing';
   micEnabled: boolean;
-  setMicEnabled: (val: boolean | ((prev: boolean) => boolean)) => void;
+  onVoiceToggle: () => void;
   isTTSEnabled: boolean;
   setIsTTSEnabled: (val: boolean | ((prev: boolean) => boolean)) => void;
   isGenerating: boolean;
@@ -62,7 +62,7 @@ export function ChatTab({
   setIsSpeaking,
   micState,
   micEnabled,
-  setMicEnabled,
+  onVoiceToggle,
   isTTSEnabled,
   setIsTTSEnabled,
   isGenerating,
@@ -109,14 +109,20 @@ export function ChatTab({
           {/* Mic state indicator */}
           {micState === 'listening' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="pulse-dot" style={{ width: 10, height: 10, background: '#00f0ff', boxShadow: '0 0 6px #00f0ff' }} />
+              <span className="pulse-dot" style={{ width: 10, height: 10, background: 'var(--accent-cyan)', boxShadow: '0 0 8px rgba(115, 217, 255, 0.55)' }} />
               <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>MIC</span>
             </div>
           )}
           {micState === 'capturing' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="pulse-dot" style={{ width: 10, height: 10, background: '#ff9f00', boxShadow: '0 0 8px #ff9f00' }} />
-              <span style={{ fontSize: '0.75rem', color: '#ff9f00', fontFamily: 'var(--font-mono)' }}>REC</span>
+              <span className="pulse-dot" style={{ width: 10, height: 10, background: 'var(--accent-orange)', boxShadow: '0 0 8px rgba(255, 195, 72, 0.65)' }} />
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-orange)', fontFamily: 'var(--font-mono)' }}>REC</span>
+            </div>
+          )}
+          {micState === 'transcribing' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="pulse-dot" style={{ width: 10, height: 10, background: 'var(--accent-violet)', boxShadow: '0 0 8px rgba(155, 136, 255, 0.65)' }} />
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-violet)', fontFamily: 'var(--font-mono)' }}>STT</span>
             </div>
           )}
         </div>
@@ -124,25 +130,29 @@ export function ChatTab({
           {/* Mic toggle button */}
           <button
             id="mic-toggle-btn"
-            onClick={() => setMicEnabled(v => !v)}
+            onClick={onVoiceToggle}
             className="btn-primary"
-            title={micEnabled ? 'Turn off microphone' : 'Turn on microphone (say "Jarvis")'}
+            disabled={micState === 'transcribing' || !isConnected || isUploading}
+            title={micState === 'capturing' ? 'Stop recording and send to Vexa' : 'Record voice command'}
             style={{
               padding: '6px 12px',
               border: micState === 'capturing'
-                ? '1px solid rgba(255,159,0,0.6)'
+                ? '1px solid rgba(255, 195, 72, 0.62)'
+                : micState === 'transcribing'
+                  ? '1px solid rgba(155, 136, 255, 0.5)'
                 : micEnabled
-                  ? '1px solid rgba(0,240,255,0.4)'
+                  ? '1px solid rgba(115, 217, 255, 0.42)'
                   : '1px solid rgba(255,255,255,0.15)',
-              color: micState === 'capturing' ? '#ff9f00' : micEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
+              color: micState === 'capturing' ? 'var(--accent-orange)' : micState === 'transcribing' ? 'var(--accent-violet)' : micEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
               boxShadow: micState === 'capturing'
-                ? '0 0 10px rgba(255,159,0,0.3)'
-                : micEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
+                ? '0 0 10px rgba(255, 195, 72, 0.28)'
+                : micState === 'transcribing' ? '0 0 10px rgba(155, 136, 255, 0.24)'
+                : micEnabled ? '0 0 8px rgba(115, 217, 255, 0.22)' : 'none',
               transition: 'all 0.2s',
             }}
           >
             {micEnabled ? <Mic size={14} /> : <MicOff size={14} />}
-            <span>{micState === 'capturing' ? 'REC...' : micEnabled ? 'Mic on' : 'Mic off'}</span>
+            <span>{micState === 'capturing' ? 'REC...' : micState === 'transcribing' ? 'STT...' : 'Record'}</span>
           </button>
           {/* TTS toggle */}
           <button
@@ -156,17 +166,17 @@ export function ChatTab({
             style={{
               padding: '6px 12px',
               border: isTTSEnabled
-                ? '1px solid rgba(0, 240, 255, 0.4)'
+                ? '1px solid rgba(155, 136, 255, 0.45)'
                 : '1px solid rgba(255,255,255,0.15)',
-              color: isTTSEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
-              boxShadow: isTTSEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
+              color: isTTSEnabled ? 'var(--accent-violet)' : 'var(--text-dim)',
+              boxShadow: isTTSEnabled ? '0 0 8px rgba(155, 136, 255, 0.24)' : 'none',
               transition: 'all 0.2s',
             }}
           >
             {isTTSEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
             <span>{isTTSEnabled ? 'Voice on' : 'Voice off'}</span>
           </button>
-          <button onClick={handleClearChat} className="btn-primary" style={{ padding: '6px 12px', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444' }}>
+          <button onClick={handleClearChat} className="btn-primary" style={{ padding: '6px 12px', border: '1px solid rgba(255, 93, 143, 0.4)', color: 'var(--danger)' }}>
             <Trash2 size={14} />
             <span>Clear Chat</span>
           </button>
@@ -196,15 +206,15 @@ export function ChatTab({
               gap: '8px',
               padding: '10px 14px',
               borderRadius: '8px',
-              border: '1px solid rgba(0, 240, 255, 0.3)',
-              background: 'linear-gradient(135deg, rgba(0, 240, 255, 0.15) 0%, rgba(0, 240, 255, 0.02) 100%)',
+              border: '1px solid rgba(155, 136, 255, 0.34)',
+              background: 'linear-gradient(135deg, rgba(155, 136, 255, 0.18) 0%, rgba(115, 217, 255, 0.06) 100%)',
               color: '#fff',
               fontWeight: 600,
               fontSize: '0.85rem',
               cursor: 'pointer',
               transition: 'all 0.2s',
               width: '100%',
-              boxShadow: '0 0 10px rgba(0, 240, 255, 0.08)'
+              boxShadow: '0 0 12px rgba(155, 136, 255, 0.12)'
             }}
           >
             <Plus size={16} style={{ color: 'var(--accent-cyan)' }} />
@@ -231,7 +241,7 @@ export function ChatTab({
                     justifyContent: 'space-between',
                     padding: isDashboard ? '10px 12px' : '8px 12px',
                     borderRadius: '8px',
-                    border: isDashboard 
+                    border: isDashboard
                       ? (isActive ? '1px solid rgba(0, 240, 255, 0.7)' : '1px solid rgba(0, 240, 255, 0.25)')
                       : (isActive ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid rgba(255, 255, 255, 0.03)'),
                     backgroundColor: isDashboard
@@ -406,22 +416,22 @@ export function ChatTab({
                   <div 
                     style={{
                       ...styles.msgBubble,
-                      backgroundColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.12)' : 'rgba(0, 240, 255, 0.05)',
-                      borderColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.3)' : 'rgba(0, 240, 255, 0.2)',
+                      backgroundColor: msg.role === 'user' ? 'rgba(255, 195, 72, 0.12)' : 'rgba(155, 136, 255, 0.08)',
+                      borderColor: msg.role === 'user' ? 'rgba(255, 195, 72, 0.3)' : 'rgba(155, 136, 255, 0.22)',
                       alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start'
                     }}
                   >
                     <div style={styles.msgHeader}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={msg.role === 'user' ? styles.userLabel : styles.assistantLabel}>
-                          {msg.role === 'user' ? 'CREATOR' : 'JARVIS'}
+                          {msg.role === 'user' ? 'CREATOR' : 'VEXA'}
                         </span>
                         {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
                           <span style={{
                             fontSize: '0.7rem',
                             color: 'var(--success)',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                            border: '1px solid rgba(16, 185, 129, 0.2)',
+                            backgroundColor: 'rgba(95, 240, 191, 0.1)',
+                            border: '1px solid rgba(95, 240, 191, 0.2)',
                             padding: '1px 5px',
                             borderRadius: '4px',
                             fontFamily: 'var(--font-mono)',
@@ -444,14 +454,14 @@ export function ChatTab({
                               cursor: 'pointer',
                               padding: '2px 4px',
                               borderRadius: '4px',
-                              color: playingMsgIndex === index ? '#ff9f00' : 'rgba(0, 240, 255, 0.45)',
+                              color: playingMsgIndex === index ? 'var(--accent-orange)' : 'rgba(115, 217, 255, 0.58)',
                               display: 'flex',
                               alignItems: 'center',
                               transition: 'color 0.2s, transform 0.15s',
                               transform: playingMsgIndex === index ? 'scale(1.15)' : 'scale(1)',
                             }}
-                            onMouseEnter={e => (e.currentTarget.style.color = playingMsgIndex === index ? '#ff9f00' : 'var(--accent-cyan)')}
-                            onMouseLeave={e => (e.currentTarget.style.color = playingMsgIndex === index ? '#ff9f00' : 'rgba(0, 240, 255, 0.45)')}
+                            onMouseEnter={e => (e.currentTarget.style.color = playingMsgIndex === index ? 'var(--accent-orange)' : 'var(--accent-cyan)')}
+                            onMouseLeave={e => (e.currentTarget.style.color = playingMsgIndex === index ? 'var(--accent-orange)' : 'rgba(115, 217, 255, 0.58)')}
                           >
                             {playingMsgIndex === index
                               ? <Square size={12} fill="currentColor" />
@@ -510,7 +520,7 @@ export function ChatTab({
                   e.currentTarget.form?.requestSubmit();
                 }
               }}
-              placeholder={isUploading ? "Uploading file..." : "Enter command or request for Jarvis, Sir..."}
+              placeholder={isUploading ? "Uploading file..." : "Enter command or request for Vexa, Sir..."}
               style={styles.chatInput}
               className="form-input"
               disabled={!isConnected || isUploading}
@@ -526,9 +536,9 @@ export function ChatTab({
                 }}
                 className="btn-primary"
                 style={{
-                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                  color: '#ef4444',
-                  backgroundColor: 'rgba(239, 68, 68, 0.05)'
+                  border: '1px solid rgba(255, 93, 143, 0.4)',
+                  color: 'var(--danger)',
+                  backgroundColor: 'rgba(255, 93, 143, 0.06)'
                 }}
                 title="Interrupt current assistant speech"
               >

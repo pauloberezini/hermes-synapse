@@ -30,7 +30,7 @@ def test_save_and_retrieve_message():
     assert len(database.get_chat_history(session_id)) == 0
     
     # Save a user message
-    database.save_message(session_id, "user", "Привет, Джарвис")
+    database.save_message(session_id, "user", "Привет, Vexa")
     # Save an assistant reply
     database.save_message(session_id, "assistant", "Здравствуйте, Сэр")
     
@@ -38,7 +38,7 @@ def test_save_and_retrieve_message():
     history = database.get_chat_history(session_id)
     assert len(history) == 2
     assert history[0]["role"] == "user"
-    assert history[0]["content"] == "Привет, Джарвис"
+    assert history[0]["content"] == "Привет, Vexa"
     assert history[1]["role"] == "assistant"
     assert history[1]["content"] == "Здравствуйте, Сэр"
 

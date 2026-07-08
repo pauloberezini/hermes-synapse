@@ -43,7 +43,7 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/pauloberezini/jarvis",
-        "X-Title": "Jarvis Personal Assistant"
+        "X-Title": "Vexa Personal Assistant"
     }
     payload = {
         "model": model,
@@ -491,7 +491,7 @@ class AnalystAgent:
             f"ВАЖНОЕ ПРАВИЛО: Все загруженные пользователем файлы CSV и Excel сохраняются в папке '/app/backend/data/uploads/'.\n"
             f"Если в указаниях написано 'считай sales.csv', ваш скрипт должен прочитать файл из '/app/backend/data/uploads/sales.csv' с помощью pd.read_csv() (или pd.read_excel() для Excel).\n\n"
             f"КРИТИЧЕСКОЕ ТРЕБОВАНИЕ: Скрипт ОБЯЗАТЕЛЬНО должен сохранять сгенерированный график в файл по пути: '{plot_path}' с помощью plt.savefig('{plot_path}').\n"
-            f"Используйте plt.style.use('dark_background') для красивого темного оформления графика (под стиль Jarvis!).\n"
+            f"Используйте plt.style.use('dark_background') для красивого темного оформления графика (под стиль Vexa!).\n"
             f"Убедитесь, что вы импортировали matplotlib.pyplot as plt и pandas as pd. Не вызывайте plt.show(), только plt.savefig()."
         )
         

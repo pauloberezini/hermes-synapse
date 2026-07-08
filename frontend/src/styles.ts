@@ -1,71 +1,123 @@
 
 export const styles: Record<string, any> = {
   sidebar: {
+    position: 'relative' as const,
     width: '320px',
     height: '100%',
-    padding: '24px',
+    padding: '18px 20px 14px',
     display: 'flex',
     flexDirection: 'column' as const,
-    borderRight: 'var(--glass-border)',
-    borderRadius: '0px 16px 16px 0px',
-    backgroundColor: 'rgba(6, 9, 19, 0.85)',
+    overflow: 'hidden',
+    borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+    borderRadius: '0px',
+    background: 'linear-gradient(180deg, rgba(26, 22, 46, 0.9), rgba(12, 13, 23, 0.78))',
+    boxShadow: '18px 0 70px rgba(0, 0, 0, 0.22), inset -1px 0 0 rgba(255, 255, 255, 0.03)',
     zIndex: 10
+  },
+  sidebarCollapsed: {
+    width: '92px',
+    padding: '18px 14px 14px',
+    alignItems: 'center'
+  },
+  sidebarToggle: {
+    position: 'absolute' as const,
+    top: '18px',
+    right: '-16px',
+    zIndex: 20,
+    width: '32px',
+    height: '32px',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    background: 'rgba(24, 23, 38, 0.92)',
+    color: 'var(--text-muted)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.28)'
   },
   logoArea: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
-    marginBottom: '4px'
+    gap: '14px',
+    marginBottom: '4px',
+    flexShrink: 0
   },
   logoTitle: {
-    fontSize: '1.6rem',
+    fontSize: '1.42rem',
     fontWeight: 700,
-    letterSpacing: '3px'
+    letterSpacing: '0px',
+    lineHeight: 1
   },
   logoSubtitle: {
-    fontSize: '0.65rem',
+    fontSize: '0.62rem',
     color: 'var(--text-dim)',
     fontFamily: 'var(--font-mono)',
-    letterSpacing: '1px',
-    marginBottom: '32px',
-    paddingLeft: '26px'
+    letterSpacing: '3px',
+    textTransform: 'uppercase' as const,
+    marginBottom: '18px',
+    paddingLeft: '60px'
   },
   navMenu: {
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '12px',
-    flex: 1
+    gap: '7px',
+    flex: '1 1 auto',
+    minHeight: 0,
+    overflowY: 'auto' as const,
+    overflowX: 'hidden' as const,
+    paddingRight: '2px',
+    marginRight: '-2px'
+  },
+  navMenuCollapsed: {
+    width: '100%',
+    alignItems: 'center',
+    paddingRight: 0,
+    marginRight: 0
   },
   navBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    padding: '12px 16px',
+    minHeight: '42px',
+    padding: '9px 14px',
     borderRadius: '8px',
-    background: 'transparent',
+    background: 'rgba(255, 255, 255, 0.018)',
     border: '1px solid transparent',
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-sans)',
-    fontWeight: 500,
-    fontSize: '0.95rem',
+    fontWeight: 600,
+    fontSize: '0.78rem',
     cursor: 'pointer',
     textAlign: 'left' as const,
-    transition: 'all 0.2s ease-in-out'
+    transition: 'all 0.2s ease-in-out',
+    letterSpacing: '1.7px',
+    textTransform: 'uppercase' as const
   },
   navBtnActive: {
-    background: 'rgba(0, 240, 255, 0.08)',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
-    color: 'var(--accent-cyan)',
-    boxShadow: '0 0 15px rgba(0, 240, 255, 0.05)'
+    background: '#f7f4ff',
+    border: '1px solid rgba(255, 255, 255, 0.85)',
+    color: '#11121c',
+    boxShadow: '0 14px 34px rgba(155, 136, 255, 0.24)'
+  },
+  navBtnCollapsed: {
+    width: '48px',
+    height: '40px',
+    minHeight: '40px',
+    justifyContent: 'center',
+    padding: '0',
+    gap: '0'
   },
   statusBox: {
-    marginTop: 'auto',
-    padding: '16px',
+    marginTop: '10px',
+    padding: '12px',
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '12px',
-    fontSize: '0.9rem',
-    backgroundColor: 'rgba(8, 10, 15, 0.4)'
+    gap: '9px',
+    fontSize: '0.82rem',
+    background: 'rgba(255, 255, 255, 0.035)',
+    flexShrink: 0,
+    maxWidth: '100%'
   },
   statusRow: {
     display: 'flex',
@@ -81,8 +133,8 @@ export const styles: Record<string, any> = {
     gap: '6px',
     padding: '4px 8px',
     borderRadius: '6px',
-    backgroundColor: 'rgba(0, 240, 255, 0.05)',
-    border: '1px solid rgba(0, 240, 255, 0.15)'
+    backgroundColor: 'rgba(155, 136, 255, 0.1)',
+    border: '1px solid rgba(155, 136, 255, 0.24)'
   },
   modelName: {
     fontFamily: 'var(--font-mono)',
@@ -96,7 +148,7 @@ export const styles: Record<string, any> = {
   mainContent: {
     flex: 1,
     height: '100%',
-    padding: '32px',
+    padding: '34px',
     overflowY: 'auto' as const
   },
   tabWrapper: {
@@ -111,9 +163,9 @@ export const styles: Record<string, any> = {
     alignItems: 'center'
   },
   tabTitle: {
-    fontSize: '1.4rem',
-    fontWeight: 600,
-    letterSpacing: '1px',
+    fontSize: '1.55rem',
+    fontWeight: 700,
+    letterSpacing: '0px',
     marginBottom: '4px'
   },
   tabSubtitle: {
@@ -127,7 +179,7 @@ export const styles: Record<string, any> = {
     height: 'calc(100vh - 160px)',
     overflow: 'hidden',
     padding: '20px',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)'
+    background: 'rgba(18, 19, 32, 0.58)'
   },
   chatScroller: {
     flex: 1,
@@ -145,9 +197,9 @@ export const styles: Record<string, any> = {
   msgBubble: {
     maxWidth: '75%',
     padding: '14px 18px',
-    borderRadius: '12px',
+    borderRadius: '8px',
     border: '1px solid',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.18)'
   },
   msgHeader: {
     display: 'flex',
@@ -180,8 +232,8 @@ export const styles: Record<string, any> = {
     fontFamily: 'var(--font-mono)',
     padding: '4px 12px',
     borderRadius: '6px',
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    border: '1px solid rgba(255, 255, 255, 0.05)'
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    border: '1px solid rgba(255, 255, 255, 0.08)'
   },
   chatInputRow: {
     display: 'flex',
@@ -204,7 +256,7 @@ export const styles: Record<string, any> = {
     flexDirection: 'column' as const,
     gap: '24px',
     maxWidth: '800px',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)'
+    background: 'rgba(18, 19, 32, 0.58)'
   },
   formGroup: {
     display: 'flex',
@@ -246,7 +298,7 @@ export const styles: Record<string, any> = {
     flexDirection: 'column' as const,
     height: '100%',
     overflow: 'hidden',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)'
+    background: 'rgba(18, 19, 32, 0.58)'
   },
   logsListHeader: {
     padding: '16px',
@@ -328,7 +380,7 @@ export const styles: Record<string, any> = {
   logDetailWrapper: {
     height: '100%',
     overflowY: 'auto' as const,
-    backgroundColor: 'rgba(12, 17, 34, 0.5)',
+    background: 'rgba(18, 19, 32, 0.58)',
     padding: '24px'
   },
   logDetail: {
@@ -362,7 +414,7 @@ export const styles: Record<string, any> = {
   detailStatBox: {
     padding: '12px 16px',
     borderRadius: '8px',
-    backgroundColor: 'rgba(6, 9, 19, 0.4)',
+    backgroundColor: 'rgba(10, 11, 19, 0.46)',
     border: 'var(--glass-border)',
     display: 'flex',
     flexDirection: 'column' as const,
@@ -395,7 +447,7 @@ export const styles: Record<string, any> = {
   codeBlock: {
     padding: '16px',
     borderRadius: '8px',
-    backgroundColor: 'rgba(6, 9, 19, 0.6)',
+    backgroundColor: 'rgba(10, 11, 19, 0.62)',
     border: 'var(--glass-border)',
     fontFamily: 'var(--font-mono)',
     fontSize: '0.85rem',
@@ -427,7 +479,7 @@ export const styles: Record<string, any> = {
     flexDirection: 'column' as const,
     height: '100%',
     padding: '24px',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)'
+    background: 'rgba(18, 19, 32, 0.58)'
   },
   toolsPanelTitle: {
     fontSize: '1.1rem',
@@ -459,10 +511,10 @@ export const styles: Record<string, any> = {
   },
   progressBarBg: {
     height: '10px',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
     borderRadius: '5px',
     overflow: 'hidden',
-    border: '1px solid rgba(255, 255, 255, 0.03)'
+    border: '1px solid rgba(255, 255, 255, 0.05)'
   },
   progressBarFill: {
     height: '100%',
@@ -501,7 +553,7 @@ export const styles: Record<string, any> = {
   },
   toolsTimersWrapper: {
     padding: '24px',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)'
+    background: 'rgba(18, 19, 32, 0.58)'
   },
   timersList: {
     display: 'grid',
@@ -518,12 +570,12 @@ export const styles: Record<string, any> = {
   },
   timerCard: {
     border: '1px solid',
-    borderRadius: '10px',
+    borderRadius: '8px',
     padding: '16px',
     display: 'flex',
     flexDirection: 'column' as const,
     gap: '12px',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.18)',
     transition: 'all 0.3s ease'
   },
   timerHeader: {
@@ -563,7 +615,7 @@ export const styles: Record<string, any> = {
     color: 'var(--accent-cyan)',
     fontFamily: 'var(--font-mono)',
     lineHeight: 1.1,
-    textShadow: '0 0 10px rgba(0, 240, 255, 0.3)'
+    textShadow: '0 0 12px rgba(115, 217, 255, 0.32)'
   },
   countdownUnit: {
     fontSize: '0.7rem',
@@ -580,7 +632,7 @@ export const styles: Record<string, any> = {
   },
   toolsRegistryWrapper: {
     padding: '24px',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)',
+    background: 'rgba(18, 19, 32, 0.58)',
     marginBottom: '24px'
   },
   registeredToolsList: {
@@ -591,7 +643,7 @@ export const styles: Record<string, any> = {
   toolRegistryItem: {
     padding: '16px',
     borderRadius: '8px',
-    backgroundColor: 'rgba(6, 9, 19, 0.4)',
+    backgroundColor: 'rgba(10, 11, 19, 0.46)',
     border: 'var(--glass-border)'
   },
   toolRegistryHeader: {
@@ -629,7 +681,7 @@ export const styles: Record<string, any> = {
     borderRadius: '8px'
   },
   traceNode: {
-    borderLeft: '2px solid rgba(0, 240, 255, 0.2)',
+    borderLeft: '2px solid rgba(155, 136, 255, 0.24)',
     paddingLeft: '14px',
     display: 'flex',
     flexDirection: 'column' as const,
@@ -708,6 +760,285 @@ export const styles: Record<string, any> = {
     color: 'var(--text-dim)',
     fontFamily: 'var(--font-mono)'
   },
+  officePulseFrame: {
+    padding: '18px',
+    minHeight: '430px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '14px',
+    overflow: 'hidden',
+    flexShrink: 0,
+    background: 'radial-gradient(circle at 42% 28%, rgba(155, 136, 255, 0.18), transparent 36%), rgba(18, 19, 32, 0.62)'
+  },
+  officePulseHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    flexWrap: 'wrap' as const
+  },
+  officePulseTitle: {
+    margin: 0,
+    fontSize: '1.35rem',
+    color: 'var(--text-primary)',
+    lineHeight: 1.1
+  },
+  officePulseStats: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap' as const,
+    justifyContent: 'flex-end'
+  },
+  officePulseBody: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 320px',
+    gap: '16px',
+    minHeight: 0,
+    flex: 1
+  },
+  officePulseMap: {
+    position: 'relative' as const,
+    minHeight: '310px',
+    borderRadius: '8px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'linear-gradient(135deg, rgba(255,255,255,0.025), rgba(255,255,255,0.008))',
+    overflow: 'hidden'
+  },
+  officePulseSide: {
+    minWidth: 0,
+    borderRadius: '8px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'rgba(10, 11, 19, 0.42)',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '12px'
+  },
+  officePulseSideTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: 'var(--accent-cyan)',
+    fontSize: '0.86rem',
+    fontWeight: 700,
+    paddingBottom: '10px',
+    borderBottom: '1px solid rgba(255,255,255,0.08)'
+  },
+  officeSignalList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '8px',
+    overflowY: 'auto' as const,
+    minHeight: 0
+  },
+  officeSignalItem: {
+    width: '100%',
+    display: 'grid',
+    gridTemplateColumns: '10px minmax(0, 1fr) 16px',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px',
+    borderRadius: '8px',
+    border: '1px solid rgba(255,255,255,0.06)',
+    background: 'rgba(255,255,255,0.025)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    textAlign: 'left' as const
+  },
+  officeSignalText: {
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '3px'
+  },
+  officePulseFooter: {
+    marginTop: 'auto',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: 'var(--text-dim)',
+    fontSize: '0.75rem',
+    lineHeight: 1.35,
+    paddingTop: '10px',
+    borderTop: '1px solid rgba(255,255,255,0.08)'
+  },
+  sceneShell: {
+    position: 'relative' as const,
+    height: 'min(680px, calc(100vh - 190px))',
+    minHeight: '480px',
+    overflow: 'hidden',
+    borderRadius: '8px',
+    border: 'var(--glass-border)',
+    background: 'radial-gradient(circle at 50% 18%, rgba(155, 136, 255, 0.16), transparent 34%), rgba(8, 9, 16, 0.58)',
+    boxShadow: 'var(--glass-shadow)'
+  },
+  sceneHeader: {
+    position: 'absolute' as const,
+    top: '22px',
+    left: '24px',
+    right: '24px',
+    zIndex: 2,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    pointerEvents: 'none' as const
+  },
+  sceneKicker: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.72rem',
+    letterSpacing: '3px',
+    color: 'var(--accent-cyan)',
+    marginBottom: '8px'
+  },
+  sceneTitle: {
+    fontSize: '2.5rem',
+    lineHeight: 1,
+    letterSpacing: '0px',
+    margin: 0
+  },
+  sceneStats: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap' as const,
+    justifyContent: 'flex-end'
+  },
+  sceneStat: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.72rem',
+    letterSpacing: '1.8px',
+    padding: '9px 12px',
+    borderRadius: '999px',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    background: 'rgba(20, 20, 33, 0.6)',
+    backdropFilter: 'blur(14px)'
+  },
+  sceneCanvas: {
+    position: 'absolute' as const,
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 1
+  },
+  sceneLegend: {
+    position: 'absolute' as const,
+    left: '24px',
+    bottom: '24px',
+    zIndex: 2,
+    display: 'flex',
+    gap: '12px',
+    flexWrap: 'wrap' as const,
+    padding: '10px 12px',
+    borderRadius: '999px',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    background: 'rgba(20, 20, 33, 0.58)',
+    backdropFilter: 'blur(14px)'
+  },
+  sceneLegendItem: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '7px',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.72rem',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '1px'
+  },
+  sceneLegendDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    display: 'inline-block'
+  },
+  sceneInspector: {
+    position: 'absolute' as const,
+    right: '24px',
+    bottom: '24px',
+    zIndex: 2,
+    width: '320px',
+    padding: '18px',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    background: 'linear-gradient(145deg, rgba(28, 27, 45, 0.82), rgba(13, 14, 24, 0.76))',
+    boxShadow: '0 20px 55px rgba(0, 0, 0, 0.34)',
+    backdropFilter: 'blur(18px)',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '14px'
+  },
+  sceneError: {
+    position: 'absolute' as const,
+    inset: '82px 24px 24px',
+    zIndex: 3,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 93, 143, 0.28)',
+    background: 'rgba(20, 20, 33, 0.72)',
+    color: 'var(--danger)',
+    textAlign: 'center' as const,
+    padding: '24px',
+    lineHeight: 1.5
+  },
+  sceneInspectorHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    paddingBottom: '12px',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+  },
+  sceneInspectorTitle: {
+    margin: 0,
+    color: 'var(--text-primary)',
+    fontSize: '1rem',
+    fontWeight: 700
+  },
+  sceneInspectorMeta: {
+    margin: '3px 0 0',
+    color: 'var(--text-dim)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.72rem'
+  },
+  sceneMetricGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '10px'
+  },
+  sceneMetric: {
+    minWidth: 0,
+    padding: '10px',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+    background: 'rgba(255, 255, 255, 0.035)',
+    color: 'var(--text-muted)',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '6px',
+    fontSize: '0.73rem'
+  },
+  sceneInfoBlock: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '5px',
+    color: 'var(--text-muted)',
+    fontSize: '0.76rem'
+  },
+  sceneProgressTrack: {
+    height: '4px',
+    borderRadius: '999px',
+    overflow: 'hidden',
+    background: 'rgba(255, 255, 255, 0.09)'
+  },
+  sceneProgressFill: {
+    height: '100%',
+    borderRadius: '999px',
+    boxShadow: '0 0 12px currentColor'
+  },
+  sceneActionRow: {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'center'
+  },
   uploadBtn: {
     display: 'flex',
     alignItems: 'center',
@@ -715,8 +1046,8 @@ export const styles: Record<string, any> = {
     width: '44px',
     height: '44px',
     borderRadius: '8px',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
-    backgroundColor: 'rgba(0, 240, 255, 0.05)',
+    border: '1px solid rgba(155, 136, 255, 0.28)',
+    backgroundColor: 'rgba(155, 136, 255, 0.08)',
     cursor: 'pointer',
     transition: 'all 0.2s ease'
   }

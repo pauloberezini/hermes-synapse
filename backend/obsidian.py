@@ -1,12 +1,12 @@
 """
-obsidian.py — Jarvis integration with Obsidian via the "Local REST API" community plugin.
+obsidian.py — Vexa integration with Obsidian via the "Local REST API" community plugin.
 
 Setup:
   1. In Obsidian: Settings → Community Plugins → search "Local REST API" → Install & Enable
   2. Copy the generated API key into .env as OBSIDIAN_API_KEY=...
   3. Optionally set OBSIDIAN_PORT (default: 27123) and OBSIDIAN_VAULT_PATH
 
-The plugin exposes a local HTTPS server (self-signed cert) that Jarvis uses to
+The plugin exposes a local HTTPS server (self-signed cert) that Vexa uses to
 read/write vault files and trigger searches without any cloud dependency.
 """
 
@@ -66,7 +66,7 @@ async def is_reachable() -> bool:
 async def list_notes(folder: str = "") -> List[str]:
     """
     List all markdown files in the vault (or a specific folder), recursively.
-    Returns a list of vault-relative file paths, e.g. ["Daily/2026-06-23.md", "Jarvis/Ideas.md"]
+    Returns a list of vault-relative file paths, e.g. ["Daily/2026-06-23.md", "Vexa/Ideas.md"]
     """
     async def _list_dir(c: httpx.AsyncClient, dir_path: str) -> List[str]:
         """Recursively list .md files under dir_path (vault-relative, no leading slash)."""
@@ -122,7 +122,7 @@ async def read_note(note_path: str) -> Optional[str]:
 async def create_note(note_path: str, content: str) -> bool:
     """
     Create or overwrite a note in the vault.
-    e.g. create_note("Jarvis/Meeting Notes.md", "# Meeting\n...")
+    e.g. create_note("Vexa/Meeting Notes.md", "# Meeting\n...")
     Returns True on success.
     """
     try:

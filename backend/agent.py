@@ -140,7 +140,7 @@ except Exception as e:
     logger.warning(f"Could not load decision logs from database on startup: {e}")
 
 
-DEFAULT_SYSTEM_PROMPT = """You are Jarvis, a highly intelligent personal assistant inspired by Tony Stark's AI from Iron Man. 
+DEFAULT_SYSTEM_PROMPT = """You are Vexa, a highly intelligent personal assistant inspired by Tony Stark's AI from Iron Man. 
 
 Your character and communication rules:
 1. Address the user exclusively as "Sir" (or in the plural "Sirs" if appropriate, but in a one-on-one dialogue, always "Sir").
@@ -200,8 +200,8 @@ CRITICAL RULES FOR OBSIDIAN:
     Tech           — technology, tools, code, tutorials
     Books          — books, summaries, quotes
     Meetings       — meetings, calls, agreements
-    Jarvis         — service records without a clear category
-- NEVER ask Sir where to store a note — decide on your own. Subfolders are encouraged (e.g., Research/AI, Projects/Jarvis).
+    Vexa           — service records without a clear category
+- NEVER ask Sir where to store a note — decide on your own. Subfolders are encouraged (e.g., Research/AI, Projects/Vexa).
 
 If Sir asks what you can do, or requests info about a specific skill, describe its capabilities in a detailed, polite, and signature manner using these user-friendly names. Never use technical function names like "get_weather" in dialogue unless Sir explicitly asks for them.
 """
@@ -493,7 +493,7 @@ class JarvisAgent:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/pauloberezini/jarvis",
-            "X-Title": "Jarvis Personal Assistant"
+            "X-Title": "Vexa Personal Assistant"
         }
 
         start_time = time.time()
@@ -549,7 +549,7 @@ class JarvisAgent:
                         # Fallback: if Gemini returned empty text content after executing tools,
                         # request a verbal confirmation so the user is never left with an empty bubble
                         if not response_text.strip() and tool_executed:
-                            logger.info("Jarvis returned empty response content after tool execution. Requesting final verbal confirmation...")
+                            logger.info("Vexa returned empty response content after tool execution. Requesting final verbal confirmation...")
                             
                             # Check if any tool returned an error
                             errors = []
@@ -567,10 +567,10 @@ class JarvisAgent:
                                 error_text = ", ".join(errors)
                                 fallback_prompt = (
                                     f"При выполнении действий произошли ошибки: {error_text}. "
-                                    f"Пожалуйста, сообщите об этом Сэру в вежливом и лаконичном стиле Джарвиса, объяснив причину неудачи."
+                                    f"Пожалуйста, сообщите об этом Сэру в вежливом и лаконичном стиле Vexa, объяснив причину неудачи."
                                 )
                             else:
-                                fallback_prompt = "Пожалуйста, подтвердите Сэру кратким отчетом в своем фирменном стиле Джарвиса, что действия успешно завершены."
+                                fallback_prompt = "Пожалуйста, подтвердите Сэру кратким отчетом в своем фирменном стиле Vexa, что действия успешно завершены."
                                 
                             messages.append({
                                 "role": "user",
@@ -622,7 +622,7 @@ class JarvisAgent:
                         break
                         
                     # LLM decided to execute one or more tools
-                    logger.info(f"Jarvis selected tools: {[tc.get('function', {}).get('name') for tc in tool_calls]}")
+                    logger.info(f"Vexa selected tools: {[tc.get('function', {}).get('name') for tc in tool_calls]}")
                     tool_executed = True
                     
                     from backend.activity_logger import log_activity
@@ -785,7 +785,7 @@ class JarvisAgent:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/pauloberezini/jarvis",
-            "X-Title": f"Jarvis - {session_id}"
+            "X-Title": f"Vexa - {session_id}"
         }
 
         # Subagents are limited to safe information-gathering tools only

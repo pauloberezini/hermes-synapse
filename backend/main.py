@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -122,8 +122,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Hermes Jarvis Backend",
-    description="Backend services for the Jarvis AI Personal Assistant",
+    title="Hermes Vexa Backend",
+    description="Backend services for the Vexa AI Personal Assistant",
     lifespan=lifespan
 )
 
@@ -315,8 +315,63 @@ async def upload_file(file: UploadFile = File(...)):
         return {"status": "success", "filename": file.filename, "filepath": file_path}
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
-        from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+
+@app.get("/api/voice/status")
+async def voice_status_api():
+    from backend.voice import get_voice_status
+    return get_voice_status()
+
+
+@app.post("/api/voice/transcribe")
+async def transcribe_voice_api(file: UploadFile = File(...), language: Optional[str] = None):
+    import asyncio
+    import os
+    import shutil
+    import tempfile
+    from backend.voice import VoiceTranscriptionError, transcribe_audio_file
+
+    max_mb = float(os.getenv("VOICE_MAX_UPLOAD_MB", "25"))
+    voice_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "voice")
+    os.makedirs(voice_dir, exist_ok=True)
+
+    original_name = file.filename or "voice.webm"
+    _, ext = os.path.splitext(original_name)
+    if not ext:
+        ext = ".webm"
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="hermes_voice_", suffix=ext, dir=voice_dir, delete=False) as tmp:
+            temp_path = tmp.name
+            shutil.copyfileobj(file.file, tmp)
+
+        size_bytes = os.path.getsize(temp_path)
+        if size_bytes == 0:
+            raise HTTPException(status_code=400, detail="Uploaded audio is empty.")
+        if size_bytes > max_mb * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"Audio is larger than {max_mb:g} MB.")
+
+        result = await asyncio.to_thread(transcribe_audio_file, temp_path, language)
+        text = (result.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="No speech detected in uploaded audio.")
+
+        return {"status": "success", **result, "size_bytes": size_bytes}
+    except HTTPException:
+        raise
+    except VoiceTranscriptionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Voice transcription failed")
+        raise HTTPException(status_code=500, detail=f"Voice transcription failed: {exc}") from exc
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 @app.get("/api/uploads")
 async def list_uploads():
@@ -763,7 +818,7 @@ async def fork_history_session(session_id: str):
 class ObsidianNoteCreate(BaseModel):
     title: str
     content: str
-    folder: str = "Jarvis"
+    folder: str = "Vexa"
 
 @app.get("/api/obsidian/status")
 async def obsidian_status():

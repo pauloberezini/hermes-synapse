@@ -1,6 +1,6 @@
-# 🏛️ Project Hermes (Jarvis): Unified Roadmap and Specification
+# 🏛️ Project Hermes (Vexa): Unified Roadmap and Specification
 
-This document consolidates the technical specification, user guide, business model, and marketing strategy for the **Hermes (Jarvis Agent Network)** system.
+This document consolidates the technical specification, user guide, business model, and marketing strategy for the **Hermes (Vexa Agent Network)** system.
 
 ---
 
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS subagents (
     * `backgroundPosition = panOffset`
   * This preserves the illusion of an infinite canvas with zero boundaries.
 * **All-Draggable Nodes**:
-  * Every card on the canvas is draggable, including the root `JARVIS` node and static `Skill` cards.
+  * Every card on the canvas is draggable, including the root `VEXA` node and static `Skill` cards.
   * Skill positions are saved in `localStorage` (`jarvis_skill_positions`), and agent positions are synchronized via `/api/subagents/positions` to the database.
 * **Connection Routing**:
   * Orchestrator output port (`node.x + 220, node.y + 50`) maps to agent input port (`node.x, node.y + 50`) to set the `parent_id` link.
@@ -154,9 +154,9 @@ CREATE TABLE IF NOT EXISTS subagents (
 
 You can create and manage specialized sub-agents through two main interfaces:
 
-### Method 1: Conversational Prompts via Jarvis Chat
+### Method 1: Conversational Prompts via Vexa Chat
 Simply ask the main orchestrator to configure and register a new agent:
-> *"Jarvis, create a sub-agent to help me analyze football matches. Make him a professional sports analyst using the deepseek model."*
+> *"Vexa, create a sub-agent to help me analyze football matches. Make him a professional sports analyst using the deepseek model."*
 
 ### Method 2: Visual Canvas (Sub-agents Factory)
 Go to the visual "Subagents" tab on the Web Dashboard:
@@ -172,7 +172,7 @@ Go to the visual "Subagents" tab on the Web Dashboard:
 
 Hermes is positioned at the intersection of visual ETL pipelines and multi-agent code frameworks:
 
-| Feature | Hermes (Jarvis) | n8n / Make | Flowise / LangFlow | AutoGen / CrewAI / LangGraph |
+| Feature | Hermes (Vexa) | n8n / Make | Flowise / LangFlow | AutoGen / CrewAI / LangGraph |
 | :--- | :--- | :--- | :--- | :--- |
 | **Execution Logic**| Non-deterministic (AI builds plan dynamically) | Deterministic (Hardcoded workflow logic) | Visual chains of LLM prompts | Code-defined agent graphs |
 | **User Interface** | Interactive SVG Canvas + isolated chats | Node-editor for API pipelines | Visual chain designer | CLI / API (No native dashboard) |

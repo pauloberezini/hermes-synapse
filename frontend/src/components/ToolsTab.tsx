@@ -16,6 +16,22 @@ export function ToolsTab({
   systemStats,
   uploads
 }: ToolsTabProps) {
+  const telemetryAvailable = systemStats?.available !== false && systemStats?.status !== 'unavailable';
+  const telemetryStatusLabel = !systemStats
+    ? 'LOADING'
+    : systemStats.status === 'unavailable'
+      ? 'UNAVAILABLE'
+      : systemStats.status === 'partial'
+        ? 'PARTIAL'
+        : systemStats.scope === 'backend_runtime'
+          ? 'RUNTIME'
+          : systemStats.status.toUpperCase();
+  const telemetryStatusColor = !systemStats
+    ? 'var(--text-muted)'
+    : telemetryAvailable && systemStats.status !== 'partial'
+      ? 'var(--success)'
+      : 'var(--warning)';
+
   const renderMetric = (
     label: string,
     value: number | null | undefined,
@@ -48,7 +64,7 @@ export function ToolsTab({
       <div style={styles.tabHeader}>
         <div>
           <h2 className="glow-text-cyan" style={styles.tabTitle}>TOOLS AND MONITORING</h2>
-          <p style={styles.tabSubtitle}>Monitoring of system metrics and background processes</p>
+          <p style={styles.tabSubtitle}>Runtime telemetry from the backend process plus background tools</p>
         </div>
       </div>
 
@@ -60,7 +76,7 @@ export function ToolsTab({
           <div style={{ ...styles.toolsMetricsWrapper, height: 'auto', flexShrink: 0 }} className="glass-panel">
             <h3 style={styles.toolsPanelTitle}>
               <Activity size={18} style={{ color: 'var(--accent-cyan)' }} />
-              <span>System Telemetry</span>
+              <span>Backend Runtime Telemetry</span>
             </h3>
             
             {systemStats ? (
@@ -83,6 +99,20 @@ export function ToolsTab({
                   </div>
                 )}
 
+                {(systemStats.scope === 'backend_runtime' || systemStats.warning) && (
+                  <div style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(115, 217, 255, 0.2)',
+                    background: 'rgba(115, 217, 255, 0.06)',
+                    color: 'var(--text-muted)',
+                    fontSize: '0.78rem',
+                    lineHeight: 1.45,
+                  }}>
+                    {systemStats.warning || 'Metrics describe the backend runtime, not necessarily the whole physical host.'}
+                  </div>
+                )}
+
                 {systemStats.source && (
                   <div style={styles.metricHelpText}>
                     Source: {systemStats.source}
@@ -90,11 +120,11 @@ export function ToolsTab({
                 )}
 
                 <div style={styles.telemetryStatusRow}>
-                  <span style={{ color: 'var(--text-muted)' }}>Core Status:</span>
+                  <span style={{ color: 'var(--text-muted)' }}>Telemetry Status:</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="pulse-dot" />
-                    <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem' }}>
-                      {systemStats.status.toUpperCase()}
+                    <span className={`pulse-dot ${telemetryAvailable ? '' : 'danger'}`} />
+                    <span style={{ color: telemetryStatusColor, fontWeight: 600, fontSize: '0.85rem' }}>
+                      {telemetryStatusLabel}
                     </span>
                   </div>
                 </div>
@@ -139,7 +169,7 @@ export function ToolsTab({
 
         {/* Right Column: Active Sub-agents & Core Tools */}
         <div style={styles.toolsContentRight}>
-          
+
           {/* Active Sub-agents (Orchestrator Graph) */}
           <div className="glass-panel" style={{ ...styles.toolsRegistryWrapper, marginBottom: '0px' }}>
             <h3 style={styles.toolsPanelTitle}>
@@ -226,7 +256,7 @@ export function ToolsTab({
                   <span style={styles.toolRegistryTag}>utility</span>
                 </div>
                 <p style={styles.toolRegistryDesc}>
-                  Requests current meteorological conditions in the specified city. Accompanied by Jarvis's signature weather report.
+                  Requests current meteorological conditions in the specified city. Accompanied by Vexa's signature weather report.
                 </p>
               </div>
             </div>

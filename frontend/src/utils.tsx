@@ -361,7 +361,7 @@ export const formatTimeLeft = (seconds: number) => {
 };
 
 // Wake-word config
-export const WAKE_WORDS = ['jarvis', 'джарвис', 'жарвис', 'джарвиз', 'харвис'];
+export const WAKE_WORDS = ['vexa', 'векса', 'вексу', 'вексе', 'jarvis', 'джарвис', 'жарвис', 'джарвиз', 'харвис'];
 
 // Sound Player utilities
 export const playBeep = (freq = 880, dur = 0.25) => {

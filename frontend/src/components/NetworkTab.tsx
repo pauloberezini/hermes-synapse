@@ -612,7 +612,7 @@ export function NetworkTab({
             }}
           >
             {/* Render connection lines */}
-            {/* Main Jarvis Connections */}
+            {/* Main Vexa Connections */}
             {subagents.map(n => {
               if (n.parent_id === 'jarvis') {
                 const jarvisNode = subagents.find(p => p.id === 'jarvis') || { x: 100, y: 200 };
@@ -742,11 +742,11 @@ export function NetworkTab({
 
           {/* 2. Custom nodes (Orchestrators, Sub-orchestrators & Sub-agents) */}
           {subagents.map(node => {
-            const isJarvis = node.id === 'jarvis';
+            const isVexa = node.id === 'jarvis';
             const isOrch = node.agent_type === 'orchestrator' || node.agent_type === 'sub-orchestrator';
             const isSelected = selectedNodes.some(sn => sn.id === node.id && !sn.isSkill);
-            const borderColor = isSelected ? '#ffd200' : (isJarvis ? 'var(--accent-cyan)' : (isOrch ? '#8b5cf6' : 'var(--accent-orange)'));
-            const glowColor = isSelected ? 'rgba(255, 210, 0, 0.45)' : (isJarvis ? 'rgba(0, 240, 255, 0.2)' : (isOrch ? 'rgba(139, 92, 246, 0.25)' : 'rgba(255, 159, 0, 0.2)'));
+            const borderColor = isSelected ? '#ffd200' : (isVexa ? 'var(--accent-cyan)' : (isOrch ? '#8b5cf6' : 'var(--accent-orange)'));
+            const glowColor = isSelected ? 'rgba(255, 210, 0, 0.45)' : (isVexa ? 'rgba(0, 240, 255, 0.2)' : (isOrch ? 'rgba(139, 92, 246, 0.25)' : 'rgba(255, 159, 0, 0.2)'));
             const borderWidth = isSelected ? '2px' : '1.5px';
             const glowWidth = isSelected ? '18px' : '12px';
             
@@ -803,7 +803,7 @@ export function NetworkTab({
                 </div>
 
                 {/* Left input handle port */}
-                {!isJarvis && (
+                {!isVexa && (
                   <div 
                     style={{
                       position: 'absolute',
@@ -1105,7 +1105,7 @@ export function NetworkTab({
                 className="form-input"
               >
                 <option value="">None (Root Node)</option>
-                <option value="jarvis">Jarvis (Main)</option>
+                <option value="jarvis">Vexa (Main)</option>
                 {subagents
                   .filter(n => n.id !== selectedNodeId && (n.agent_type === 'orchestrator' || n.agent_type === 'sub-orchestrator'))
                   .map(n => <option key={n.id} value={n.id}>{n.name}</option>)
@@ -1229,7 +1229,7 @@ export function NetworkTab({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Parent Node</label>
                 <select value={addParent} onChange={e => setAddParent(e.target.value)} className="form-input">
-                  <option value="jarvis">Jarvis (Main)</option>
+                  <option value="jarvis">Vexa (Main)</option>
                   {subagents
                     .filter(n => n.agent_type === 'orchestrator' || n.agent_type === 'sub-orchestrator')
                     .map(n => <option key={n.id} value={n.id}>{n.name}</option>)

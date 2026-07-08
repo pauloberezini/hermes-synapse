@@ -2,6 +2,8 @@ import os
 import logging
 import io
 import re
+import asyncio
+import tempfile
 from functools import wraps
 from telegram import Update
 from telegram.ext import (
@@ -66,7 +68,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     greeting = (
         f"Greetings, Sir (@{username}). I am Hermes, your personal "
-        f"AI assistant with Jarvis protocols. The system is in standby mode. "
+        f"AI assistant with Vexa protocols. The system is in standby mode. "
         f"How may I help you?"
     )
     
@@ -130,18 +132,9 @@ def get_report_filename(query: str) -> str:
         return "report.md"
     return f"{clean[:30].lower()}_report.md"
 
-@admin_only
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes any text message, runs agent loop, sends response, and broadcasts to dashboard."""
-    if not _is_allowed_chat(update):
-        logger.warning("Ignoring message from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
-        return
-
-    if not update.message or not update.message.text:
-        return
-
+async def _process_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
+    """Runs the agent loop for a text command from Telegram and mirrors it to the dashboard."""
     chat_id = update.effective_chat.id
-    user_text = update.message.text
     
     # Broadcast user's message to dashboard UI immediately
     await manager.broadcast({
@@ -285,6 +278,67 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "logs": DECISION_LOGS[:20]  # Send last 20 logs
     })
 
+@admin_only
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes any text message, runs agent loop, sends response, and broadcasts to dashboard."""
+    if not _is_allowed_chat(update):
+        logger.warning("Ignoring message from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
+        return
+
+    if not update.message or not update.message.text:
+        return
+
+    await _process_user_text(update, context, update.message.text)
+
+
+@admin_only
+async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Downloads a Telegram voice/audio message, transcribes it locally, then handles it like text."""
+    if not _is_allowed_chat(update):
+        logger.warning("Ignoring voice message from unauthorized chat_id=%s", update.effective_chat.id if update.effective_chat else None)
+        return
+
+    if not update.message:
+        return
+
+    voice = update.message.voice
+    audio = update.message.audio
+    document = update.message.document
+    telegram_file_ref = voice or audio or document
+    if not telegram_file_ref:
+        return
+
+    chat_id = update.effective_chat.id
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    suffix = ".oga" if voice else os.path.splitext(getattr(telegram_file_ref, "file_name", "") or "")[1] or ".audio"
+    temp_path = None
+    try:
+        tg_file = await telegram_file_ref.get_file()
+        with tempfile.NamedTemporaryFile(prefix="hermes_tg_voice_", suffix=suffix, delete=False) as tmp:
+            temp_path = tmp.name
+
+        await tg_file.download_to_drive(temp_path)
+
+        from backend.voice import transcribe_audio_file
+        result = await asyncio.to_thread(transcribe_audio_file, temp_path)
+        user_text = (result.get("text") or "").strip()
+        if not user_text:
+            await update.message.reply_text("Sir, I could not detect speech in this voice message.")
+            return
+
+        await update.message.reply_text(f"🎙️ Распознано: {user_text}")
+        await _process_user_text(update, context, user_text)
+    except Exception as exc:
+        logger.exception("Telegram voice transcription failed")
+        await update.message.reply_text(f"Voice transcription is unavailable, Sir: {exc}")
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
 async def init_bot() -> Application:
     """Initializes the Telegram bot application, binds handlers, and starts polling."""
     global telegram_app
@@ -302,6 +356,7 @@ async def init_bot() -> Application:
     telegram_app.add_handler(CommandHandler("status", status_command))
     
     # Bind message handlers
+    telegram_app.add_handler(MessageHandler((filters.VOICE | filters.AUDIO) & ~filters.COMMAND, voice_handler))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
     # Initialize and start updater loop

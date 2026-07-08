@@ -4,7 +4,7 @@
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Docker: Supported](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
 
-**Hermes** is a low-code, self-hosted framework for building managed networks of AI agents. Inspired by JARVIS, it combines a beautiful React visual canvas (drag-and-drop node graph) with an autonomous planning backend.
+**Hermes** is a low-code, self-hosted framework for building managed networks of AI agents. Powered by Vexa, it combines a beautiful React visual canvas (drag-and-drop node graph) with an autonomous planning backend.
 
 Unlike deterministic workflow builders (like n8n), Hermes resolves complex user requests on the fly using a dynamic LLM planning loop. Unlike chaotic multi-agent groups (like AutoGen), Hermes uses a strict Directed Acyclic Graph (DAG) hierarchy to keep agents coordinated and prevent infinite feedback loops.
 
@@ -15,7 +15,7 @@ Unlike deterministic workflow builders (like n8n), Hermes resolves complex user 
 [![Hermes Synapse Demo Video](https://img.youtube.com/vi/3GFh-1Gglno/maxresdefault.jpg)](https://youtu.be/3GFh-1Gglno)
 
 The built-in Web Dashboard is running on port `9119` and features:
-1. **Communication Hub**: Live chat interface with the main orchestrator (Jarvis) or isolated sub-agents.
+1. **Communication Hub**: Live chat interface with the main orchestrator (Vexa) or isolated sub-agents.
 2. **Core Config**: Real-time adjustment of system prompts, models, and active system properties.
 3. **Decision Logs**: Full visual telemetry of the planner's "thoughts", decision latencies, token consumption, and errors.
 4. **Memory Vault (RAG)**: Manage vector database documents (PDF, MD, TXT) parsed and indexed dynamically into Qdrant.
@@ -126,6 +126,21 @@ When creating or editing sub-agents on the visual canvas dashboard:
 1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram and retrieve the token (`TELEGRAM_BOT_TOKEN`).
 2. Get your numeric Telegram chat ID via [@userinfobot](https://t.me/userinfobot) and set `TELEGRAM_CHAT_ID`.
 3. Start the bot on Telegram by typing `/start`.
+4. Voice messages are supported when local STT is enabled. Send a Telegram voice message and Vexa will transcribe it locally, echo the recognized text, and process it like a normal command.
+
+### 🎙️ Local Voice Assistant
+Hermes uses `faster-whisper` for free local speech-to-text. The web dashboard records audio with the browser `MediaRecorder` API and sends it to `/api/voice/transcribe`; Telegram voice notes use the same backend pipeline.
+
+Recommended defaults:
+* `VOICE_STT_MODEL=small`
+* `VOICE_STT_DEVICE=cpu`
+* `VOICE_STT_COMPUTE_TYPE=int8`
+* `VOICE_STT_LANGUAGE=ru`
+
+The first transcription downloads the selected Whisper model. Rebuild the backend image after changing dependencies:
+```bash
+docker compose up -d --build backend
+```
 
 ### 📅 Google Calendar (OAuth2 Manual Flow)
 If you wish to allow Hermes to manage your calendars:
@@ -150,7 +165,7 @@ On first launch, Hermes seeds the following 9 agents into the database automatic
 
 | Agent | Description | Required Keys |
 |-------|-------------|---------------|
-| 🏛️ **Jarvis (Main)** | Root orchestrator — routes tasks to sub-agents | `OPENROUTER_API_KEY` |
+| 🏛️ **Vexa (Main)** | Root orchestrator — routes tasks to sub-agents | `OPENROUTER_API_KEY` |
 | 🔍 **Search Agent** | Web search, weather, RSS news digest | `SERPER_API_KEY`, `OPENWEATHERMAP_API_KEY` |
 | 💻 **Code Engineer** | Writes and executes Python code in a sandbox | `OPENROUTER_API_KEY` |
 | 📊 **Data Analyst** | Data analysis, statistics, charts (matplotlib, pandas) | `OPENROUTER_API_KEY` |
