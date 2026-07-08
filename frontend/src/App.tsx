@@ -69,12 +69,8 @@ export default function App() {
   const [timers, setTimers] = useState<{ id: string; label: string; duration?: number; time_left: number; status: string; created_at: string; type?: string; target_time?: string }[]>([]);
   const [systemStats, setSystemStats] = useState<{ cpu_load_percent: number; ram_used_percent: number; ram_total_gb: number; disk_used_percent: number; disk_total_gb: number; disk_used_gb: number; status: string } | null>(null);
 
-  // Market & Price Alert States
-  const [marketPrices, setMarketPrices] = useState<Record<string, any>>({});
+  // Market & Price Alert States (only alerts count is kept for ActivityTab)
   const [priceAlerts, setPriceAlerts] = useState<{ id: string; symbol: string; display_name: string; target_price: number; condition: string; created_at: string }[]>([]);
-  const [alertSymbol, setAlertSymbol] = useState('TON');
-  const [alertPrice, setAlertPrice] = useState('');
-  const [alertCondition, setAlertCondition] = useState('above');
 
   const [uploads, setUploads] = useState<{ name: string; size_bytes: number }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -847,52 +843,11 @@ export default function App() {
       .catch(err => console.error('Error cancelling timer:', err));
   };
 
-  const fetchMarketPrices = () => {
-    fetch('http://localhost:8000/api/market/prices?symbols=TON,BTC,ETH,AAPL,TSLA')
-      .then(res => res.json())
-      .then(data => setMarketPrices(data))
-      .catch(err => console.log('Error fetching market prices:', err));
-  };
-
   const fetchMarketAlerts = () => {
     fetch('http://localhost:8000/api/market/alerts')
       .then(res => res.json())
       .then(data => setPriceAlerts(data))
       .catch(err => console.log('Error fetching market alerts:', err));
-  };
-
-  const handleCreateAlert = () => {
-    if (!alertPrice) return;
-    fetch('http://localhost:8000/api/market/alerts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: alertSymbol,
-        target_price: parseFloat(alertPrice),
-        condition: alertCondition
-      })
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'success') {
-          setAlertPrice('');
-          fetchMarketAlerts();
-        }
-      })
-      .catch(err => console.log('Error creating alert:', err));
-  };
-
-  const handleCancelAlert = (id: string) => {
-    fetch(`http://localhost:8000/api/market/alerts/${id}`, {
-      method: 'DELETE'
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'success') {
-          fetchMarketAlerts();
-        }
-      })
-      .catch(err => console.log('Error cancelling alert:', err));
   };
 
   const handleClearActivityLogs = () => {
@@ -974,7 +929,6 @@ export default function App() {
     fetchStats();
     fetchTimersData();
     fetchUploads();
-    fetchMarketPrices();
     fetchMarketAlerts();
 
     const statsInterval = setInterval(() => {
@@ -983,7 +937,6 @@ export default function App() {
     }, 5000);
     const timersInterval = setInterval(fetchTimersData, 2000);
     const marketInterval = setInterval(() => {
-      fetchMarketPrices();
       fetchMarketAlerts();
     }, 10000);
 
@@ -1502,17 +1455,7 @@ export default function App() {
             systemStats={systemStats}
             uploads={uploads}
             timers={timers}
-            marketPrices={marketPrices}
-            priceAlerts={priceAlerts}
-            alertSymbol={alertSymbol}
-            setAlertSymbol={setAlertSymbol}
-            alertCondition={alertCondition}
-            setAlertCondition={setAlertCondition}
-            alertPrice={alertPrice}
-            setAlertPrice={setAlertPrice}
             handleCancelTimer={handleCancelTimer}
-            handleCreateAlert={handleCreateAlert}
-            handleCancelAlert={handleCancelAlert}
           />
         )}
 

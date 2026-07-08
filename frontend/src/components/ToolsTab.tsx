@@ -3,9 +3,6 @@ import {
   Database, 
   Clock, 
   Trash2, 
-  TrendingUp, 
-  Plus, 
-  Bell, 
   Shield, 
   Settings 
 } from 'lucide-react';
@@ -33,42 +30,14 @@ interface ToolsTabProps {
     type?: string; 
     target_time?: string; 
   }[];
-  marketPrices: Record<string, any>;
-  priceAlerts: { 
-    id: string; 
-    symbol: string; 
-    display_name: string; 
-    target_price: number; 
-    condition: string; 
-    created_at: string; 
-  }[];
-  alertSymbol: string;
-  setAlertSymbol: (symbol: string) => void;
-  alertCondition: string;
-  setAlertCondition: (condition: string) => void;
-  alertPrice: string;
-  setAlertPrice: (price: string) => void;
-  
   handleCancelTimer: (id: string) => void;
-  handleCreateAlert: () => void;
-  handleCancelAlert: (id: string) => void;
 }
 
 export function ToolsTab({
   systemStats,
   uploads,
   timers,
-  marketPrices,
-  priceAlerts,
-  alertSymbol,
-  setAlertSymbol,
-  alertCondition,
-  setAlertCondition,
-  alertPrice,
-  setAlertPrice,
-  handleCancelTimer,
-  handleCreateAlert,
-  handleCancelAlert
+  handleCancelTimer
 }: ToolsTabProps) {
   return (
     <div style={styles.tabWrapper}>
@@ -307,121 +276,6 @@ export function ToolsTab({
             </div>
           </div>
 
-          {/* Market & Price Alerts Monitor */}
-          <div style={styles.toolsTimersWrapper} className="glass-panel">
-            <h3 style={styles.toolsPanelTitle}>
-              <TrendingUp size={18} style={{ color: 'var(--accent-cyan)' }} />
-              <span>Market Quotes and Alerts</span>
-            </h3>
-            
-            {/* Prices ticker */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: '8px', marginBottom: '16px' }}>
-              {['TON', 'BTC', 'ETH', 'AAPL', 'TSLA'].map((sym) => (
-                <div key={sym} style={{
-                  padding: '8px',
-                  borderRadius: '6px',
-                  backgroundColor: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px solid rgba(255, 255, 255, 0.05)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center'
-                }}>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>{sym}</span>
-                  <span style={{ fontSize: '0.85rem', fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', fontWeight: 600, marginTop: '2px' }}>
-                    {marketPrices[sym] !== undefined ? (typeof marketPrices[sym] === 'number' ? `$${marketPrices[sym].toFixed(2)}` : marketPrices[sym]) : '...'}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Create alert form */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '16px', paddingBottom: '16px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-              <select 
-                value={alertSymbol}
-                onChange={(e) => setAlertSymbol(e.target.value)}
-                className="form-input"
-                style={{ padding: '6px 10px', fontSize: '0.8rem', flex: 1, minWidth: '80px', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(0, 240, 255, 0.15)', color: '#fff' }}
-              >
-                <option value="TON">TON</option>
-                <option value="BTC">BTC</option>
-                <option value="ETH">ETH</option>
-                <option value="AAPL">AAPL</option>
-                <option value="TSLA">TSLA</option>
-              </select>
-
-              <select 
-                value={alertCondition}
-                onChange={(e) => setAlertCondition(e.target.value)}
-                className="form-input"
-                style={{ padding: '6px 10px', fontSize: '0.8rem', flex: 1, minWidth: '80px', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(0, 240, 255, 0.15)', color: '#fff' }}
-              >
-                <option value="above">Above</option>
-                <option value="below">Below</option>
-              </select>
-
-              <input 
-                type="number" 
-                placeholder="Price in USD" 
-                value={alertPrice}
-                onChange={(e) => setAlertPrice(e.target.value)}
-                className="form-input"
-                style={{ padding: '6px 10px', fontSize: '0.8rem', flex: 2, minWidth: '100px', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(0, 240, 255, 0.15)', color: '#fff' }}
-              />
-
-              <button 
-                onClick={handleCreateAlert}
-                className="btn-primary"
-                style={{ padding: '8px 12px', fontSize: '0.75rem', height: '34px' }}
-              >
-                <Plus size={12} /> Add
-              </button>
-            </div>
-
-            {/* Alerts list */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Alerts:</span>
-              {priceAlerts.length === 0 ? (
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', textAlign: 'center', padding: '12px 0' }}>
-                  No active alerts.
-                </div>
-              ) : (
-                priceAlerts.map((alert) => (
-                  <div key={alert.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    backgroundColor: 'rgba(255,255,255,0.01)',
-                    border: '1px solid rgba(255,255,255,0.03)'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Bell size={12} style={{ color: alert.condition === 'above' ? 'var(--accent-cyan)' : 'var(--accent-orange)' }} />
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff' }}>{alert.display_name}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {alert.condition === 'above' ? '≥' : '≤'} ${alert.target_price.toFixed(2)}
-                      </span>
-                    </div>
-                    <button 
-                      onClick={() => handleCancelAlert(alert.id)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'rgba(239, 68, 68, 0.6)',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        display: 'flex',
-                        alignItems: 'center'
-                      }}
-                      title="Delete"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
 
           {/* Active Sub-agents (Orchestrator Graph) */}
           <div className="glass-panel" style={{ ...styles.toolsRegistryWrapper, marginBottom: '0px' }}>

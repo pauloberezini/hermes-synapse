@@ -313,7 +313,8 @@ async def list_uploads():
         result = []
         for f in files:
             p = os.path.join(uploads_dir, f)
-            if os.path.isfile(p):
+            # ponytail: skip hidden files like .gitkeep or .DS_Store
+            if os.path.isfile(p) and not f.startswith('.'):
                 result.append({
                     "name": f,
                     "size_bytes": os.path.getsize(p)
