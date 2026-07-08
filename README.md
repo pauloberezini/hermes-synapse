@@ -117,6 +117,11 @@ You can also override models per specialized agent role using the following env 
 * `AGENT_MODEL_ANALYST` (Data Analyst)
 * `AGENT_MODEL_PLANNER` (Planner Agent)
 
+#### 🎨 Model Selection in the Web UI
+When creating or editing sub-agents on the visual canvas dashboard:
+* The model dropdown automatically fetches and displays all active models from your configured `LLM_API_BASE` `/models` endpoint (so local models will appear automatically).
+* If a model is not listed, or you prefer to specify a custom model name manually, select **"Custom model..."** from the dropdown menu and type the exact model identifier directly in the input field.
+
 ### 💬 Telegram Integration
 1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram and retrieve the token (`TELEGRAM_BOT_TOKEN`).
 2. Get your numeric Telegram chat ID via [@userinfobot](https://t.me/userinfobot) and set `TELEGRAM_CHAT_ID`.
