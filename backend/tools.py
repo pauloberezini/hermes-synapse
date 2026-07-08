@@ -20,9 +20,44 @@ def _env(key: str) -> Optional[str]:
 # 1. SYSTEM STATS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _read_cpu_percent_from_proc() -> Optional[int]:
+    """Read CPU utilization from /proc/stat without inventing fallback values."""
+    if not os.path.exists("/proc/stat"):
+        return None
+
+    def snapshot() -> Optional[tuple[int, int]]:
+        try:
+            with open("/proc/stat") as f:
+                first = f.readline().strip().split()
+            if not first or first[0] != "cpu":
+                return None
+            values = [int(v) for v in first[1:]]
+            idle = values[3] + (values[4] if len(values) > 4 else 0)
+            total = sum(values)
+            return idle, total
+        except Exception:
+            return None
+
+    first = snapshot()
+    if not first:
+        return None
+    import time
+    time.sleep(0.1)
+    second = snapshot()
+    if not second:
+        return None
+
+    idle_delta = second[0] - first[0]
+    total_delta = second[1] - first[1]
+    if total_delta <= 0:
+        return None
+    return int(round((1 - idle_delta / total_delta) * 100))
+
+
 def get_system_stats() -> str:
-    """Reads system stats from Linux proc files and os metrics."""
+    """Reads real system stats or marks unavailable metrics explicitly."""
     try:
+        unavailable = []
         stat = os.statvfs('/')
         free_bytes  = stat.f_bavail * stat.f_frsize
         total_bytes = stat.f_blocks * stat.f_frsize
@@ -31,7 +66,7 @@ def get_system_stats() -> str:
         total_gb    = round(total_bytes / (1024**3), 1)
         used_gb     = round(used_bytes  / (1024**3), 1)
 
-        mem_total_gb, mem_used_pct = 8.0, 45
+        mem_total_gb, mem_used_pct = None, None
         if os.path.exists('/proc/meminfo'):
             with open('/proc/meminfo') as f:
                 mem_info = {}
@@ -44,26 +79,42 @@ def get_system_stats() -> str:
                 free_kb  = mem_info.get('MemAvailable', mem_info.get('MemFree', 0))
                 mem_used_pct = int(((total_kb - free_kb) / total_kb) * 100)
                 mem_total_gb = round(total_kb / (1024**2), 1)
+        else:
+            unavailable.append("ram")
 
-        cpu_load = 5
+        cpu_load = None
         try:
             import psutil
             cpu_load = int(psutil.cpu_percent(interval=0.1))
         except Exception:
-            pass
+            cpu_load = _read_cpu_percent_from_proc()
+        if cpu_load is None:
+            unavailable.append("cpu")
+
+        available = len(unavailable) == 0
 
         return json.dumps({
+            "available": available,
             "cpu_load_percent":  cpu_load,
             "ram_used_percent":  mem_used_pct,
             "ram_total_gb":      mem_total_gb,
             "disk_used_percent": disk_pct,
             "disk_total_gb":     total_gb,
             "disk_used_gb":      used_gb,
-            "status": "nominal"
+            "status": "nominal" if available else "partial",
+            "source": "host:/proc + statvfs",
+            "unavailable": unavailable,
+            "error": None if available else f"Unavailable metrics: {', '.join(unavailable)}"
         }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error reading system stats: {e}")
-        return json.dumps({"error": str(e), "status": "malfunction"})
+        return json.dumps({
+            "available": False,
+            "error": str(e),
+            "status": "unavailable",
+            "source": "host:/proc + statvfs",
+            "unavailable": ["cpu", "ram", "disk"]
+        }, ensure_ascii=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -844,7 +895,10 @@ TOOLS_SCHEMA = [
                     "subagent_id": {"type": "string", "description": "Уникальный латинский идентификатор (slug), например: 'sports_betting', 'french_tutor'"},
                     "name": {"type": "string", "description": "Понятное имя агента, например: 'Аналитик Спортивных Ставок'"},
                     "system_prompt": {"type": "string", "description": "Детальные инструкции (системный промпт), определяющие характер, тон и правила работы сабагента."},
-                    "model": {"type": "string", "description": "Модель ИИ для работы сабагента. По умолчанию используется deepseek/deepseek-v4-flash."}
+                    "model": {"type": "string", "description": "Модель ИИ для работы сабагента. По умолчанию используется deepseek/deepseek-v4-flash."},
+                    "role": {"type": "string", "description": "Роль агента в ИИ-офисе, например Researcher, Engineer, Analyst, Planner."},
+                    "model_type": {"type": "string", "description": "Тип модели: external или local."},
+                    "model_provider": {"type": "string", "description": "Провайдер модели, например openrouter, openai, anthropic, ollama, local."}
                 },
                 "required": ["subagent_id", "name", "system_prompt"]
             }
@@ -1247,7 +1301,15 @@ def get_rss_digest(feed_source: str = "Habr", limit: int = 5) -> str:
         return json.dumps({"error": str(e)})
 
 
-def create_subagent(subagent_id: str, name: str, system_prompt: str, model: Optional[str] = None) -> str:
+def create_subagent(
+    subagent_id: str,
+    name: str,
+    system_prompt: str,
+    model: Optional[str] = None,
+    role: str = "Specialist",
+    model_type: str = "external",
+    model_provider: str = "openrouter",
+) -> str:
     """Creates a new subagent with a dedicated system prompt and model, or updates an existing one."""
     from backend.database import save_subagent
     # Basic slug cleanup
@@ -1255,10 +1317,23 @@ def create_subagent(subagent_id: str, name: str, system_prompt: str, model: Opti
     clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', subagent_id).lower()
     if not model:
         model = os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
-    save_subagent(clean_id, name, system_prompt, model)
+    save_subagent(
+        clean_id,
+        name,
+        system_prompt,
+        model,
+        role=role,
+        model_type=model_type,
+        model_provider=model_provider,
+    )
+    try:
+        from backend.database import log_agent_event
+        log_agent_event(clean_id, "created", f"Agent '{name}' created via chat tool.", "success")
+    except Exception:
+        pass
     return json.dumps({
         "status": "success",
-        "message": f"Субагент '{name}' (id: '{clean_id}') успешно создан с моделью '{model}'."
+        "message": f"Субагент '{name}' (id: '{clean_id}') успешно создан с моделью '{model}' ({model_type}/{model_provider})."
     }, ensure_ascii=False)
 
 def call_subagent(subagent_id: str, query: str) -> str:
@@ -1559,7 +1634,10 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
             subagent_id=arguments.get("subagent_id", ""),
             name=arguments.get("name", ""),
             system_prompt=arguments.get("system_prompt", ""),
-            model=arguments.get("model")
+            model=arguments.get("model"),
+            role=arguments.get("role", "Specialist"),
+            model_type=arguments.get("model_type", "external"),
+            model_provider=arguments.get("model_provider", "openrouter"),
         )
 
     elif name == "call_subagent":
@@ -1610,4 +1688,3 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
             return _run_async(handle_mcp_tool(name, arguments))
 
         return json.dumps({"error": f"Tool '{name}' not found."})
-

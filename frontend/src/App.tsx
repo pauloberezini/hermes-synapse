@@ -15,11 +15,14 @@ import {
   Menu,
   X,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Building2,
+  UserCog
 } from 'lucide-react';
 
-import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig } from './types';
+import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AgentModel, SystemStats } from './types';
 import { styles } from './styles';
+import { translate, type Language } from './i18n';
 import { 
   WAKE_WORDS, 
   playBeep, 
@@ -40,17 +43,26 @@ import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
+import { SettingsTab } from './components/SettingsTab';
+import { AgentsAdminTab } from './components/AgentsAdminTab';
+import { OfficeTab } from './components/OfficeTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'settings'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
     return (saved as any) || 'chat';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [language, setLanguageState] = useState<Language>(() => (localStorage.getItem('hermes_language') as Language) || 'ru');
+  const t = useCallback((key: string) => translate(language, key), [language]);
+  const setLanguage = useCallback((nextLanguage: Language) => {
+    localStorage.setItem('hermes_language', nextLanguage);
+    setLanguageState(nextLanguage);
+  }, []);
   const [chatSessions, setChatSessions] = useState<string[]>(['dashboard']);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
@@ -78,7 +90,7 @@ export default function App() {
 
   // Tools and system stats states
   const [timers, setTimers] = useState<{ id: string; label: string; duration?: number; time_left: number; status: string; created_at: string; type?: string; target_time?: string; interval_hours?: number; fire_count?: number; agent_id?: string; prompt?: string }[]>([]);
-  const [systemStats, setSystemStats] = useState<{ cpu_load_percent: number; ram_used_percent: number; ram_total_gb: number; disk_used_percent: number; disk_total_gb: number; disk_used_gb: number; status: string } | null>(null);
+  const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
 
   // Market & Price Alert States (only alerts count is kept for ActivityTab)
   const [priceAlerts, setPriceAlerts] = useState<{ id: string; symbol: string; display_name: string; target_price: number; condition: string; created_at: string }[]>([]);
@@ -110,17 +122,7 @@ export default function App() {
   const captureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCommandRef = useRef('');
 
-  const [subagents, setSubagents] = useState<{ 
-    id: string; 
-    name: string; 
-    system_prompt: string; 
-    model: string;
-    agent_type?: string;
-    parent_id?: string | null;
-    skills?: string;
-    x?: number;
-    y?: number;
-  }[]>([]);
+  const [subagents, setSubagents] = useState<AgentModel[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string>(() => {
     return localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
   });
@@ -161,7 +163,7 @@ export default function App() {
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
-    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) {
+    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'settings'].includes(activeTab)) {
       setSettingsOpen(true);
     }
   }, [activeTab]);
@@ -1369,15 +1371,31 @@ export default function App() {
           <div className="pulse-dot" style={{ width: 14, height: 14 }} />
           <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>
         </div>
-        <p style={styles.logoSubtitle}>SYSTEM CONSOLE v1.1.0</p>
+        <p style={styles.logoSubtitle}>{t('appSubtitle')}</p>
         
         <nav style={styles.navMenu}>
-          <button 
+          <button
             style={{...styles.navBtn, ...(activeTab === 'chat' ? styles.navBtnActive : {})}}
             onClick={() => { setActiveTab('chat'); setSidebarOpen(false); }}
           >
             <MessageSquare size={18} />
-            <span>Communication Link</span>
+            <span>{t('navChat')}</span>
+          </button>
+
+          <button
+            style={{...styles.navBtn, ...(activeTab === 'office' ? styles.navBtnActive : {})}}
+            onClick={() => { setActiveTab('office'); setSidebarOpen(false); }}
+          >
+            <Building2 size={18} />
+            <span>{t('navOffice')}</span>
+          </button>
+
+          <button
+            style={{...styles.navBtn, ...(activeTab === 'agents' ? styles.navBtnActive : {})}}
+            onClick={() => { setActiveTab('agents'); setSidebarOpen(false); }}
+          >
+            <UserCog size={18} />
+            <span>{t('navAgents')}</span>
           </button>
           
           <button 
@@ -1393,7 +1411,7 @@ export default function App() {
             onClick={() => { setActiveTab('network'); setSidebarOpen(false); }}
           >
             <Network size={18} />
-            <span>Architecture</span>
+            <span>{t('navArchitecture')}</span>
           </button>
           
           <button 
@@ -1401,28 +1419,28 @@ export default function App() {
               ...styles.navBtn, 
               justifyContent: 'space-between', 
               paddingRight: '12px',
-              ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) ? styles.navBtnActive : {})
+              ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'settings'].includes(activeTab)) ? styles.navBtnActive : {})
             }}
             onClick={() => setSettingsOpen(!settingsOpen)}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <Settings size={18} />
-              <span>Settings</span>
+              <span>{t('navSettings')}</span>
             </div>
             {settingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           </button>
 
           {settingsOpen && (
             <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
-              <button 
+              <button
                 style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
                 onClick={() => { setActiveTab('config'); setSidebarOpen(false); }}
               >
                 <Settings size={18} />
-                <span>Core Parameters</span>
+                <span>{t('navConfig')}</span>
               </button>
 
-              <button 
+              <button
                 style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
                 onClick={() => {
                   setActiveTab('subagents');
@@ -1431,7 +1449,7 @@ export default function App() {
                 }}
               >
                 <Layers size={18} />
-                <span>Sub-agents</span>
+                <span>{t('navSubagents')}</span>
               </button>
 
               <button 
@@ -1439,7 +1457,7 @@ export default function App() {
                 onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); }}
               >
                 <Server size={18} />
-                <span>MCP Servers</span>
+                <span>{t('navMcp')}</span>
               </button>
 
               <button 
@@ -1447,7 +1465,7 @@ export default function App() {
                 onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); }}
               >
                 <BookOpen size={18} />
-                <span>Obsidian</span>
+                <span>{t('navObsidian')}</span>
               </button>
               
               <button 
@@ -1455,7 +1473,7 @@ export default function App() {
                 onClick={() => { setActiveTab('memory'); setSidebarOpen(false); }}
               >
                 <Database size={18} />
-                <span>Memory Vault (RAG)</span>
+                <span>{t('navMemory')}</span>
               </button>
               
               <button 
@@ -1463,7 +1481,7 @@ export default function App() {
                 onClick={() => { setActiveTab('tools'); setSidebarOpen(false); }}
               >
                 <Wrench size={18} />
-                <span>Core Tools</span>
+                <span>{t('navTools')}</span>
               </button>
 
               <button 
@@ -1471,7 +1489,7 @@ export default function App() {
                 onClick={() => { setActiveTab('logs'); setSidebarOpen(false); }}
               >
                 <Terminal size={18} />
-                <span>Decision Logs</span>
+                <span>{t('navLogs')}</span>
               </button>
               
               <button 
@@ -1479,7 +1497,15 @@ export default function App() {
                 onClick={() => { setActiveTab('activity'); setSidebarOpen(false); }}
               >
                 <Activity size={18} />
-                <span>Activity Logs</span>
+                <span>{t('navActivity')}</span>
+              </button>
+
+              <button
+                style={{...styles.navBtn, ...(activeTab === 'settings' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('settings'); setSidebarOpen(false); }}
+              >
+                <Settings size={18} />
+                <span>{t('navSettings')}</span>
               </button>
             </div>
           )}
@@ -1488,17 +1514,17 @@ export default function App() {
         {/* Sidebar Status Info */}
         <div style={styles.statusBox} className="glass-panel">
           <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>Onboard Network:</span>
+            <span style={styles.statusLabel}>{t('network')}:</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
               <span style={{ fontSize: '0.85rem', color: isConnected ? '#10b981' : '#ef4444' }}>
-                {isConnected ? 'ACTIVE' : 'DISCONNECTED'}
+                {isConnected ? t('connected') : t('disconnected')}
               </span>
             </div>
           </div>
           
           <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>LLM Core:</span>
+            <span style={styles.statusLabel}>{t('llmCore')}:</span>
             <div style={styles.modelTag}>
               <Cpu size={12} style={{ color: '#00f0ff' }} />
               <span style={styles.modelName}>{config.model.split('/').pop()}</span>
@@ -1506,7 +1532,7 @@ export default function App() {
           </div>
           
           <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>Call logs:</span>
+            <span style={styles.statusLabel}>{t('callLogs')}:</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#00f0ff' }}>
               {logs.length} logs
             </span>
@@ -1545,6 +1571,19 @@ export default function App() {
             fetchChatSessions={fetchChatSessions}
             getSessionLabel={getSessionLabel}
             mainChatEndRef={mainChatEndRef}
+          />
+        )}
+
+        {activeTab === 'office' && (
+          <OfficeTab t={t} />
+        )}
+
+        {activeTab === 'agents' && (
+          <AgentsAdminTab
+            agents={subagents}
+            models={models}
+            fetchAgents={fetchSubagents}
+            t={t}
           />
         )}
 
@@ -1673,6 +1712,10 @@ export default function App() {
 
         {activeTab === 'mcp' && (
           <MCPTab />
+        )}
+
+        {activeTab === 'settings' && (
+          <SettingsTab language={language} setLanguage={setLanguage} t={t} />
         )}
       </main>
 

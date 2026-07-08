@@ -9,6 +9,17 @@ logger = logging.getLogger("hermes.database")
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "hermes.db")
 
+def _json_or_empty(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
 def init_db():
     """Initializes the database and creates the tables if they don't exist."""
     # Ensure data directory exists
@@ -91,6 +102,17 @@ def init_db():
         ("x", "INTEGER DEFAULT 100"),
         ("y", "INTEGER DEFAULT 100"),
         ("temperature", "REAL DEFAULT 0.7"),
+        ("role", "TEXT DEFAULT 'Specialist'"),
+        ("status", "TEXT DEFAULT 'idle'"),
+        ("is_enabled", "INTEGER DEFAULT 1"),
+        ("model_provider", "TEXT DEFAULT 'openrouter'"),
+        ("model_type", "TEXT DEFAULT 'external'"),
+        ("model_params", "TEXT DEFAULT '{}'"),
+        ("current_task", "TEXT DEFAULT ''"),
+        ("last_action", "TEXT DEFAULT ''"),
+        ("last_error", "TEXT DEFAULT ''"),
+        ("progress", "INTEGER DEFAULT 0"),
+        ("updated_at", "TEXT"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
@@ -221,6 +243,23 @@ def init_db():
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (subagent_id, key)
         )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT DEFAULT 'info',
+            task TEXT DEFAULT '',
+            metadata TEXT DEFAULT '{}'
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_events_agent_id ON agent_events (agent_id, id DESC)
     """)
     
     conn.commit()
@@ -417,14 +456,25 @@ def save_subagent(
     x: int = 100,
     y: int = 100,
     temperature: float = 0.7,
+    role: str = "Specialist",
+    status: str = "idle",
+    is_enabled: bool = True,
+    model_provider: str = "openrouter",
+    model_type: str = "external",
+    model_params: Optional[Dict[str, Any]] = None,
 ):
     """Saves or updates a subagent's configuration in the database."""
     try:
+        model_params_json = json.dumps(model_params or {}, ensure_ascii=False)
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO subagents (
+                id, name, system_prompt, model, agent_type, parent_id, skills, x, y,
+                temperature, role, status, is_enabled, model_provider, model_type,
+                model_params, updated_at
+            ) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET 
                 name=excluded.name,
                 system_prompt=excluded.system_prompt,
@@ -434,8 +484,19 @@ def save_subagent(
                 skills=excluded.skills,
                 x=excluded.x,
                 y=excluded.y,
-                temperature=excluded.temperature
-        """, (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature))
+                temperature=excluded.temperature,
+                role=excluded.role,
+                status=excluded.status,
+                is_enabled=excluded.is_enabled,
+                model_provider=excluded.model_provider,
+                model_type=excluded.model_type,
+                model_params=excluded.model_params,
+                updated_at=CURRENT_TIMESTAMP
+        """, (
+            id, name, system_prompt, model, agent_type, parent_id, skills, x, y,
+            temperature, role, status, 1 if is_enabled else 0, model_provider,
+            model_type, model_params_json
+        ))
         conn.commit()
         conn.close()
         logger.info(f"Subagent saved: {id} ({name})")
@@ -448,7 +509,9 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
+            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills,
+                   x, y, temperature, role, status, is_enabled, model_provider, model_type,
+                   model_params, current_task, last_action, last_error, progress, updated_at
             FROM subagents WHERE id = ?
         """, (id,))
         row = cursor.fetchone()
@@ -466,6 +529,17 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
                 "x": row[8] if row[8] is not None else 100,
                 "y": row[9] if row[9] is not None else 100,
                 "temperature": row[10] if row[10] is not None else 0.7,
+                "role": row[11] or "Specialist",
+                "status": row[12] or "idle",
+                "is_enabled": bool(row[13]),
+                "model_provider": row[14] or "openrouter",
+                "model_type": row[15] or "external",
+                "model_params": _json_or_empty(row[16]),
+                "current_task": row[17] or "",
+                "last_action": row[18] or "",
+                "last_error": row[19] or "",
+                "progress": row[20] if row[20] is not None else 0,
+                "updated_at": row[21],
             }
         return None
     except Exception as e:
@@ -478,7 +552,9 @@ def get_all_subagents() -> List[Dict[str, Any]]:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
+            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills,
+                   x, y, temperature, role, status, is_enabled, model_provider, model_type,
+                   model_params, current_task, last_action, last_error, progress, updated_at
             FROM subagents ORDER BY id ASC
         """)
         rows = cursor.fetchall()
@@ -496,6 +572,17 @@ def get_all_subagents() -> List[Dict[str, Any]]:
                 "x": r[8] if r[8] is not None else 100,
                 "y": r[9] if r[9] is not None else 100,
                 "temperature": r[10] if r[10] is not None else 0.7,
+                "role": r[11] or "Specialist",
+                "status": r[12] or "idle",
+                "is_enabled": bool(r[13]),
+                "model_provider": r[14] or "openrouter",
+                "model_type": r[15] or "external",
+                "model_params": _json_or_empty(r[16]),
+                "current_task": r[17] or "",
+                "last_action": r[18] or "",
+                "last_error": r[19] or "",
+                "progress": r[20] if r[20] is not None else 0,
+                "updated_at": r[21],
             }
             for r in rows
         ]
@@ -518,6 +605,115 @@ def delete_subagent(id: str) -> bool:
     except Exception as e:
         logger.error(f"Error deleting subagent {id}: {e}")
         return False
+
+def log_agent_event(
+    agent_id: str,
+    event_type: str,
+    message: str,
+    status: str = "info",
+    task: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+):
+    """Stores a visible agent action for the office/admin screens."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        timestamp = datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S")
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO agent_events (agent_id, timestamp, event_type, message, status, task, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            agent_id,
+            timestamp,
+            event_type,
+            message,
+            status,
+            task,
+            json.dumps(metadata or {}, ensure_ascii=False)
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error logging agent event for {agent_id}: {e}")
+
+def get_agent_events(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, agent_id, timestamp, event_type, message, status, task, metadata
+            FROM agent_events
+            WHERE agent_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        """, (agent_id, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                "id": r[0],
+                "agent_id": r[1],
+                "timestamp": r[2],
+                "event_type": r[3],
+                "message": r[4],
+                "status": r[5],
+                "task": r[6] or "",
+                "metadata": _json_or_empty(r[7]),
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error reading agent events for {agent_id}: {e}")
+        return []
+
+def update_agent_runtime_state(
+    agent_id: str,
+    status: Optional[str] = None,
+    current_task: Optional[str] = None,
+    last_action: Optional[str] = None,
+    last_error: Optional[str] = None,
+    progress: Optional[int] = None,
+):
+    """Updates runtime-only agent state used by the AI office view."""
+    fields = []
+    values: List[Any] = []
+    for name, value in [
+        ("status", status),
+        ("current_task", current_task),
+        ("last_action", last_action),
+        ("last_error", last_error),
+        ("progress", progress),
+    ]:
+        if value is not None:
+            fields.append(f"{name} = ?")
+            values.append(value)
+    if not fields:
+        return
+    fields.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(agent_id)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE subagents SET {', '.join(fields)} WHERE id = ?", values)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error updating agent runtime state for {agent_id}: {e}")
+
+def get_agent_office_state() -> Dict[str, Any]:
+    """Returns agents with their latest visible events for the live office screen."""
+    agents = get_all_subagents()
+    return {
+        "agents": [
+            {
+                **agent,
+                "recent_events": get_agent_events(agent["id"], limit=5),
+            }
+            for agent in agents
+        ]
+    }
 
 def db_save_subagent_memory(subagent_id: str, key: str, value: str):
     """Saves or updates a memory fact (key-value pair) for a specific subagent."""

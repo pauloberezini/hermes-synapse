@@ -34,6 +34,57 @@ export interface SystemConfig {
   model: string;
 }
 
+export interface AgentModel {
+  id: string;
+  name: string;
+  system_prompt: string;
+  model: string;
+  created_at?: string;
+  agent_type?: string;
+  parent_id?: string | null;
+  skills?: string;
+  x?: number;
+  y?: number;
+  temperature?: number;
+  role?: string;
+  status?: 'idle' | 'working' | 'error' | 'disabled' | string;
+  is_enabled?: boolean;
+  model_provider?: string;
+  model_type?: 'local' | 'external' | string;
+  model_params?: Record<string, unknown>;
+  current_task?: string;
+  last_action?: string;
+  last_error?: string;
+  progress?: number;
+  updated_at?: string;
+  recent_events?: AgentEvent[];
+}
+
+export interface AgentEvent {
+  id: number;
+  agent_id: string;
+  timestamp: string;
+  event_type: string;
+  message: string;
+  status: string;
+  task?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SystemStats {
+  available?: boolean;
+  cpu_load_percent?: number | null;
+  ram_used_percent?: number | null;
+  ram_total_gb?: number | null;
+  disk_used_percent?: number | null;
+  disk_total_gb?: number | null;
+  disk_used_gb?: number | null;
+  status: string;
+  source?: string;
+  unavailable?: string[];
+  error?: string | null;
+}
+
 export interface RenderedListItem {
   indent: number;
   content: React.ReactNode[];

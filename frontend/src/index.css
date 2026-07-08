@@ -2,10 +2,10 @@
 
 :root {
   /* Core Color System */
-  --bg-deep: #060913;
-  --bg-surface: #0c1122;
-  --bg-card: rgba(16, 22, 42, 0.65);
-  --bg-card-hover: rgba(22, 32, 60, 0.8);
+  --bg-deep: #071018;
+  --bg-surface: #0d1724;
+  --bg-card: rgba(15, 23, 42, 0.72);
+  --bg-card-hover: rgba(26, 38, 58, 0.86);
   
   --accent-cyan: #00f0ff;
   --accent-blue: #1e90ff;
@@ -46,8 +46,8 @@ body {
   height: 100vh;
   width: 100vw;
   background-image: 
-    radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.03) 0%, transparent 50%),
-    radial-gradient(circle at 90% 80%, rgba(255, 159, 0, 0.03) 0%, transparent 50%);
+    radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.025) 0%, transparent 48%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.2), rgba(2, 6, 23, 0.2));
   background-attachment: fixed;
 }
 
@@ -83,8 +83,60 @@ body {
   -webkit-backdrop-filter: blur(16px);
   border: var(--glass-border);
   box-shadow: var(--glass-shadow);
-  border-radius: 12px;
+  border-radius: 8px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.035);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.icon-btn:hover {
+  border-color: rgba(0,240,255,0.28);
+  color: var(--accent-cyan);
+  background: rgba(0,240,255,0.08);
+}
+
+.icon-btn.danger:hover {
+  border-color: rgba(239,68,68,0.32);
+  color: var(--danger);
+  background: rgba(239,68,68,0.08);
+}
+
+.office-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 16px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.office-card {
+  padding: 16px;
+  min-height: 310px;
+}
+
+.spin-slow {
+  animation: rotate-clockwise 1.4s linear infinite;
+}
+
+@media (max-width: 980px) {
+  .app-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
 }
 
 .glass-panel:hover {

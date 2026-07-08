@@ -32,6 +32,12 @@ class SubagentUpdate(BaseModel):
     x: int = 100
     y: int = 100
     temperature: float = 0.7
+    role: str = "Specialist"
+    status: str = "idle"
+    is_enabled: bool = True
+    model_provider: str = "openrouter"
+    model_type: str = "external"
+    model_params: dict = {}
 
 class SubagentPosition(BaseModel):
     id: str
@@ -387,6 +393,11 @@ async def get_subagents_api():
     from backend.database import get_all_subagents
     return get_all_subagents()
 
+@app.get("/api/agents")
+async def get_agents_api():
+    from backend.database import get_all_subagents
+    return get_all_subagents()
+
 @app.post("/api/subagents")
 async def save_subagent_api(subagent: SubagentUpdate):
     from backend.database import save_subagent
@@ -404,8 +415,28 @@ async def save_subagent_api(subagent: SubagentUpdate):
         subagent.x,
         subagent.y,
         subagent.temperature,
+        subagent.role,
+        subagent.status,
+        subagent.is_enabled,
+        subagent.model_provider,
+        subagent.model_type,
+        subagent.model_params,
     )
     return {"status": "success", "id": clean_id}
+
+@app.post("/api/agents")
+async def save_agent_api(subagent: SubagentUpdate):
+    return await save_subagent_api(subagent)
+
+@app.get("/api/agents/{agent_id}/events")
+async def get_agent_events_api(agent_id: str, limit: int = 50):
+    from backend.database import get_agent_events
+    return get_agent_events(agent_id, limit=limit)
+
+@app.get("/api/office/state")
+async def get_office_state_api():
+    from backend.database import get_agent_office_state
+    return get_agent_office_state()
 
 @app.post("/api/subagents/positions")
 async def update_subagent_positions_api(update: SubagentPositionsUpdate):

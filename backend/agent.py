@@ -251,10 +251,43 @@ class JarvisAgent:
         from backend.database import get_subagent
         subagent = get_subagent(session_id)
         if subagent:
+            if not subagent.get("is_enabled", True):
+                return f"Агент '{subagent.get('name', session_id)}' отключён. Задача не запускалась."
+            from backend.database import log_agent_event, update_agent_runtime_state
+            update_agent_runtime_state(
+                session_id,
+                status="working",
+                current_task=user_message,
+                last_action="Task received from chat",
+                last_error="",
+                progress=10,
+            )
+            log_agent_event(session_id, "task_received", user_message, "working", task=user_message)
             if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
                 from backend.orchestrator import run_orchestration
-                orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
-                response_text = orch_result["response"]
+                try:
+                    orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
+                    response_text = orch_result["response"]
+                    update_agent_runtime_state(
+                        session_id,
+                        status="idle",
+                        current_task="",
+                        last_action="Orchestration completed",
+                        last_error="",
+                        progress=100,
+                    )
+                    log_agent_event(session_id, "task_completed", "Orchestration completed.", "success", task=user_message)
+                except Exception as e:
+                    response_text = f"Простите, Сэр. Агент '{subagent.get('name', session_id)}' не смог выполнить задачу: {str(e)}"
+                    update_agent_runtime_state(
+                        session_id,
+                        status="error",
+                        last_action="Orchestration failed",
+                        last_error=str(e),
+                        progress=100,
+                    )
+                    log_agent_event(session_id, "error", str(e), "error", task=user_message)
+                    return response_text
                 
                 
                 # Save the assistant message exchange in the DB
@@ -272,7 +305,43 @@ class JarvisAgent:
                 }
                 return response_text
             else:
-                return await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id)
+                try:
+                    response_text = await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id)
+                    update_agent_runtime_state(
+                        session_id,
+                        status="idle",
+                        current_task="",
+                        last_action="Response delivered",
+                        last_error="",
+                        progress=100,
+                    )
+                    log_agent_event(session_id, "task_completed", "Response delivered to chat.", "success", task=user_message)
+                    return response_text
+                except Exception as e:
+                    response_text = f"Простите, Сэр. Агент '{subagent.get('name', session_id)}' не смог выполнить задачу: {str(e)}"
+                    update_agent_runtime_state(
+                        session_id,
+                        status="error",
+                        last_action="Response failed",
+                        last_error=str(e),
+                        progress=100,
+                    )
+                    log_agent_event(session_id, "error", str(e), "error", task=user_message)
+                    return response_text
+
+        try:
+            from backend.database import update_agent_runtime_state, log_agent_event
+            update_agent_runtime_state(
+                "jarvis",
+                status="working",
+                current_task=user_message,
+                last_action="Routing chat request",
+                last_error="",
+                progress=10,
+            )
+            log_agent_event("jarvis", "task_received", user_message, "working", task=user_message)
+        except Exception:
+            pass
 
         from backend.activity_logger import log_activity
         log_activity(
@@ -324,6 +393,26 @@ class JarvisAgent:
                     "is_complex": True,
                     "steps": []
                 }
+            finally:
+                try:
+                    from backend.database import update_agent_runtime_state, log_agent_event
+                    update_agent_runtime_state(
+                        "jarvis",
+                        status="idle" if error_msg is None else "error",
+                        current_task="",
+                        last_action="Orchestration finished" if error_msg is None else "Orchestration failed",
+                        last_error=error_msg or "",
+                        progress=100,
+                    )
+                    log_agent_event(
+                        "jarvis",
+                        "task_completed" if error_msg is None else "error",
+                        "Orchestration finished." if error_msg is None else error_msg,
+                        "success" if error_msg is None else "error",
+                        task=user_message,
+                    )
+                except Exception:
+                    pass
                 
             # Calculate cost based on estimated tokens
             prompt_est = len(user_message) // 4
@@ -597,6 +686,26 @@ class JarvisAgent:
             error_msg = str(e)
             logger.exception("Error during OpenRouter chat completion call")
             response_text = "Прошу прощения, Сэр. Произошел сбой при обработке вашего запроса."
+
+        try:
+            from backend.database import update_agent_runtime_state, log_agent_event
+            update_agent_runtime_state(
+                "jarvis",
+                status="idle" if error_msg is None else "error",
+                current_task="",
+                last_action="Response delivered" if error_msg is None else "Response failed",
+                last_error=error_msg or "",
+                progress=100,
+            )
+            log_agent_event(
+                "jarvis",
+                "task_completed" if error_msg is None else "error",
+                "Response delivered to chat." if error_msg is None else error_msg,
+                "success" if error_msg is None else "error",
+                task=user_message,
+            )
+        except Exception:
+            pass
 
         # Add call record to global decision logs
         from datetime import datetime

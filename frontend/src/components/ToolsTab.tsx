@@ -5,17 +5,10 @@ import {
   Settings 
 } from 'lucide-react';
 import { styles } from '../styles';
+import type { SystemStats } from '../types';
 
 interface ToolsTabProps {
-  systemStats: { 
-    cpu_load_percent: number; 
-    ram_used_percent: number; 
-    ram_total_gb: number; 
-    disk_used_percent: number; 
-    disk_total_gb: number; 
-    disk_used_gb: number; 
-    status: string;
-  } | null;
+  systemStats: SystemStats | null;
   uploads: { name: string; size_bytes: number }[];
 }
 
@@ -23,6 +16,33 @@ export function ToolsTab({
   systemStats,
   uploads
 }: ToolsTabProps) {
+  const renderMetric = (
+    label: string,
+    value: number | null | undefined,
+    help?: string,
+    dangerAt = 85,
+  ) => (
+    <div style={styles.metricItem}>
+      <div style={styles.metricLabelRow}>
+        <span>{label}</span>
+        <span style={{ color: value === null || value === undefined ? 'var(--warning)' : 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
+          {value === null || value === undefined ? 'unavailable' : `${value}%`}
+        </span>
+      </div>
+      <div style={styles.progressBarBg}>
+        <div
+          style={{
+            ...styles.progressBarFill,
+            width: `${Math.max(0, Math.min(100, value || 0))}%`,
+            backgroundColor: value === null || value === undefined ? 'var(--warning)' : (value > dangerAt ? 'var(--danger)' : (value > 50 ? 'var(--warning)' : 'var(--accent-cyan)')),
+            boxShadow: value === null || value === undefined ? 'none' : '0 0 10px rgba(0, 240, 255, 0.4)',
+          }}
+        />
+      </div>
+      {help && <div style={styles.metricHelpText}>{help}</div>}
+    </div>
+  );
+
   return (
     <div style={styles.tabWrapper}>
       <div style={styles.tabHeader}>
@@ -45,71 +65,29 @@ export function ToolsTab({
             
             {systemStats ? (
               <div style={styles.metricsList}>
-                {/* CPU Loader */}
-                <div style={styles.metricItem}>
-                  <div style={styles.metricLabelRow}>
-                    <span>CPU Load</span>
-                    <span style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
-                      {systemStats.cpu_load_percent}%
-                    </span>
-                  </div>
-                  <div style={styles.progressBarBg}>
-                    <div 
-                      style={{
-                        ...styles.progressBarFill,
-                        width: `${systemStats.cpu_load_percent}%`,
-                        backgroundColor: systemStats.cpu_load_percent > 80 ? 'var(--danger)' : (systemStats.cpu_load_percent > 50 ? 'var(--warning)' : 'var(--accent-cyan)'),
-                        boxShadow: systemStats.cpu_load_percent > 80 ? '0 0 10px var(--danger)' : '0 0 10px rgba(0, 240, 255, 0.4)'
-                      }}
-                    />
-                  </div>
-                </div>
+                {renderMetric('CPU Load', systemStats.cpu_load_percent, undefined, 80)}
+                {renderMetric('RAM Usage', systemStats.ram_used_percent, systemStats.ram_total_gb ? `Total capacity: ${systemStats.ram_total_gb} GB` : 'RAM capacity unavailable')}
+                {renderMetric('Disk Storage', systemStats.disk_used_percent, systemStats.disk_total_gb ? `Used ${systemStats.disk_used_gb} GB of ${systemStats.disk_total_gb} GB` : 'Disk capacity unavailable')}
 
-                {/* Memory RAM Loader */}
-                <div style={styles.metricItem}>
-                  <div style={styles.metricLabelRow}>
-                    <span>RAM Utilization</span>
-                    <span style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
-                      {systemStats.ram_used_percent}%
-                    </span>
+                {(systemStats.status !== 'nominal' || systemStats.error) && (
+                  <div style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(245,158,11,0.24)',
+                    background: 'rgba(245,158,11,0.07)',
+                    color: 'var(--warning)',
+                    fontSize: '0.82rem',
+                    lineHeight: 1.4,
+                  }}>
+                    {systemStats.error || `Unavailable: ${(systemStats.unavailable || []).join(', ')}`}
                   </div>
-                  <div style={styles.progressBarBg}>
-                    <div 
-                      style={{
-                        ...styles.progressBarFill,
-                        width: `${systemStats.ram_used_percent}%`,
-                        backgroundColor: systemStats.ram_used_percent > 85 ? 'var(--danger)' : (systemStats.ram_used_percent > 60 ? 'var(--warning)' : 'var(--accent-cyan)'),
-                        boxShadow: systemStats.ram_used_percent > 85 ? '0 0 10px var(--danger)' : '0 0 10px rgba(0, 240, 255, 0.4)'
-                      }}
-                    />
-                  </div>
-                  <div style={styles.metricHelpText}>
-                    Used {(systemStats.ram_total_gb * systemStats.ram_used_percent / 100).toFixed(1)} GB of {systemStats.ram_total_gb} GB
-                  </div>
-                </div>
+                )}
 
-                {/* Disk Loader */}
-                <div style={styles.metricItem}>
-                  <div style={styles.metricLabelRow}>
-                    <span>Disk Storage</span>
-                    <span style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
-                      {systemStats.disk_used_percent}%
-                    </span>
-                  </div>
-                  <div style={styles.progressBarBg}>
-                    <div 
-                      style={{
-                        ...styles.progressBarFill,
-                        width: `${systemStats.disk_used_percent}%`,
-                        backgroundColor: 'var(--accent-cyan)',
-                        boxShadow: '0 0 10px rgba(0, 240, 255, 0.4)'
-                      }}
-                    />
-                  </div>
+                {systemStats.source && (
                   <div style={styles.metricHelpText}>
-                    Used {systemStats.disk_used_gb} GB of {systemStats.disk_total_gb} GB
+                    Source: {systemStats.source}
                   </div>
-                </div>
+                )}
 
                 <div style={styles.telemetryStatusRow}>
                   <span style={{ color: 'var(--text-muted)' }}>Core Status:</span>
