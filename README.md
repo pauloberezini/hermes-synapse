@@ -102,8 +102,20 @@ http://localhost:9119
 
 Hermes starts gracefully even if optional integrations are not configured.
 
-### 🤖 LLM Models (OpenRouter)
-Set `OPENROUTER_API_KEY` in `.env`. By default, Hermes uses `google/gemini-2.5-flash` for high-speed planning, but you can configure separate models for each specialized role (e.g. Research, Code, Analyst).
+### 🤖 LLM Models (OpenRouter & Local / Custom Providers)
+By default, Hermes uses OpenRouter. However, it supports **any OpenAI-compatible API** (such as **Ollama**, **vLLM**, **LM Studio**, **LocalAI**, etc.).
+
+To use a local or custom provider:
+1. Open your `.env` file.
+2. Set `LLM_API_BASE` to your provider's local endpoint (e.g., `http://localhost:11434/v1` for Ollama or `http://localhost:8000/v1` for vLLM).
+3. Set `LLM_MODEL` to your local model name (e.g., `llama3`, `mistral`, or `deepseek-coder`).
+4. Set `OPENROUTER_API_KEY` to any non-empty placeholder value (e.g., `local` or `dummy`), as the backend requires a non-empty key parameter to initialize.
+
+You can also override models per specialized agent role using the following env variables:
+* `AGENT_MODEL_RESEARCH` (Research Agent)
+* `AGENT_MODEL_CODE` (Code Engineer)
+* `AGENT_MODEL_ANALYST` (Data Analyst)
+* `AGENT_MODEL_PLANNER` (Planner Agent)
 
 ### 💬 Telegram Integration
 1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram and retrieve the token (`TELEGRAM_BOT_TOKEN`).
