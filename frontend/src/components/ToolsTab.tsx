@@ -32,7 +32,7 @@ export function ToolsTab({
         </div>
       </div>
 
-      <div style={styles.toolsLayout}>
+      <div style={styles.toolsLayout} className="tools-layout">
         {/* Left Column: Telemetry & Datasets */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', height: '100%', overflowY: 'auto', paddingRight: '4px' }}>
           

@@ -22,7 +22,7 @@ export function LogsTab({
         </div>
       </div>
 
-      <div style={styles.logsLayout}>
+      <div style={styles.logsLayout} className="logs-layout">
         {/* Logs List */}
         <div style={styles.logsListWrapper} className="glass-panel">
           <div style={styles.logsListHeader}>

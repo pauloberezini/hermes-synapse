@@ -314,3 +314,97 @@ body {
   box-shadow: 0 0 8px var(--accent-cyan);
   animation: bar-grow 8s ease-in-out infinite;
 }
+
+/* ==========================================
+   Responsive Layout & Mobile Support
+   ========================================== */
+@media (max-width: 768px) {
+  /* Mobile Hamburger Menu Trigger */
+  .mobile-menu-btn {
+    display: flex !important;
+  }
+  
+  /* Semi-transparent backdrop blur when sidebar is open */
+  .sidebar-overlay {
+    display: block !important;
+  }
+  
+  /* Collapsible Left Sidebar (overrides JS style object using !important) */
+  aside.sidebar {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 280px !important;
+    height: 100vh !important;
+    transform: translate3d(-100%, 0, 0) !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    z-index: 1000 !important;
+    border-radius: 0px 16px 16px 0px !important;
+  }
+  
+  aside.sidebar-open {
+    transform: translate3d(0, 0, 0) !important;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.7) !important;
+  }
+  
+  /* Main workspace padding adjustment to prevent content from being covered by floating toggle */
+  main {
+    padding: 64px 16px 16px 16px !important;
+  }
+  
+  /* Chat tab sessions list/chat split view layout */
+  .chat-layout {
+    flex-direction: column !important;
+    height: auto !important;
+  }
+  
+  .chat-layout > div:first-child {
+    width: 100% !important;
+    border-right: none !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+    padding-right: 0 !important;
+    padding-bottom: 15px !important;
+    height: auto !important;
+    max-height: 180px !important;
+  }
+  
+  /* Sub-agents tab split layout */
+  .subagents-layout {
+    flex-direction: column !important;
+    height: auto !important;
+  }
+  
+  .subagents-layout > div:first-child {
+    width: 100% !important;
+    border-right: none !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+    padding-right: 0 !important;
+    padding-bottom: 15px !important;
+    height: auto !important;
+    max-height: 180px !important;
+  }
+  
+  /* Decision Logs layout columns stacking */
+  .logs-layout {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    overflow-y: auto !important;
+  }
+  
+  .logs-layout > div {
+    height: auto !important;
+    max-height: 400px;
+  }
+  
+  /* Tools and Monitoring layout columns stacking */
+  .tools-layout {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+  }
+  
+  .tools-layout > div {
+    height: auto !important;
+  }
+}
+

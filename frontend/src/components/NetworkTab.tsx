@@ -121,6 +121,7 @@ export function NetworkTab({
   const [inspectModel, setInspectModel] = useState('');
   const [inspectType, setInspectType] = useState('agent');
   const [inspectParent, setInspectParent] = useState<string | null>(null);
+  const [inspectSkills, setInspectSkills] = useState<string>('');
 
   // New node form states
   const [showAddForm, setShowAddForm] = useState(false);
@@ -141,6 +142,7 @@ export function NetworkTab({
         setInspectModel(node.model);
         setInspectType(node.agent_type || 'agent');
         setInspectParent(node.parent_id || null);
+        setInspectSkills(node.skills || '');
       }
     }
   }, [selectedNodeId, subagents]);
@@ -511,7 +513,8 @@ export function NetworkTab({
         system_prompt: inspectPrompt,
         model: inspectModel,
         agent_type: inspectType,
-        parent_id: inspectParent
+        parent_id: inspectParent,
+        skills: inspectSkills
       };
       await saveAgentToServer(updated);
       setSelectedNodeId(null);
@@ -1124,6 +1127,38 @@ export function NetworkTab({
                 <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
                 <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
               </select>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>SKILLS</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto', padding: '8px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                {SKILLS_LIST.map(skill => {
+                  const currentSkills = inspectSkills ? inspectSkills.split(',').map(s => s.trim()).filter(Boolean) : [];
+                  const hasSkill = currentSkills.includes(skill.id);
+                  return (
+                    <label key={skill.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.75rem', color: '#fff' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={hasSkill}
+                        onChange={(e) => {
+                          let newSkills = [...currentSkills];
+                          if (e.target.checked) {
+                            if (!newSkills.includes(skill.id)) newSkills.push(skill.id);
+                          } else {
+                            newSkills = newSkills.filter(s => s !== skill.id);
+                          }
+                          setInspectSkills(newSkills.join(','));
+                        }}
+                        style={{ accentColor: 'var(--accent-cyan)', cursor: 'pointer' }}
+                      />
+                      <span style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span>{skill.name}</span>
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{skill.desc}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
             <button type="submit" className="btn-primary" style={{ marginTop: '10px' }}>

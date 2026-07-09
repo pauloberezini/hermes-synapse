@@ -76,6 +76,12 @@ describe('App Component', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Communication Link')).toBeInTheDocument();
+    });
+
+    const settingsBtn = screen.getByText('Settings');
+    fireEvent.click(settingsBtn);
+
+    await waitFor(() => {
       expect(screen.getByText('Core Parameters')).toBeInTheDocument();
     });
   });

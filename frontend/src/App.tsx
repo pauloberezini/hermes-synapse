@@ -11,7 +11,11 @@ import {
   BookOpen,
   Network,
   Server,
-  Clock
+  Clock,
+  Menu,
+  X,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig } from './types';
@@ -41,7 +45,12 @@ import { MCPTab } from './components/MCPTab';
 initFetchInterceptor();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+    const saved = localStorage.getItem('jarvis_active_tab');
+    return (saved as any) || 'chat';
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatSessions, setChatSessions] = useState<string[]>(['dashboard']);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
@@ -112,8 +121,10 @@ export default function App() {
     x?: number;
     y?: number;
   }[]>([]);
-  const [currentChatId, setCurrentChatId] = useState<string>('dashboard');
-  const currentChatIdRef = useRef('dashboard');
+  const [currentChatId, setCurrentChatId] = useState<string>(() => {
+    return localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
+  });
+  const currentChatIdRef = useRef(localStorage.getItem('jarvis_current_chat_id') || 'dashboard');
   
   const [newAgentId, setNewAgentId] = useState('');
   const [newAgentName, setNewAgentName] = useState('');
@@ -136,10 +147,24 @@ export default function App() {
   const [isUpdatingAgent, setIsUpdatingAgent] = useState(false);
   const [models, setModels] = useState<{ id: string; name: string }[]>([]);
 
-  useEffect(() => { currentChatIdRef.current = currentChatId; }, [currentChatId]);
+  useEffect(() => {
+    currentChatIdRef.current = currentChatId;
+    localStorage.setItem('jarvis_current_chat_id', currentChatId);
+  }, [currentChatId]);
+
+  useEffect(() => {
+    localStorage.setItem('jarvis_active_tab', activeTab);
+  }, [activeTab]);
 
   // Keep ttsEnabledRef in sync with its state
   useEffect(() => { ttsEnabledRef.current = isTTSEnabled; }, [isTTSEnabled]);
+
+  // Open Settings dropdown automatically if a settings sub-tab is active
+  useEffect(() => {
+    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) {
+      setSettingsOpen(true);
+    }
+  }, [activeTab]);
 
   // ── TTS helper ─────────────────────────────────────────────────────────────
   const speakText = useCallback((rawText: string, msgIndex?: number) => {
@@ -908,6 +933,11 @@ export default function App() {
     fetchSubagents();
     fetchChatSessions();
     fetchModels();
+    
+    if (isAuthenticated) {
+      const savedChatId = localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
+      selectChat(savedChatId);
+    }
   }, [isAuthenticated]);
 
   // Fetch system stats and timers when the "tools" tab is active
@@ -1248,8 +1278,52 @@ export default function App() {
 
   return (
     <div className="app-container scanlines">
+      {/* Mobile Menu Toggle Button */}
+      <button 
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        className="mobile-menu-btn"
+        style={{
+          position: 'fixed',
+          top: '16px',
+          left: '16px',
+          zIndex: 1100,
+          background: 'rgba(12, 17, 34, 0.8)',
+          border: '1px solid rgba(0, 240, 255, 0.3)',
+          color: 'var(--accent-cyan)',
+          padding: '8px',
+          borderRadius: '8px',
+          cursor: 'pointer',
+          display: 'none',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 0 10px rgba(0, 240, 255, 0.1)',
+          backdropFilter: 'blur(4px)'
+        }}
+      >
+        {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+
+      {/* Sidebar Overlay for Mobile */}
+      {sidebarOpen && (
+        <div 
+          onClick={() => setSidebarOpen(false)}
+          className="sidebar-overlay"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(6, 9, 19, 0.6)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 999,
+            display: 'none'
+          }}
+        />
+      )}
+
       {/* 1. Left Sidebar */}
-      <aside style={styles.sidebar} className="glass-panel">
+      <aside style={styles.sidebar} className={`glass-panel sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div style={styles.logoArea}>
           <div className="pulse-dot" style={{ width: 14, height: 14 }} />
           <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>
@@ -1259,7 +1333,7 @@ export default function App() {
         <nav style={styles.navMenu}>
           <button 
             style={{...styles.navBtn, ...(activeTab === 'chat' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('chat')}
+            onClick={() => { setActiveTab('chat'); setSidebarOpen(false); }}
           >
             <MessageSquare size={18} />
             <span>Communication Link</span>
@@ -1267,86 +1341,107 @@ export default function App() {
           
           <button 
             style={{...styles.navBtn, ...(activeTab === 'schedule' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('schedule')}
+            onClick={() => { setActiveTab('schedule'); setSidebarOpen(false); }}
           >
             <Clock size={18} />
             <span>Schedules & Automation</span>
           </button>
-          
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('config')}
-          >
-            <Settings size={18} />
-            <span>Core Parameters</span>
-          </button>
-          
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'logs' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('logs')}
-          >
-            <Terminal size={18} />
-            <span>Decision Logs</span>
-          </button>
-          
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('activity')}
-          >
-            <Activity size={18} />
-            <span>Activity Logs</span>
-          </button>
-          
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'memory' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('memory')}
-          >
-            <Database size={18} />
-            <span>Memory Vault (RAG)</span>
-          </button>
-          
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'tools' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('tools')}
-          >
-            <Wrench size={18} />
-            <span>Core Tools</span>
-          </button>
-
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
-            onClick={() => {
-              setActiveTab('subagents');
-              selectChat(currentChatId === 'dashboard' ? 'dashboard' : currentChatId);
-            }}
-          >
-            <Layers size={18} />
-            <span>Sub-agents</span>
-          </button>
 
           <button 
             style={{...styles.navBtn, ...(activeTab === 'network' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('network')}
+            onClick={() => { setActiveTab('network'); setSidebarOpen(false); }}
           >
             <Network size={18} />
             <span>Architecture</span>
           </button>
-
+          
           <button 
-            style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('mcp')}
+            style={{
+              ...styles.navBtn, 
+              justifyContent: 'space-between', 
+              paddingRight: '12px',
+              ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) ? styles.navBtnActive : {})
+            }}
+            onClick={() => setSettingsOpen(!settingsOpen)}
           >
-            <Server size={18} />
-            <span>MCP Servers</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Settings size={18} />
+              <span>Settings</span>
+            </div>
+            {settingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           </button>
 
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
-            onClick={() => setActiveTab('obsidian')}
-          >
-            <BookOpen size={18} />
-            <span>Obsidian</span>
-          </button>
+          {settingsOpen && (
+            <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('config'); setSidebarOpen(false); }}
+              >
+                <Settings size={18} />
+                <span>Core Parameters</span>
+              </button>
+
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
+                onClick={() => {
+                  setActiveTab('subagents');
+                  selectChat(currentChatId === 'dashboard' ? 'dashboard' : currentChatId);
+                  setSidebarOpen(false);
+                }}
+              >
+                <Layers size={18} />
+                <span>Sub-agents</span>
+              </button>
+
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); }}
+              >
+                <Server size={18} />
+                <span>MCP Servers</span>
+              </button>
+
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); }}
+              >
+                <BookOpen size={18} />
+                <span>Obsidian</span>
+              </button>
+              
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'memory' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('memory'); setSidebarOpen(false); }}
+              >
+                <Database size={18} />
+                <span>Memory Vault (RAG)</span>
+              </button>
+              
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'tools' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('tools'); setSidebarOpen(false); }}
+              >
+                <Wrench size={18} />
+                <span>Core Tools</span>
+              </button>
+
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'logs' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('logs'); setSidebarOpen(false); }}
+              >
+                <Terminal size={18} />
+                <span>Decision Logs</span>
+              </button>
+              
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('activity'); setSidebarOpen(false); }}
+              >
+                <Activity size={18} />
+                <span>Activity Logs</span>
+              </button>
+            </div>
+          )}
         </nav>
 
         {/* Sidebar Status Info */}

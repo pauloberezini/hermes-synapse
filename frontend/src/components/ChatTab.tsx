@@ -10,7 +10,10 @@ import {
   Paperclip, 
   Square, 
   Play, 
-  Send 
+  Send,
+  MoreVertical,
+  Archive,
+  Copy
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig } from '../types';
 import { styles } from '../styles';
@@ -76,6 +79,8 @@ export function ChatTab({
   getSessionLabel,
   mainChatEndRef
 }: ChatTabProps) {
+  const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
+
   return (
     <div style={styles.tabWrapper}>
       <div style={styles.tabHeader}>
@@ -167,7 +172,7 @@ export function ChatTab({
       </div>
 
       {/* Split layout: sessions sidebar on the left, chat workspace on the right */}
-      <div style={{ display: 'flex', gap: '20px', height: 'calc(100vh - 220px)', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: '20px', height: 'calc(100vh - 220px)', flex: 1, minHeight: 0 }} className="chat-layout">
         {/* Sessions Sidebar */}
         <div style={{
           width: '260px',
@@ -216,6 +221,7 @@ export function ChatTab({
               return (
                 <div 
                   key={s}
+                  onMouseLeave={() => setActiveMenu(null)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -225,7 +231,8 @@ export function ChatTab({
                     border: isActive ? '1px solid rgba(0,240,255,0.4)' : '1px solid rgba(255,255,255,0.03)',
                     backgroundColor: isActive ? 'rgba(0,240,255,0.04)' : 'rgba(255,255,255,0.01)',
                     cursor: 'pointer',
-                    transition: 'all 0.2s'
+                    transition: 'all 0.2s',
+                    position: 'relative'
                   }}
                   onClick={() => selectChat(s)}
                 >
@@ -235,39 +242,123 @@ export function ChatTab({
                       {label}
                     </span>
                   </div>
-                  {s !== 'dashboard' && (
+                  <div style={{ position: 'relative' }}>
                     <button 
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        if (window.confirm(`Are you sure you want to delete session "${label}"?`)) {
-                          try {
-                            const res = await fetch(`http://localhost:8000/api/history/${s}`, { method: 'DELETE' });
-                            if (res.ok) {
-                              if (currentChatId === s) {
-                                selectChat('dashboard');
-                              }
-                              fetchChatSessions();
-                            }
-                          } catch (err) {
-                            console.error('Error deleting session:', err);
-                          }
-                        }
+                        setActiveMenu(activeMenu === s ? null : s);
                       }}
                       style={{
                         background: 'none',
                         border: 'none',
-                        color: 'rgba(239,68,68,0.6)',
+                        color: 'var(--text-dim)',
                         cursor: 'pointer',
                         padding: '4px',
                         display: 'flex',
                         alignItems: 'center',
                         borderRadius: '4px'
                       }}
-                      title="Delete session"
+                      title="Session options"
                     >
-                      <Trash2 size={12} />
+                      <MoreVertical size={14} />
                     </button>
-                  )}
+                    
+                    {activeMenu === s && (
+                      <div style={{
+                        position: 'absolute',
+                        right: '0',
+                        top: '100%',
+                        marginTop: '4px',
+                        background: 'rgba(15, 20, 25, 0.95)',
+                        border: '1px solid rgba(0, 240, 255, 0.2)',
+                        borderRadius: '8px',
+                        padding: '4px',
+                        zIndex: 100,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        minWidth: '120px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                      }}>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            setActiveMenu(null);
+                            try {
+                              const res = await fetch(`http://localhost:8000/api/history/${s}/fork`, { method: 'POST' });
+                              if (res.ok) {
+                                const data = await res.json();
+                                fetchChatSessions();
+                                setTimeout(() => selectChat(data.new_session_id), 100);
+                              }
+                            } catch(err) { console.error(err); }
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: '#fff', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                        ><Copy size={12}/> Fork</button>
+                        
+                        {s === 'dashboard' ? (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              setActiveMenu(null);
+                              if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
+                                try {
+                                  const res = await fetch(`http://localhost:8000/api/history/dashboard`, { method: 'DELETE' });
+                                  if (res.ok) {
+                                    selectChat('dashboard');
+                                  }
+                                } catch(err) { console.error(err); }
+                              }
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: 'rgba(239,68,68,0.9)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                          ><Trash2 size={12}/> Purge</button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setActiveMenu(null);
+                                if (window.confirm(`Archive session "${label}"?`)) {
+                                  try {
+                                    const res = await fetch(`http://localhost:8000/api/history/${s}/archive`, { method: 'POST' });
+                                    if (res.ok) {
+                                      if (currentChatId === s) selectChat('dashboard');
+                                      fetchChatSessions();
+                                    }
+                                  } catch(err) { console.error(err); }
+                                }
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: '#fff', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                            ><Archive size={12}/> Archive</button>
+
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setActiveMenu(null);
+                                if (window.confirm(`Are you sure you want to delete session "${label}"?`)) {
+                                  try {
+                                    const res = await fetch(`http://localhost:8000/api/history/${s}`, { method: 'DELETE' });
+                                    if (res.ok) {
+                                      if (currentChatId === s) selectChat('dashboard');
+                                      fetchChatSessions();
+                                    }
+                                  } catch (err) { console.error(err); }
+                                }
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: 'rgba(239,68,68,0.9)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                            ><Trash2 size={12}/> Delete</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}

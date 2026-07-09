@@ -242,6 +242,11 @@ class JarvisAgent:
         if not self.api_key:
             return "Ошибка: OPENROUTER_API_KEY не задан в конфигурации .env, Сэр."
 
+        # IMMEDIATE persistence of user message to prevent session loss on UI refresh
+        from backend import database as db
+        current_user_msg_id = db.save_message(session_id, "user", user_message)
+        self.last_saved_ids[session_id] = {"user": current_user_msg_id, "assistant": None}
+
         # Check if this session is a registered custom subagent
         from backend.database import get_subagent
         subagent = get_subagent(session_id)
@@ -251,9 +256,9 @@ class JarvisAgent:
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
                 
-                # Save the message exchange in the DB
+                
+                # Save the assistant message exchange in the DB
                 from backend import database as db
-                user_msg_id = db.save_message(session_id, "user", user_message)
                 # Calculate cost (estimate)
                 prompt_est = len(user_message) // 4
                 completion_est = len(response_text) // 4
@@ -262,12 +267,12 @@ class JarvisAgent:
                 
                 assistant_msg_id = db.save_message(session_id, "assistant", response_text, cost_usd=cost_usd)
                 self.last_saved_ids[session_id] = {
-                    "user": user_msg_id,
+                    "user": current_user_msg_id,
                     "assistant": assistant_msg_id
                 }
                 return response_text
             else:
-                return await self._respond_as_subagent(user_message, subagent)
+                return await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id)
 
         from backend.activity_logger import log_activity
         log_activity(
@@ -328,10 +333,9 @@ class JarvisAgent:
             
             # Save the clean message exchange in the DB
             from backend import database as db
-            user_msg_id = db.save_message(session_id, "user", user_message)
             assistant_msg_id = db.save_message(session_id, "assistant", response_text, cost_usd=cost_usd)
             self.last_saved_ids[session_id] = {
-                "user": user_msg_id,
+                "user": current_user_msg_id,
                 "assistant": assistant_msg_id
             }
             
@@ -521,10 +525,9 @@ class JarvisAgent:
                         
                         # Save the clean message exchange in the DB
                         from backend import database as db
-                        user_msg_id = db.save_message(session_id, "user", user_message)
                         assistant_msg_id = db.save_message(session_id, "assistant", response_text, cost_usd=cost_usd)
                         self.last_saved_ids[session_id] = {
-                            "user": user_msg_id,
+                            "user": current_user_msg_id,
                             "assistant": assistant_msg_id
                         }
                         break
@@ -622,7 +625,7 @@ class JarvisAgent:
 
         return response_text
 
-    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None) -> str:
+    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
         session_id = subagent["id"]
         subagent_name = subagent["name"]
@@ -834,10 +837,9 @@ class JarvisAgent:
                         
                         # Save the message in DB
                         from backend import database as db
-                        user_msg_id = db.save_message(session_id, "user", user_message)
                         assistant_msg_id = db.save_message(session_id, "assistant", response_text, cost_usd=cost_usd)
                         self.last_saved_ids[session_id] = {
-                            "user": user_msg_id,
+                            "user": current_user_msg_id,
                             "assistant": assistant_msg_id
                         }
                         break

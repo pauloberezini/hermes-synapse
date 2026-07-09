@@ -656,11 +656,6 @@ async def clear_activity_logs_api():
     ACTIVITY_LOGS.clear()
     return {"status": "success"}
 
-@app.get("/api/history/{chat_id}")
-async def get_history_api(chat_id: str, limit: int = 40):
-    from backend.database import get_chat_history
-    return get_chat_history(chat_id, limit=limit)
-
 @app.get("/api/history/sessions")
 async def get_history_sessions():
     from backend.database import DB_PATH
@@ -676,10 +671,15 @@ async def get_history_sessions():
         conn.close()
         
         # Filter out subagents, and keep only "dashboard" and custom sessions
-        user_sessions = [s for s in sessions if s not in subagent_ids and s != "dashboard"]
+        user_sessions = [s for s in sessions if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
         return ["dashboard"] + user_sessions
     except Exception as e:
         return ["dashboard"]
+
+@app.get("/api/history/{chat_id}")
+async def get_history_api(chat_id: str, limit: int = 40):
+    from backend.database import get_chat_history
+    return get_chat_history(chat_id, limit=limit)
 
 @app.delete("/api/history/{chat_id}")
 async def delete_history_api(chat_id: str):
@@ -689,6 +689,41 @@ async def delete_history_api(chat_id: str):
     if chat_id in agent_instance.last_costs:
         agent_instance.last_costs[chat_id] = 0.0
     return {"status": "success"}
+
+@app.post("/api/history/{session_id}/archive")
+async def archive_history_session(session_id: str):
+    """Archives a session by renaming its session_id in the DB."""
+    from backend.database import DB_PATH
+    import sqlite3
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE messages SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "message": f"Session {session_id} archived"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/history/{session_id}/fork")
+async def fork_history_session(session_id: str):
+    """Forks a session by duplicating its messages to a new session_id."""
+    from backend.database import DB_PATH
+    import sqlite3
+    import time
+    new_session_id = f"{session_id}_fork_{int(time.time())}"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO messages (session_id, role, content, cost_usd) 
+            SELECT ?, role, content, cost_usd FROM messages WHERE session_id = ? ORDER BY id ASC
+        """, (new_session_id, session_id))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "new_session_id": new_session_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 

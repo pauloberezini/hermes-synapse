@@ -293,7 +293,7 @@ export function SubagentsTab({
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', height: 'calc(100% - 60px)', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: '20px', height: 'calc(100% - 60px)', flex: 1, minHeight: 0 }} className="subagents-layout">
         {/* Sidebar */}
         <div style={{ width: '260px', display: 'flex', flexDirection: 'column', gap: '10px', borderRight: '1px solid rgba(255,255,255,0.05)', paddingRight: '15px', flexShrink: 0 }}>
           <button

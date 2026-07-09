@@ -81,11 +81,13 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
     state = AgentState(query, chat_id)
     
     # Resolve orchestrator ID
-    orch_id = "jarvis" if chat_id in ("default", "dashboard") else chat_id
-    
-    # Resolve dynamic children from database
     from backend.database import get_all_subagents, get_subagent
-    orch_meta = get_subagent(orch_id)
+    orch_meta = get_subagent(chat_id)
+    if orch_meta:
+        orch_id = chat_id
+    else:
+        orch_id = "jarvis"
+        orch_meta = get_subagent("jarvis")
     
     # Compute active_skills (intersection of parent_skills and this orchestrator's connected skills)
     active_skills = ""
