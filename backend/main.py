@@ -666,7 +666,7 @@ async def get_history_sessions():
         cursor.execute("SELECT id FROM subagents")
         subagent_ids = {r[0] for r in cursor.fetchall()}
         
-        cursor.execute("SELECT DISTINCT session_id FROM messages")
+        cursor.execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
         sessions = [r[0] for r in cursor.fetchall()]
         conn.close()
         

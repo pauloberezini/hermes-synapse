@@ -13,7 +13,9 @@ import {
   Send,
   MoreVertical,
   Archive,
-  Copy
+  Copy,
+  Cpu,
+  Lock
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig } from '../types';
 import { styles } from '../styles';
@@ -217,6 +219,7 @@ export function ChatTab({
             {chatSessions.map(s => {
               const isActive = currentChatId === s;
               const label = getSessionLabel(s);
+              const isDashboard = s === 'dashboard';
               
               return (
                 <div 
@@ -226,21 +229,40 @@ export function ChatTab({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    padding: '8px 12px',
+                    padding: isDashboard ? '10px 12px' : '8px 12px',
                     borderRadius: '8px',
-                    border: isActive ? '1px solid rgba(0,240,255,0.4)' : '1px solid rgba(255,255,255,0.03)',
-                    backgroundColor: isActive ? 'rgba(0,240,255,0.04)' : 'rgba(255,255,255,0.01)',
+                    border: isDashboard 
+                      ? (isActive ? '1px solid rgba(0, 240, 255, 0.7)' : '1px solid rgba(0, 240, 255, 0.25)')
+                      : (isActive ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid rgba(255, 255, 255, 0.03)'),
+                    backgroundColor: isDashboard
+                      ? (isActive ? 'rgba(0, 240, 255, 0.08)' : 'rgba(0, 240, 255, 0.02)')
+                      : (isActive ? 'rgba(0, 240, 255, 0.04)' : 'rgba(255, 255, 255, 0.01)'),
                     cursor: 'pointer',
                     transition: 'all 0.2s',
-                    position: 'relative'
+                    position: 'relative',
+                    boxShadow: isDashboard ? '0 0 10px rgba(0, 240, 255, 0.04)' : 'none'
                   }}
                   onClick={() => selectChat(s)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                    <MessageSquare size={14} style={{ color: isActive ? 'var(--accent-cyan)' : 'var(--text-dim)', flexShrink: 0 }} />
-                    <span style={{ fontSize: '0.8rem', fontWeight: isActive ? 600 : 500, color: isActive ? '#fff' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {label}
-                    </span>
+                    {isDashboard ? (
+                      <Cpu size={14} style={{ color: 'var(--accent-cyan)', flexShrink: 0 }} />
+                    ) : (
+                      <MessageSquare size={14} style={{ color: isActive ? 'var(--accent-cyan)' : 'var(--text-dim)', flexShrink: 0 }} />
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: (isActive || isDashboard) ? 600 : 500, color: (isActive || isDashboard) ? '#fff' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {label}
+                        </span>
+                        {isDashboard && (
+                          <Lock size={10} style={{ color: 'rgba(0, 240, 255, 0.4)', flexShrink: 0 }} title="Protected core session" />
+                        )}
+                      </div>
+                      {isDashboard && (
+                        <span style={{ fontSize: '0.6rem', color: 'rgba(0, 240, 255, 0.65)', fontWeight: 500, letterSpacing: '0.5px' }}>MAIN ORCHESTRATOR</span>
+                      )}
+                    </div>
                   </div>
                   <div style={{ position: 'relative' }}>
                     <button 
