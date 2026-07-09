@@ -79,6 +79,80 @@ async def test_respond_success(mock_post, agent):
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.post")
+async def test_respond_retries_when_cleaned_reasoning_is_empty(mock_post, agent):
+    reasoning_only_response = MagicMock()
+    reasoning_only_response.status_code = 200
+    reasoning_only_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "<think>\nНужно кратко ответить на приветствие.\n</think>"
+                },
+                "finish_reason": "stop"
+            }
+        ]
+    }
+
+    final_response = MagicMock()
+    final_response.status_code = 200
+    final_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Дела хорошо, Сэр. Готова помочь."
+                }
+            }
+        ]
+    }
+    mock_post.side_effect = [reasoning_only_response, final_response]
+
+    response = await agent.respond("Как дела?", session_id="test_session_reasoning_retry")
+
+    assert response == "Дела хорошо, Сэр. Готова помочь."
+    assert mock_post.call_count == 2
+    retry_payload = mock_post.call_args_list[1].kwargs["json"]
+    assert "видимого финального ответа" in retry_payload["messages"][-1]["content"]
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.post")
+async def test_respond_retries_when_provider_content_is_empty(mock_post, agent):
+    empty_response = MagicMock()
+    empty_response.status_code = 200
+    empty_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None
+                },
+                "finish_reason": "stop"
+            }
+        ]
+    }
+
+    final_response = MagicMock()
+    final_response.status_code = 200
+    final_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Всё в порядке, Сэр."
+                }
+            }
+        ]
+    }
+    mock_post.side_effect = [empty_response, final_response]
+
+    response = await agent.respond("Как дела?", session_id="test_session_empty_retry")
+
+    assert response == "Всё в порядке, Сэр."
+    assert mock_post.call_count == 2
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.post")
 async def test_respond_http_error(mock_post, agent):
     # Setup mock error response
     mock_response = MagicMock()
@@ -212,7 +286,8 @@ def test_translate_to_anthropic_payload():
                 }
             }
         ],
-        "temperature": 0.5
+        "temperature": 0.5,
+        "max_tokens": 123
     }
     
     anthropic = translate_to_anthropic_payload(openai_payload)
@@ -220,6 +295,7 @@ def test_translate_to_anthropic_payload():
     assert anthropic["model"] == "claude-3-5-sonnet"
     assert anthropic["system"] == "You are a helpful assistant."
     assert anthropic["temperature"] == 0.5
+    assert anthropic["max_tokens"] == 123
     assert len(anthropic["messages"]) == 3
     
     # Check messages translation

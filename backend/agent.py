@@ -40,6 +40,13 @@ Answer in the user's language, be concise, and give the final answer only.
 Do not reveal hidden reasoning, chain-of-thought, analysis steps, or planning notes.
 Use tools only when the user's request needs live data or an action."""
 
+FINAL_ANSWER_RETRY_PROMPT = (
+    "Предыдущая генерация не дала видимого финального ответа: она была пустой, "
+    "содержала только скрытые рассуждения или оборвалась по лимиту токенов. "
+    "Ответь на последний запрос пользователя заново. Не показывай ход рассуждений. "
+    "Верни только короткий финальный ответ на языке пользователя."
+)
+
 TOOL_INTENT_KEYWORDS = {
     "get_system_stats": [
         "cpu", "ram", "disk", "диск", "память", "сервер", "нагруз", "телеметр", "статус системы"
@@ -165,6 +172,13 @@ def _extract_message_text(content: Any) -> str:
                     chunks.append(text)
         return "\n".join(chunk for chunk in chunks if chunk)
     return str(content)
+
+
+def _should_retry_empty_clean_response(clean_text: str) -> bool:
+    # OpenAI-compatible local providers can occasionally return an empty final
+    # message while loading, after tool calls, or after spending the whole budget
+    # on reasoning. Retry once before surfacing the user-facing fallback.
+    return not clean_text.strip()
 
 
 def _empty_model_response_fallback(agent_name: str = "Vexa") -> str:
@@ -947,12 +961,51 @@ class JarvisAgent:
                     total_prompt_tokens += usage.get("prompt_tokens", 0)
                     total_completion_tokens += usage.get("completion_tokens", 0)
                     
-                    choice_msg = data["choices"][0]["message"]
+                    choice = data["choices"][0]
+                    choice_msg = choice["message"]
                     
                     tool_calls = choice_msg.get("tool_calls")
                     if not tool_calls:
                         # Final text response reached
-                        response_text = _clean_model_output(_extract_message_text(choice_msg.get("content")))
+                        raw_response_text = _extract_message_text(choice_msg.get("content"))
+                        response_text = _clean_model_output(raw_response_text)
+
+                        if _should_retry_empty_clean_response(response_text):
+                            logger.info("Vexa final response was empty after cleanup. Retrying for visible final answer...")
+                            try:
+                                retry_payload = {
+                                    "model": self.model,
+                                    "messages": messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
+                                    "temperature": min(self.temperature, 0.3),
+                                    "max_tokens": self.max_tokens,
+                                }
+                                retry_url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
+                                retry_actual_payload = translate_to_anthropic_payload(retry_payload) if is_openmodel else retry_payload
+                                response_retry = await client.post(
+                                    retry_url,
+                                    json=retry_actual_payload,
+                                    headers=headers
+                                )
+                                if response_retry.status_code == 200:
+                                    raw_retry_data = response_retry.json()
+                                    retry_data = translate_to_openai_response(raw_retry_data) if is_openmodel else raw_retry_data
+                                    retry_usage = retry_data.get("usage", {})
+                                    total_prompt_tokens += retry_usage.get("prompt_tokens", 0)
+                                    total_completion_tokens += retry_usage.get("completion_tokens", 0)
+                                    retry_choice_msg = retry_data["choices"][0]["message"]
+                                    response_text = _clean_model_output(_extract_message_text(retry_choice_msg.get("content")))
+                                else:
+                                    logger.warning(
+                                        "Final answer retry failed for session %s with status %s",
+                                        session_id,
+                                        response_retry.status_code
+                                    )
+                            except Exception as retry_err:
+                                logger.warning(
+                                    "Final answer retry raised for session %s: %s",
+                                    session_id,
+                                    retry_err
+                                )
                         
                         # Fallback: if Gemini returned empty text content after executing tools,
                         # request a verbal confirmation so the user is never left with an empty bubble
@@ -1348,11 +1401,52 @@ class JarvisAgent:
                     total_prompt_tokens += usage.get("prompt_tokens", 0)
                     total_completion_tokens += usage.get("completion_tokens", 0)
                     
-                    choice_msg = data["choices"][0]["message"]
+                    choice = data["choices"][0]
+                    choice_msg = choice["message"]
                     
                     tool_calls = choice_msg.get("tool_calls")
                     if not tool_calls:
-                        response_text = _clean_model_output(_extract_message_text(choice_msg.get("content")))
+                        raw_response_text = _extract_message_text(choice_msg.get("content"))
+                        response_text = _clean_model_output(raw_response_text)
+
+                        if _should_retry_empty_clean_response(response_text):
+                            logger.info("Sub-agent '%s' final response was empty after cleanup. Retrying for visible final answer...", subagent_name)
+                            try:
+                                retry_payload = {
+                                    "model": subagent_model,
+                                    "messages": messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
+                                    "temperature": min(subagent.get("temperature", 0.7), 0.3),
+                                    "max_tokens": self.max_tokens,
+                                }
+                                retry_url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
+                                retry_actual_payload = translate_to_anthropic_payload(retry_payload) if is_openmodel else retry_payload
+                                response_retry = await client.post(
+                                    retry_url,
+                                    json=retry_actual_payload,
+                                    headers=headers
+                                )
+                                if response_retry.status_code == 200:
+                                    raw_retry_data = response_retry.json()
+                                    retry_data = translate_to_openai_response(raw_retry_data) if is_openmodel else raw_retry_data
+                                    retry_usage = retry_data.get("usage", {})
+                                    total_prompt_tokens += retry_usage.get("prompt_tokens", 0)
+                                    total_completion_tokens += retry_usage.get("completion_tokens", 0)
+                                    retry_choice_msg = retry_data["choices"][0]["message"]
+                                    response_text = _clean_model_output(_extract_message_text(retry_choice_msg.get("content")))
+                                else:
+                                    logger.warning(
+                                        "Final answer retry failed for sub-agent '%s' session %s with status %s",
+                                        subagent_name,
+                                        session_id,
+                                        response_retry.status_code
+                                    )
+                            except Exception as retry_err:
+                                logger.warning(
+                                    "Final answer retry raised for sub-agent '%s' session %s: %s",
+                                    subagent_name,
+                                    session_id,
+                                    retry_err
+                                )
                         
                         # Fallback for empty text content after tools
                         if not response_text.strip() and tool_executed:
@@ -1506,7 +1600,7 @@ def translate_to_anthropic_payload(openai_payload):
     anthropic_payload = {
         "model": openai_payload["model"],
         "messages": anthropic_messages,
-        "max_tokens": 4096,
+        "max_tokens": openai_payload.get("max_tokens", 4096),
         "temperature": openai_payload.get("temperature", 0.7)
     }
     if system_prompt:
