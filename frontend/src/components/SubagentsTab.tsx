@@ -262,6 +262,12 @@ export function SubagentsTab({
 }: SubagentsTabProps) {
 
   const [skillMap, setSkillMap] = useState<Record<string, string[]>>({});
+  const messageContent = (msg: ChatMessage) => {
+    if ((msg.content || '').trim()) return msg.content;
+    return msg.role === 'assistant'
+      ? 'Пустой ответ модели. Попробуйте повторить запрос или уточнить формулировку.'
+      : '';
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('jarvis_auth_token');
@@ -308,7 +314,7 @@ export function SubagentsTab({
           >
             <MessageSquare size={16} style={{ color: 'var(--accent-cyan)' }} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Vexa (Main)</span>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Vexa Main</span>
               <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>Personal Assistant</span>
             </div>
           </button>
@@ -483,7 +489,7 @@ export function SubagentsTab({
                   {messages.map((msg, index) => (
                     <div key={index} style={{ ...styles.msgBubbleWrapper, justifyContent: msg.role === 'user' ? 'flex-end' : (msg.role === 'system' ? 'center' : 'flex-start') }}>
                       {msg.role === 'system' ? (
-                        <div style={styles.systemMsg}>{msg.content}</div>
+                        <div style={styles.systemMsg}>{messageContent(msg)}</div>
                       ) : (
                         <div style={{ ...styles.msgBubble, backgroundColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.12)' : 'rgba(0, 240, 255, 0.05)', borderColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.3)' : 'rgba(0, 240, 255, 0.2)', alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
                           <div style={styles.msgHeader}>
@@ -499,14 +505,14 @@ export function SubagentsTab({
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               {msg.role === 'assistant' && (
-                                <button onClick={() => speakText(msg.content, index)} title={playingMsgIndex === index ? 'Stop' : 'Play voice'}
+                                <button onClick={() => speakText(messageContent(msg), index)} title={playingMsgIndex === index ? 'Stop' : 'Play voice'}
                                   style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '4px', color: playingMsgIndex === index ? '#ff9f00' : 'rgba(0, 240, 255, 0.45)', display: 'flex', alignItems: 'center', transition: 'color 0.2s, transform 0.15s', transform: playingMsgIndex === index ? 'scale(1.15)' : 'scale(1)' }}>
                                   {playingMsgIndex === index ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
                                 </button>
                               )}
                             </div>
                           </div>
-                          <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                          <div style={styles.msgText}>{renderMarkdown(messageContent(msg))}</div>
                         </div>
                       )}
                     </div>

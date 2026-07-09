@@ -32,6 +32,15 @@ export interface ActivityLog {
 export interface SystemConfig {
   system_prompt: string;
   model: string;
+  fast_mode?: boolean;
+  max_history_len?: number;
+  max_tokens?: number;
+  tool_max_tokens?: number;
+  temperature?: number;
+  auto_rag?: boolean;
+  memory_enabled?: boolean;
+  memory_auto_save?: boolean;
+  memory_max_items?: number;
 }
 
 export interface AgentModel {
@@ -42,6 +51,10 @@ export interface AgentModel {
   created_at?: string;
   agent_type?: string;
   parent_id?: string | null;
+  project?: string;
+  project_id?: string;
+  project_name?: string;
+  workspace?: string;
   skills?: string;
   x?: number;
   y?: number;

@@ -40,7 +40,7 @@ export function ScheduleTab({
   const [taskInterval, setTaskInterval] = useState(1);
 
   const availableAgents = [
-    { id: 'jarvis', name: 'Jarvis (Main Orchestrator)' },
+    { id: 'jarvis', name: 'Vexa Main' },
     ...subagents.map(a => ({ id: a.id, name: a.name }))
   ];
 

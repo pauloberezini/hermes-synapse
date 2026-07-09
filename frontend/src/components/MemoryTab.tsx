@@ -67,7 +67,7 @@ export function MemoryTab({
             <textarea 
               value={noteContent} 
               onChange={e => setNoteContent(e.target.value)} 
-              placeholder="Enter memory text, facts, or instructions for Vexa to remember..." 
+              placeholder="Enter memory text, facts, or instructions for Vexa to remember..."
               style={styles.formTextarea} 
               className="form-input" 
               rows={8}

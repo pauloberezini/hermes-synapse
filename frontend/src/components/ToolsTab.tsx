@@ -5,16 +5,23 @@ import {
   Settings 
 } from 'lucide-react';
 import { styles } from '../styles';
+import type { Language } from '../i18n';
 import type { SystemStats } from '../types';
 
 interface ToolsTabProps {
   systemStats: SystemStats | null;
   uploads: { name: string; size_bytes: number }[];
+  language: Language;
+  setLanguage: (language: Language) => void;
+  t: (key: string) => string;
 }
 
 export function ToolsTab({
   systemStats,
-  uploads
+  uploads,
+  language,
+  setLanguage,
+  t
 }: ToolsTabProps) {
   const telemetryAvailable = systemStats?.available !== false && systemStats?.status !== 'unavailable';
   const telemetryStatusLabel = !systemStats
@@ -169,6 +176,46 @@ export function ToolsTab({
 
         {/* Right Column: Active Sub-agents & Core Tools */}
         <div style={styles.toolsContentRight}>
+          <div style={styles.toolsRegistryWrapper} className="glass-panel">
+            <h3 style={styles.toolsPanelTitle}>
+              <Settings size={18} style={{ color: 'var(--accent-cyan)' }} />
+              <span>{t('language')}</span>
+            </h3>
+
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {([
+                ['ru', 'Русский'],
+                ['en', 'English'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setLanguage(value)}
+                  className="btn-primary"
+                  style={{
+                    borderColor: language === value ? 'var(--accent-cyan)' : 'rgba(255,255,255,0.14)',
+                    background: language === value ? 'rgba(0,240,255,0.12)' : 'rgba(255,255,255,0.03)',
+                    color: language === value ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p style={{ ...styles.formHelp, marginTop: 12 }}>{t('languageHelp')}</p>
+            <div style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 8,
+              border: '1px solid rgba(16,185,129,0.22)',
+              background: 'rgba(16,185,129,0.06)',
+              color: 'var(--success)',
+              fontSize: '0.86rem',
+              fontWeight: 600,
+            }}>
+              {t('saveStatus')}
+            </div>
+          </div>
 
           {/* Active Sub-agents (Orchestrator Graph) */}
           <div className="glass-panel" style={{ ...styles.toolsRegistryWrapper, marginBottom: '0px' }}>

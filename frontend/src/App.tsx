@@ -44,6 +44,7 @@ import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
+import { SettingsTab } from './components/SettingsTab';
 import { AgentsAdminTab } from './components/AgentsAdminTab';
 import { OfficeTab } from './components/OfficeTab';
 
@@ -84,7 +85,16 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [config, setConfig] = useState<SystemConfig>({
     system_prompt: '',
-    model: 'google/gemini-2.5-pro'
+    model: 'google/gemini-2.5-pro',
+    fast_mode: true,
+    max_history_len: 6,
+    max_tokens: 256,
+    tool_max_tokens: 512,
+    temperature: 0.2,
+    auto_rag: false,
+    memory_enabled: true,
+    memory_auto_save: true,
+    memory_max_items: 4
   });
   
   // Document / Memory States
@@ -116,6 +126,7 @@ export default function App() {
   // Prompt edit states
   const [editedPrompt, setEditedPrompt] = useState('');
   const [editedModel, setEditedModel] = useState('');
+  const [editedRuntimeConfig, setEditedRuntimeConfig] = useState<Partial<SystemConfig>>({});
   
   const wsRef = useRef<WebSocket | null>(null);
   const mainChatEndRef = useRef<HTMLDivElement | null>(null);
@@ -296,7 +307,7 @@ export default function App() {
     setMicEnabled(true);
     setMicState('transcribing');
     const formData = new FormData();
-    formData.append('file', blob, `vexa-voice-${Date.now()}.webm`);
+    formData.append('file', blob, `jarvis-voice-${Date.now()}.webm`);
 
     try {
       const res = await fetch('/api/voice/transcribe', {
@@ -538,6 +549,7 @@ export default function App() {
             setConfig(data.config);
             setEditedPrompt(data.config.system_prompt);
             setEditedModel(data.config.model);
+            setEditedRuntimeConfig(data.config);
             if (data.logs) {
               setLogs(data.logs);
             }
@@ -601,9 +613,10 @@ export default function App() {
               return updated.slice(0, 200);
             });
           } else if (data.type === 'config_update') {
-            setConfig({ system_prompt: data.system_prompt, model: data.model });
+            setConfig(data);
             setEditedPrompt(data.system_prompt);
             setEditedModel(data.model);
+            setEditedRuntimeConfig(data);
           } else if (data.type === 'timer_completed') {
             setTimers((prev) => {
               const exists = prev.some(t => t.id === data.timer.id);
@@ -932,6 +945,7 @@ export default function App() {
           setConfig(data);
           setEditedPrompt(data.system_prompt);
           setEditedModel(data.model);
+          setEditedRuntimeConfig(data);
         }
       })
       .catch(() => console.log('REST config fetch skipped/failed (using WS instead)'));
@@ -1149,12 +1163,22 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           system_prompt: editedPrompt,
-          model: editedModel
+          model: editedModel,
+          fast_mode: editedRuntimeConfig.fast_mode,
+          max_history_len: editedRuntimeConfig.max_history_len,
+          max_tokens: editedRuntimeConfig.max_tokens,
+          tool_max_tokens: editedRuntimeConfig.tool_max_tokens,
+          temperature: editedRuntimeConfig.temperature,
+          auto_rag: editedRuntimeConfig.auto_rag,
+          memory_enabled: editedRuntimeConfig.memory_enabled,
+          memory_auto_save: editedRuntimeConfig.memory_auto_save,
+          memory_max_items: editedRuntimeConfig.memory_max_items
         })
       });
       if (response.ok) {
         const data = await response.json();
         setConfig(data.config);
+        setEditedRuntimeConfig(data.config);
         alert('System configuration updated, Sir.');
       } else {
         alert('Error updating configuration.');
@@ -1424,6 +1448,7 @@ export default function App() {
 
           {settingsOpen && (
             <div style={{ paddingLeft: isSidebarCollapsed ? 0 : '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
+              {!isSidebarCollapsed && <span className="nav-section-label">SYSTEM</span>}
               <button
                 style={navStyle('config')}
                 onClick={() => { setActiveTab('config'); setSidebarOpen(false); }}
@@ -1433,6 +1458,25 @@ export default function App() {
                 <span>{t('navConfig')}</span>
               </button>
 
+              <button
+                style={navStyle('tools')}
+                onClick={() => { setActiveTab('tools'); setSidebarOpen(false); }}
+                title={t('navTools')}
+              >
+                <Wrench size={18} />
+                <span>{t('navTools')}</span>
+              </button>
+
+              <button
+                style={navStyle('settings')}
+                onClick={() => { setActiveTab('settings'); setSidebarOpen(false); }}
+                title={t('navGeneral')}
+              >
+                <Settings size={18} />
+                <span>{t('navGeneral')}</span>
+              </button>
+
+              {!isSidebarCollapsed && <span className="nav-section-label">AGENTS</span>}
               <button
                 style={navStyle('subagents')}
                 onClick={() => {
@@ -1472,16 +1516,8 @@ export default function App() {
                 <Database size={18} />
                 <span>{t('navMemory')}</span>
               </button>
-              
-              <button
-                style={navStyle('tools')}
-                onClick={() => { setActiveTab('tools'); setSidebarOpen(false); }}
-                title={t('navTools')}
-              >
-                <Wrench size={18} />
-                <span>{t('navTools')}</span>
-              </button>
 
+              {!isSidebarCollapsed && <span className="nav-section-label">LOGS</span>}
               <button
                 style={navStyle('logs')}
                 onClick={() => { setActiveTab('logs'); setSidebarOpen(false); }}
@@ -1498,15 +1534,6 @@ export default function App() {
               >
                 <Activity size={18} />
                 <span>{t('navActivity')}</span>
-              </button>
-
-              <button
-                style={navStyle('settings')}
-                onClick={() => { setActiveTab('settings'); setSidebarOpen(false); }}
-                title={t('navSettings')}
-              >
-                <Settings size={18} />
-                <span>{t('navSettings')}</span>
               </button>
             </div>
           )}
@@ -1597,6 +1624,8 @@ export default function App() {
             isSavingConfig={isSavingConfig}
             handleSaveConfig={handleSaveConfig}
             models={models}
+            runtimeConfig={editedRuntimeConfig}
+            setRuntimeConfig={setEditedRuntimeConfig}
           />
         )}
 
@@ -1647,6 +1676,9 @@ export default function App() {
           <ToolsTab
             systemStats={systemStats}
             uploads={uploads}
+            language={language}
+            setLanguage={setLanguage}
+            t={t}
           />
         )}
 
@@ -1712,6 +1744,10 @@ export default function App() {
 
         {activeTab === 'mcp' && (
           <MCPTab />
+        )}
+
+        {activeTab === 'settings' && (
+          <SettingsTab t={t} />
         )}
 
       </main>

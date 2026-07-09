@@ -272,4 +272,3 @@ def test_suppress_tts(agent):
     agent.suppress_tts_sessions.add(session_id)
     assert agent.check_and_clear_suppress_tts(session_id) is True
     assert agent.check_and_clear_suppress_tts(session_id) is False
-

@@ -1021,8 +1021,8 @@ TOOLS_SCHEMA = [
                 "  Tech — технологии, инструменты, туториалы, код\n"
                 "  Books — книги, конспекты, цитаты\n"
                 "  Meetings — встречи, звонки, договорённости\n"
-                "  Vexa — служебные заметки от Vexa без чёткой категории\n"
-                "Выбирайте папку автоматически — НЕ спрашивайте Сэра. Можно создавать подпапки, например Research/AI или Projects/Vexa."
+                "  Jarvis — служебные заметки от Jarvis без чёткой категории\n"
+                "Выбирайте папку автоматически — НЕ спрашивайте Сэра. Можно создавать подпапки, например Research/AI или Projects/Jarvis."
             ),
             "parameters": {
                 "type": "object",
@@ -1228,7 +1228,7 @@ def _get_local_repo() -> Optional[str]:
 def get_github_summary(repo_name: Optional[str] = None, request_type: str = "all") -> str:
     repo = repo_name or _get_local_repo() or "pauloberezini/jarvis"
     token = _env("GITHUB_TOKEN")
-    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "Vexa-Assistant"}
+    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "Jarvis-Assistant"}
     if token:
         headers["Authorization"] = f"token {token}"
     
@@ -1460,7 +1460,7 @@ def read_obsidian_note(note_path: str) -> str:
     return json.dumps({"path": note_path, "content": content}, ensure_ascii=False)
 
 
-def create_obsidian_note(title: str, content: str, folder: str = "Vexa") -> str:
+def create_obsidian_note(title: str, content: str, folder: str = "Jarvis") -> str:
     """Create a new note in the Obsidian vault under the specified folder."""
     import re
     # Sanitize filename
@@ -1471,7 +1471,7 @@ def create_obsidian_note(title: str, content: str, folder: str = "Vexa") -> str:
     from datetime import datetime
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M")
-    full_content = f"---\ncreated: {now}\ncreated_by: Vexa\n---\n\n# {title}\n\n{content}"
+    full_content = f"---\ncreated: {now}\ncreated_by: Jarvis\n---\n\n# {title}\n\n{content}"
 
     async def _create():
         from backend.obsidian import create_note
@@ -1676,7 +1676,7 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         return create_obsidian_note(
             title=arguments.get("title", ""),
             content=arguments.get("content", ""),
-            folder=arguments.get("folder", "Vexa")
+            folder=arguments.get("folder", "Jarvis")
         )
 
     elif name == "sync_obsidian_vault":

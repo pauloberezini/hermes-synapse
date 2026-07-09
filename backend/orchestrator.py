@@ -6,7 +6,7 @@ from backend.subagents import ResearchAgent, CodeAgent, AnalystAgent, call_llm, 
 
 logger = logging.getLogger("hermes.orchestrator")
 
-PLANNER_SYSTEM_PROMPT = """You are the Planner in the Vexa multi-agent system. 
+PLANNER_SYSTEM_PROMPT = """You are the Planner in the Jarvis multi-agent system.
 Your task is to break down a complex user query into a sequence of steps to be executed by specialized sub-agents:
 1. "research" — search for information on the Internet (DuckDuckGo, web pages, news, quotes, Wikipedia). Always use this agent when fresh news, stock/crypto quotes, or external web search are needed.
 2. "code" — write and execute Python code. WARNING: code runs in an isolated sandbox WITHOUT internet access (network is disabled). Use this agent only for math calculations, logic computations, or processing existing data/tables (e.g., uploaded CSV/Excel files).
@@ -358,7 +358,7 @@ Rules:
             orch_system_prompt = parent_agent["system_prompt"]
             
         synth_prompt = (
-            f"You are {parent_agent['name'] if parent_agent else 'Vexa'}, a highly intelligent assistant.\n"
+            f"You are {parent_agent['name'] if parent_agent else 'Jarvis'}, a highly intelligent assistant.\n"
             f"Formulate the final response to the user (Sir) based on their original query and the results of your sub-agents.\n\n"
             f"Original query of Sir: \"{query}\"\n\n"
             f"Results of sub-agents:\n{results_context}\n\n"

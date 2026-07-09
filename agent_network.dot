@@ -1,7 +1,7 @@
-digraph VexaAgentNetwork {
+digraph JarvisAgentNetwork {
     rankdir=TB;
     fontname="Helvetica,Arial,sans-serif";
-    label="Vexa Multi-Agent Network Map";
+    label="Jarvis Multi-Agent Network Map";
     labelloc="t";
     fontsize=20;
     
@@ -27,7 +27,7 @@ digraph VexaAgentNetwork {
 
     // Orchestrator Node Style
     node [fillcolor="#E74C3C", fontcolor="#FFFFFF", color="#C0392B", shape=hexagon];
-    vexa [label="🤖 Vexa (Основной)\n[Orchestrator]\nModel: gemini-2.5-flash"];
+    jarvis [label="🤖 Jarvis (Основной)\n[Orchestrator]\nModel: gemini-2.5-flash"];
 
     // Connected Subagents Style
     node [fillcolor="#3498DB", fontcolor="#FFFFFF", color="#2980B9", shape=box];
@@ -36,9 +36,9 @@ digraph VexaAgentNetwork {
     analyst [label="📊 Визуализатор (analyst)\nModel: gemini-2.5-flash\nSkills: python_sandbox"];
 
     // Hierarchical Links
-    vexa -> research [label="coordinates"];
-    vexa -> code [label="coordinates"];
-    vexa -> analyst [label="coordinates"];
+    jarvis -> research [label="coordinates"];
+    jarvis -> code [label="coordinates"];
+    jarvis -> analyst [label="coordinates"];
 
     // Standalone Agents Style (different color)
     node [fillcolor="#9B59B6", fontcolor="#FFFFFF", color="#8E44AD", shape=box];

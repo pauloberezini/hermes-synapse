@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Shield, Activity } from 'lucide-react';
+import { Cpu, Shield, Activity, Database, Zap } from 'lucide-react';
 import { styles } from '../styles';
+import type { SystemConfig } from '../types';
 
 interface ConfigTabProps {
   editedModel: string;
@@ -10,6 +11,8 @@ interface ConfigTabProps {
   isSavingConfig: boolean;
   handleSaveConfig: (e: React.FormEvent) => void;
   models: { id: string; name: string }[];
+  runtimeConfig: Partial<SystemConfig>;
+  setRuntimeConfig: React.Dispatch<React.SetStateAction<Partial<SystemConfig>>>;
 }
 
 export function ConfigTab({
@@ -19,7 +22,9 @@ export function ConfigTab({
   setEditedPrompt,
   isSavingConfig,
   handleSaveConfig,
-  models
+  models,
+  runtimeConfig,
+  setRuntimeConfig
 }: ConfigTabProps) {
   
   // Check if editedModel is part of the returned models list.
@@ -37,6 +42,43 @@ export function ConfigTab({
       setShowCustom(false);
     }
   }, [editedModel, models]);
+
+  const updateRuntime = (patch: Partial<SystemConfig>) => {
+    setRuntimeConfig(prev => ({ ...prev, ...patch }));
+  };
+
+  const numberValue = (key: keyof SystemConfig, fallback: number) => {
+    const value = runtimeConfig[key];
+    return typeof value === 'number' ? value : fallback;
+  };
+
+  const boolValue = (key: keyof SystemConfig, fallback: boolean) => {
+    const value = runtimeConfig[key];
+    return typeof value === 'boolean' ? value : fallback;
+  };
+
+  const gridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '14px'
+  };
+
+  const compactInputStyle: React.CSSProperties = {
+    width: '100%',
+    backgroundColor: 'var(--bg-deep)',
+    minHeight: '40px'
+  };
+
+  const toggleRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '12px',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+    borderRadius: '8px',
+    background: 'rgba(255, 255, 255, 0.025)'
+  };
 
   return (
     <div style={styles.tabWrapper}>
@@ -115,6 +157,133 @@ export function ConfigTab({
             rows={10}
           />
           <span style={styles.formHelp}>Hardcodes the character, tone of communication, response style of Vexa, and user addressing rules.</span>
+        </div>
+
+        <div style={styles.formGroup}>
+          <label style={styles.formLabel}>
+            <Zap size={16} style={{ color: '#00f0ff' }} />
+            <span>Speed and Memory Instructions</span>
+          </label>
+          <div style={gridStyle}>
+            <label style={toggleRowStyle}>
+              <span>
+                <strong>Fast local mode</strong>
+                <span style={{ ...styles.formHelp, display: 'block' }}>Short prompt, small history, tight token limits.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={boolValue('fast_mode', true)}
+                onChange={e => updateRuntime({ fast_mode: e.target.checked })}
+              />
+            </label>
+
+            <label style={toggleRowStyle}>
+              <span>
+                <strong>Long-term memory</strong>
+                <span style={{ ...styles.formHelp, display: 'block' }}>Remember stable facts and preferences.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={boolValue('memory_enabled', true)}
+                onChange={e => updateRuntime({ memory_enabled: e.target.checked })}
+              />
+            </label>
+
+            <label style={toggleRowStyle}>
+              <span>
+                <strong>Auto-save memories</strong>
+                <span style={{ ...styles.formHelp, display: 'block' }}>Learns from “remember...” and profile phrases.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={boolValue('memory_auto_save', true)}
+                onChange={e => updateRuntime({ memory_auto_save: e.target.checked })}
+              />
+            </label>
+
+            <label style={toggleRowStyle}>
+              <span>
+                <strong>Automatic RAG context</strong>
+                <span style={{ ...styles.formHelp, display: 'block' }}>More recall from documents, slower responses.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={boolValue('auto_rag', false)}
+                onChange={e => updateRuntime({ auto_rag: e.target.checked })}
+              />
+            </label>
+          </div>
+
+          <div style={{ ...gridStyle, marginTop: '14px' }}>
+            <label style={styles.formGroup}>
+              <span style={styles.formLabel}><Database size={16} style={{ color: '#00f0ff' }} />Memory facts per request</span>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                value={numberValue('memory_max_items', 4)}
+                onChange={e => updateRuntime({ memory_max_items: Number(e.target.value) })}
+                style={compactInputStyle}
+                className="form-input"
+              />
+            </label>
+
+            <label style={styles.formGroup}>
+              <span style={styles.formLabel}>History messages</span>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                value={numberValue('max_history_len', 6)}
+                onChange={e => updateRuntime({ max_history_len: Number(e.target.value) })}
+                style={compactInputStyle}
+                className="form-input"
+              />
+            </label>
+
+            <label style={styles.formGroup}>
+              <span style={styles.formLabel}>Max answer tokens</span>
+              <input
+                type="number"
+                min={32}
+                max={4096}
+                value={numberValue('max_tokens', 256)}
+                onChange={e => updateRuntime({ max_tokens: Number(e.target.value) })}
+                style={compactInputStyle}
+                className="form-input"
+              />
+            </label>
+
+            <label style={styles.formGroup}>
+              <span style={styles.formLabel}>Tool answer tokens</span>
+              <input
+                type="number"
+                min={64}
+                max={4096}
+                value={numberValue('tool_max_tokens', 512)}
+                onChange={e => updateRuntime({ tool_max_tokens: Number(e.target.value) })}
+                style={compactInputStyle}
+                className="form-input"
+              />
+            </label>
+
+            <label style={styles.formGroup}>
+              <span style={styles.formLabel}>Temperature</span>
+              <input
+                type="number"
+                min={0}
+                max={2}
+                step={0.1}
+                value={numberValue('temperature', 0.2)}
+                onChange={e => updateRuntime({ temperature: Number(e.target.value) })}
+                style={compactInputStyle}
+                className="form-input"
+              />
+            </label>
+          </div>
+          <span style={styles.formHelp}>
+            Recommended for your local 35B model: Fast mode on, Long-term memory on, Auto RAG off, 3-5 memory facts per request.
+          </span>
         </div>
 
         <button type="submit" className="btn-primary" disabled={isSavingConfig} style={{ alignSelf: 'flex-start' }}>

@@ -82,6 +82,12 @@ export function ChatTab({
   mainChatEndRef
 }: ChatTabProps) {
   const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
+  const messageContent = (msg: ChatMessage) => {
+    if ((msg.content || '').trim()) return msg.content;
+    return msg.role === 'assistant'
+      ? 'Пустой ответ модели. Попробуйте повторить запрос или уточнить формулировку.'
+      : '';
+  };
 
   return (
     <div style={styles.tabWrapper}>
@@ -446,7 +452,7 @@ export function ChatTab({
                         {/* Per-message play/stop button — only on assistant messages */}
                         {msg.role === 'assistant' && (
                           <button
-                            onClick={() => speakText(msg.content, index)}
+                            onClick={() => speakText(messageContent(msg), index)}
                             title={playingMsgIndex === index ? 'Stop' : 'Play voice'}
                             style={{
                               background: 'none',
@@ -473,7 +479,7 @@ export function ChatTab({
                         )}
                       </div>
                     </div>
-                    <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                    <div style={styles.msgText}>{renderMarkdown(messageContent(msg))}</div>
                   </div>
                 )}
               </div>

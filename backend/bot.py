@@ -68,7 +68,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     greeting = (
         f"Greetings, Sir (@{username}). I am Hermes, your personal "
-        f"AI assistant with Vexa protocols. The system is in standby mode. "
+        f"AI assistant with Jarvis protocols. The system is in standby mode. "
         f"How may I help you?"
     )
     
@@ -144,11 +144,23 @@ async def _process_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "chat_id": chat_id
     })
     
-    # Show typing indicator
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    
-    # Run Agent LLM call
-    response_text = await agent_instance.respond(user_text, session_id=str(chat_id))
+    async def keep_typing():
+        while True:
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception:
+                logger.debug("Telegram typing indicator failed", exc_info=True)
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(keep_typing())
+    try:
+        response_text = await agent_instance.respond(user_text, session_id=str(chat_id))
+    finally:
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
     
     # Retrieve saved database message IDs
     saved_ids = agent_instance.last_saved_ids.get(str(chat_id), {})

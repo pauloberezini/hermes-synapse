@@ -15,6 +15,15 @@ class AuthVerifyRequest(BaseModel):
 class ConfigUpdate(BaseModel):
     system_prompt: str | None = None
     model: str | None = None
+    fast_mode: bool | None = None
+    max_history_len: int | None = None
+    max_tokens: int | None = None
+    tool_max_tokens: int | None = None
+    temperature: float | None = None
+    auto_rag: bool | None = None
+    memory_enabled: bool | None = None
+    memory_auto_save: bool | None = None
+    memory_max_items: int | None = None
 
 class PriceAlertRequest(BaseModel):
     symbol: str
@@ -122,8 +131,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Hermes Vexa Backend",
-    description="Backend services for the Vexa AI Personal Assistant",
+    title="Hermes Jarvis Backend",
+    description="Backend services for the Jarvis AI Personal Assistant",
     lifespan=lifespan
 )
 
@@ -214,10 +223,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class ConfigUpdate(BaseModel):
-    system_prompt: str | None = None
-    model: str | None = None
-
 @app.get("/api/status")
 async def get_status():
     return {
@@ -225,16 +230,14 @@ async def get_status():
         "agent": {
             "model": agent_instance.model,
             "max_history_len": agent_instance.max_history_len,
+            "memory_enabled": agent_instance.memory_enabled,
         },
         "logs_count": len(DECISION_LOGS)
     }
 
 @app.get("/api/config")
 async def get_config():
-    return {
-        "system_prompt": agent_instance.system_prompt,
-        "model": agent_instance.model
-    }
+    return agent_instance.get_runtime_config()
 
 @app.post("/api/config")
 async def update_config(update: ConfigUpdate):
@@ -242,14 +245,30 @@ async def update_config(update: ConfigUpdate):
         agent_instance.update_system_prompt(update.system_prompt)
     if update.model is not None:
         agent_instance.model = update.model
+    agent_instance.update_runtime_config(
+        fast_mode=update.fast_mode,
+        max_history_len=update.max_history_len,
+        max_tokens=update.max_tokens,
+        tool_max_tokens=update.tool_max_tokens,
+        temperature=update.temperature,
+        auto_rag=update.auto_rag,
+        memory_enabled=update.memory_enabled,
+        memory_auto_save=update.memory_auto_save,
+        memory_max_items=update.memory_max_items,
+    )
+    config = agent_instance.get_runtime_config()
+    try:
+        from backend.database import save_app_settings
+        save_app_settings(config)
+    except Exception as e:
+        logger.warning(f"Failed to persist runtime config: {e}")
         
     # Broadcast updated configuration to all websocket clients
     await manager.broadcast({
         "type": "config_update",
-        "system_prompt": agent_instance.system_prompt,
-        "model": agent_instance.model
+        **config
     })
-    return {"status": "success", "config": {"system_prompt": agent_instance.system_prompt, "model": agent_instance.model}}
+    return {"status": "success", "config": config}
 
 @app.get("/api/logs")
 async def get_logs():
@@ -818,7 +837,7 @@ async def fork_history_session(session_id: str):
 class ObsidianNoteCreate(BaseModel):
     title: str
     content: str
-    folder: str = "Vexa"
+    folder: str = "Jarvis"
 
 @app.get("/api/obsidian/status")
 async def obsidian_status():

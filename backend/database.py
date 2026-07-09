@@ -128,8 +128,8 @@ def init_db():
         default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
         default_agents = [
             (
-                "jarvis", "Vexa (Main)",
-                "You are Vexa, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+                "jarvis", "Jarvis (Main)",
+                "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
                 default_model, "orchestrator", None, "", 100, 350
             ),
             (
@@ -182,8 +182,8 @@ def init_db():
         # Migration: upsert new default agents that don't exist yet,
         # and update existing ones if they still have old prompts.
         upserts = [
-            ("jarvis", "Vexa (Main)",
-             "You are Vexa, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+            ("jarvis", "Jarvis (Main)",
+             "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
              "orchestrator", None, "", 100, 350),
             ("research", "Search Agent",
              "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
@@ -233,6 +233,15 @@ def init_db():
                     'You are an Analyst-Visualizer. Create charts.'
                 )
             """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
+
+        # Restore public Jarvis branding for databases that were temporarily migrated to Vexa.
+        cursor.execute("""
+            UPDATE subagents
+            SET name = 'Jarvis (Main)',
+                system_prompt = REPLACE(system_prompt, 'Vexa', 'Jarvis')
+            WHERE id = 'jarvis'
+              AND (name = 'Vexa (Main)' OR system_prompt LIKE '%Vexa%')
+        """)
         logger.info("Checked and migrated default subagents.")
 
     # Create subagent memory table
@@ -261,6 +270,31 @@ def init_db():
 
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_agent_events_agent_id ON agent_events (agent_id, id DESC)
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL DEFAULT 'global',
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            source TEXT DEFAULT 'auto',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(session_id, key)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_user_memory_session ON user_memory (session_id, updated_at DESC)
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
     """)
     
     conn.commit()
@@ -318,6 +352,146 @@ def clear_chat_history(session_id: str):
         logger.info(f"Cleared database history for session: {session_id}")
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
+
+def save_user_memory(key: str, value: str, session_id: str = "global", source: str = "auto") -> Optional[int]:
+    """Stores a durable user memory fact. Existing keys are updated in place."""
+    clean_key = (key or "").strip()[:120]
+    clean_value = (value or "").strip()[:1200]
+    clean_session = (session_id or "global").strip()[:120] or "global"
+    if not clean_key or not clean_value:
+        return None
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_memory (session_id, key, value, source, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(session_id, key) DO UPDATE SET
+                value = excluded.value,
+                source = excluded.source,
+                updated_at = CURRENT_TIMESTAMP
+        """, (clean_session, clean_key, clean_value, source))
+        memory_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info("User memory saved: %s/%s", clean_session, clean_key)
+        return memory_id
+    except Exception as e:
+        logger.error(f"Error saving user memory: {e}")
+        return None
+
+def search_user_memory(query: str, session_id: str = "global", limit: int = 4) -> List[Dict[str, Any]]:
+    """Fast SQLite retrieval for durable memory facts relevant to the current message."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, session_id, key, value, source, updated_at
+            FROM user_memory
+            WHERE session_id IN ('global', ?)
+            ORDER BY updated_at DESC
+            LIMIT 200
+        """, ((session_id or "global"),))
+        rows = cursor.fetchall()
+        conn.close()
+
+        terms = {
+            token.lower()
+            for token in (query or "").replace("\n", " ").split()
+            if len(token.strip(".,!?;:()[]{}\"'`")) >= 3
+        }
+
+        scored = []
+        for row in rows:
+            text = f"{row[2]} {row[3]}".lower()
+            score = sum(1 for term in terms if term.strip(".,!?;:()[]{}\"'`") in text)
+            # Keep explicit profile facts available even if the question is short.
+            if score > 0 or row[2].startswith(("user_", "preference_")):
+                scored.append((score, row))
+
+        scored.sort(key=lambda item: (item[0], item[1][5] or ""), reverse=True)
+        return [
+            {
+                "id": row[0],
+                "session_id": row[1],
+                "key": row[2],
+                "value": row[3],
+                "source": row[4],
+                "updated_at": row[5],
+                "score": score,
+            }
+            for score, row in scored[: max(1, limit)]
+        ]
+    except Exception as e:
+        logger.error(f"Error searching user memory: {e}")
+        return []
+
+def list_user_memory(session_id: str = "global", limit: int = 100) -> List[Dict[str, Any]]:
+    """Lists durable memory facts, newest first."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, session_id, key, value, source, updated_at
+            FROM user_memory
+            WHERE session_id IN ('global', ?)
+            ORDER BY updated_at DESC
+            LIMIT ?
+        """, ((session_id or "global"), limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                "id": row[0],
+                "session_id": row[1],
+                "key": row[2],
+                "value": row[3],
+                "source": row[4],
+                "updated_at": row[5],
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error listing user memory: {e}")
+        return []
+
+def save_app_settings(settings: Dict[str, Any]):
+    """Persists runtime configuration edited from the dashboard."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        for key, value in settings.items():
+            cursor.execute("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (key, json.dumps(value, ensure_ascii=False)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error saving app settings: {e}")
+
+def get_app_settings() -> Dict[str, Any]:
+    """Loads persisted dashboard runtime configuration."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT key, value FROM app_settings")
+        rows = cursor.fetchall()
+        conn.close()
+        settings = {}
+        for key, value in rows:
+            try:
+                settings[key] = json.loads(value)
+            except Exception:
+                settings[key] = value
+        return settings
+    except Exception as e:
+        logger.error(f"Error loading app settings: {e}")
+        return {}
 
 def save_decision_log(log: Dict[str, Any]):
     """Saves a single agent decision log to the database."""
@@ -706,6 +880,10 @@ def update_agent_runtime_state(
 def get_agent_office_state() -> Dict[str, Any]:
     """Returns agents with their latest visible events for the live office screen."""
     agents = get_all_subagents()
+    if not agents:
+        logger.warning("Office state requested with no subagents present. Re-running DB initialization.")
+        init_db()
+        agents = get_all_subagents()
     return {
         "agents": [
             {

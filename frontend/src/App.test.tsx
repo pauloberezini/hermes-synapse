@@ -57,6 +57,7 @@ describe('App Component', () => {
 
   it('renders main application when authenticated', async () => {
     localStorage.setItem('jarvis_auth_token', 'mock_token');
+    localStorage.setItem('hermes_language', 'en');
     
     const fetchMock = vi.fn().mockImplementation((url) => {
       if (url.includes('/api/config')) {
@@ -75,7 +76,7 @@ describe('App Component', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText('Communication Link')).toBeInTheDocument();
+      expect(screen.getByText(/communication link/i)).toBeInTheDocument();
     });
 
     const settingsBtn = screen.getByText('Settings');
