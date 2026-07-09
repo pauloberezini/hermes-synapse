@@ -256,7 +256,9 @@ export function ChatTab({
                           {label}
                         </span>
                         {isDashboard && (
-                          <Lock size={10} style={{ color: 'rgba(0, 240, 255, 0.4)', flexShrink: 0 }} title="Protected core session" />
+                          <span title="Protected core session" style={{ display: 'flex', alignItems: 'center' }}>
+                            <Lock size={10} style={{ color: 'rgba(0, 240, 255, 0.4)', flexShrink: 0 }} />
+                          </span>
                         )}
                       </div>
                       {isDashboard && (
