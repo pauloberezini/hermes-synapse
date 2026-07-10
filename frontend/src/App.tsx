@@ -1847,7 +1847,7 @@ export default function App() {
       </main>
 
       {/* New Session Custom Modal */}
-      {false && showNewSessionModal && (
+      {showNewSessionModal && (
         <div style={{
           position: 'fixed',
           top: 0,
