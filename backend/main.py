@@ -212,6 +212,10 @@ class ConfigUpdate(BaseModel):
     system_prompt: str | None = None
     model: str | None = None
 
+class SettingsUpdate(BaseModel):
+    language: str | None = None  # e.g. 'ru', 'en', 'he'
+
+
 @app.get("/api/status")
 async def get_status():
     return {
@@ -244,6 +248,19 @@ async def update_config(update: ConfigUpdate):
         "model": agent_instance.model
     })
     return {"status": "success", "config": {"system_prompt": agent_instance.system_prompt, "model": agent_instance.model}}
+
+@app.get("/api/settings")
+async def get_settings():
+    from backend.database import get_setting
+    return {"language": get_setting("language") or "ru"}
+
+@app.post("/api/settings")
+async def update_settings(update: SettingsUpdate):
+    from backend.database import set_setting, get_setting
+    if update.language is not None:
+        set_setting("language", update.language)
+    await manager.broadcast({"type": "settings_update", "language": get_setting("language") or "ru"})
+    return {"status": "success", "language": get_setting("language") or "ru"}
 
 @app.get("/api/logs")
 async def get_logs():

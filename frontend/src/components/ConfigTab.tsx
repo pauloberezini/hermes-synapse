@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Shield, Activity } from 'lucide-react';
+import { Cpu, Shield, Activity, Globe } from 'lucide-react';
 import { styles } from '../styles';
+
+const LANGUAGES = [
+  { code: 'ru', label: '🇷🇺 Russian' },
+  { code: 'en', label: '🇺🇸 English' },
+  { code: 'he', label: '🇮🇱 Hebrew' },
+  { code: 'de', label: '🇩🇪 German' },
+  { code: 'es', label: '🇪🇸 Spanish' },
+  { code: 'fr', label: '🇫🇷 French' },
+];
 
 interface ConfigTabProps {
   editedModel: string;
@@ -10,6 +19,8 @@ interface ConfigTabProps {
   isSavingConfig: boolean;
   handleSaveConfig: (e: React.FormEvent) => void;
   models: { id: string; name: string }[];
+  language: string;
+  onLanguageChange: (lang: string) => void;
 }
 
 export function ConfigTab({
@@ -19,7 +30,9 @@ export function ConfigTab({
   setEditedPrompt,
   isSavingConfig,
   handleSaveConfig,
-  models
+  models,
+  language,
+  onLanguageChange,
 }: ConfigTabProps) {
   
   // Check if editedModel is part of the returned models list.
@@ -44,6 +57,30 @@ export function ConfigTab({
         <div>
           <h2 className="glow-text-cyan" style={styles.tabTitle}>SYSTEM CORE PARAMETERS</h2>
           <p style={styles.tabSubtitle}>Configuration of personality and utilized LLM models</p>
+        </div>
+      </div>
+
+      {/* ── Language Setting (instant save, no submit) ── */}
+      <div className="glass-panel" style={{ ...styles.configForm, marginBottom: '16px' }}>
+        <div style={styles.formGroup}>
+          <label style={styles.formLabel}>
+            <Globe size={16} style={{ color: '#00f0ff' }} />
+            <span>Response Language</span>
+          </label>
+          <select
+            id="language-select"
+            value={language}
+            onChange={(e) => onLanguageChange(e.target.value)}
+            style={styles.formSelect}
+            className="form-input"
+          >
+            {LANGUAGES.map(l => (
+              <option key={l.code} value={l.code}>{l.label}</option>
+            ))}
+          </select>
+          <span style={styles.formHelp}>
+            Agents will respond in this language. Also sets voice (TTS) and microphone (STT) locale. Takes effect immediately — no save required.
+          </span>
         </div>
       </div>
 

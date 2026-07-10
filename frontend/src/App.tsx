@@ -18,7 +18,8 @@ import {
   ChevronRight
 } from 'lucide-react';
 
-import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig } from './types';
+import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings } from './types';
+
 import { styles } from './styles';
 import { 
   WAKE_WORDS, 
@@ -43,6 +44,11 @@ import { MCPTab } from './components/MCPTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
+
+// Static BCP-47 locale map — defined at module level so hooks don't need it as a dep
+const langToLocale: Record<string, string> = {
+  ru: 'ru-RU', en: 'en-US', he: 'he-IL', de: 'de-DE', es: 'es-ES', fr: 'fr-FR'
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
@@ -95,7 +101,9 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
-  
+  const [appSettings, setAppSettings] = useState<AppSettings>({ language: 'ru' });
+  const appSettingsRef = useRef<AppSettings>({ language: 'ru' }); // always-current ref for WS/callbacks
+
   // Prompt edit states
   const [editedPrompt, setEditedPrompt] = useState('');
   const [editedModel, setEditedModel] = useState('');
@@ -158,6 +166,7 @@ export default function App() {
 
   // Keep ttsEnabledRef in sync with its state
   useEffect(() => { ttsEnabledRef.current = isTTSEnabled; }, [isTTSEnabled]);
+  useEffect(() => { appSettingsRef.current = appSettings; }, [appSettings]);
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
@@ -209,26 +218,24 @@ export default function App() {
 
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(clean);
-    utter.lang = 'ru-RU';
+    const locale = langToLocale[appSettingsRef.current.language] || 'ru-RU';
+    utter.lang = locale;
     utter.rate = 1.05;
     utter.pitch = 0.95;
 
-    // Prefer a Russian male voice
+    // Prefer a native voice for the selected language
     const voices = window.speechSynthesis.getVoices();
-    const ruVoices = voices.filter(v => v.lang.startsWith('ru'));
-    
-    // Try to find a male voice by checking common male names or tags
-    const maleVoice = ruVoices.find(v => 
-      v.name.toLowerCase().includes('yuri') || 
-      v.name.toLowerCase().includes('pavel') || 
+    const langVoices = voices.filter(v => v.lang.startsWith(appSettingsRef.current.language));
+    const maleVoice = langVoices.find(v =>
+      v.name.toLowerCase().includes('yuri') ||
+      v.name.toLowerCase().includes('pavel') ||
       v.name.toLowerCase().includes('male') ||
       v.name.toLowerCase().includes('boris')
     );
-    
     if (maleVoice) {
       utter.voice = maleVoice;
-    } else if (ruVoices.length > 0) {
-      utter.voice = ruVoices[ruVoices.length - 1];
+    } else if (langVoices.length > 0) {
+      utter.voice = langVoices[langVoices.length - 1];
     }
 
     if (msgIndex !== undefined) setPlayingMsgIndex(msgIndex);
@@ -285,7 +292,7 @@ export default function App() {
     recognitionRef.current = recognition;
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = 'ru-RU';
+    recognition.lang = langToLocale[appSettings.language] || 'ru-RU';
     recognition.maxAlternatives = 1;
 
     const stopWords = [
@@ -392,7 +399,8 @@ export default function App() {
       try { recognition.abort(); } catch (_) {}
       recognitionRef.current = null;
     };
-  }, [micEnabled]);
+  }, [micEnabled, appSettings.language]);
+
 
   // Request browser notification permission once on mount
   useEffect(() => {
@@ -580,6 +588,8 @@ export default function App() {
             setConfig({ system_prompt: data.system_prompt, model: data.model });
             setEditedPrompt(data.system_prompt);
             setEditedModel(data.model);
+          } else if (data.type === 'settings_update') {
+            setAppSettings({ language: data.language });
           } else if (data.type === 'timer_completed') {
             setTimers((prev) => {
               const exists = prev.some(t => t.id === data.timer.id);
@@ -933,6 +943,11 @@ export default function App() {
     fetchSubagents();
     fetchChatSessions();
     fetchModels();
+
+    fetch('http://localhost:8000/api/settings')
+      .then(res => res.json())
+      .then(data => { if (data?.language) setAppSettings({ language: data.language }); })
+      .catch(() => {});
     
     if (isAuthenticated) {
       const savedChatId = localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
@@ -1516,6 +1531,15 @@ export default function App() {
             isSavingConfig={isSavingConfig}
             handleSaveConfig={handleSaveConfig}
             models={models}
+            language={appSettings.language}
+            onLanguageChange={(lang) => {
+              setAppSettings({ language: lang });
+              fetch('http://localhost:8000/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ language: lang }),
+              }).catch(() => {});
+            }}
           />
         )}
 
