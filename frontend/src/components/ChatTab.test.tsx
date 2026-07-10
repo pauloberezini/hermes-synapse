@@ -6,7 +6,10 @@ import { ChatTab } from './ChatTab';
 describe('ChatTab Component', () => {
   const defaultProps = {
     currentChatId: 'dashboard',
-    chatSessions: ['dashboard', 'chat_123'],
+    chatSessions: [
+      { id: 'dashboard', title: 'Main Terminal' },
+      { id: 'chat_123', title: 'chat_123' }
+    ],
     messages: [
       { role: 'assistant' as const, content: 'Hello, Sir.' },
       { role: 'user' as const, content: 'What is the weather today?' }

@@ -15,10 +15,11 @@ import {
   Menu,
   X,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  ChevronLeft
 } from 'lucide-react';
 
-import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings } from './types';
+import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
 
 import { styles } from './styles';
 import { 
@@ -56,8 +57,12 @@ export default function App() {
     return (saved as any) || 'chat';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('jarvis_sidebar_collapsed') === 'true';
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [chatSessions, setChatSessions] = useState<string[]>(['dashboard']);
+  const [settingsFlyoutOpen, setSettingsFlyoutOpen] = useState(false);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([{ id: 'dashboard', title: 'Main Terminal' }]);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
   const [otpCode, setOtpCode] = useState('');
@@ -577,6 +582,10 @@ export default function App() {
                   : m
               ));
             }
+          } else if (data.type === 'session_title_update') {
+            setChatSessions((prev) =>
+              prev.map((s) => (s.id === data.chat_id ? { ...s, title: data.title } : s))
+            );
           } else if (data.type === 'logs_update') {
             setLogs(data.logs);
           } else if (data.type === 'activity_log') {
@@ -666,6 +675,8 @@ export default function App() {
 
   const getSessionLabel = (id: string) => {
     if (id === 'dashboard') return 'Main Terminal';
+    const found = chatSessions.find(s => s.id === id);
+    if (found && found.title) return found.title;
     if (id.startsWith('chat_')) {
       const parts = id.split('_');
       if (parts.length >= 3) {
@@ -694,14 +705,13 @@ export default function App() {
     
     selectChat(sessionId);
     setChatSessions(prev => {
-      if (prev.includes(sessionId)) return prev;
-      return [...prev, sessionId];
+      if (prev.some(s => s.id === sessionId)) return prev;
+      return [...prev, { id: sessionId, title: trimmed || getSessionLabel(sessionId) }];
     });
   };
 
   const handleCreateNewSession = () => {
-    setNewSessionNameInput('');
-    setShowNewSessionModal(true);
+    handleCreateNewSessionConfirm('');
   };
 
   const fetchSubagents = () => {
@@ -725,7 +735,11 @@ export default function App() {
             setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Hermes network is complete. Awaiting your instructions.' }]);
           } else {
             const agent = listToSearch.find((a: any) => a.id === chatId);
-            setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || chatId}" initialized, Sir. Ready for work.` }]);
+            if (chatId.startsWith('chat_')) {
+              setMessages([{ role: 'assistant', content: 'Conversation initialized, Sir. How can I assist you today?' }]);
+            } else {
+              setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || chatId}" initialized, Sir. Ready for work.` }]);
+            }
           }
         }
       })
@@ -1338,55 +1352,197 @@ export default function App() {
       )}
 
       {/* 1. Left Sidebar */}
-      <aside style={styles.sidebar} className={`glass-panel sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-        <div style={styles.logoArea}>
-          <div className="pulse-dot" style={{ width: 14, height: 14 }} />
-          <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>
+      <aside 
+        style={{
+          ...styles.sidebar,
+          ...(sidebarCollapsed ? styles.sidebarCollapsed : {})
+        }} 
+        className={`glass-panel sidebar ${sidebarOpen ? 'sidebar-open' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+      >
+        <div style={{
+          ...styles.logoArea,
+          justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+          marginBottom: sidebarCollapsed ? '16px' : '4px',
+          position: 'relative'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="pulse-dot" style={{ width: 14, height: 14 }} />
+            {!sidebarCollapsed && <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>}
+          </div>
+          <button
+            onClick={() => {
+              const nextVal = !sidebarCollapsed;
+              setSidebarCollapsed(nextVal);
+              localStorage.setItem('jarvis_sidebar_collapsed', String(nextVal));
+              setSettingsFlyoutOpen(false);
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px',
+              borderRadius: '6px',
+              transition: 'all 0.2s',
+            }}
+            className="sidebar-collapse-btn"
+            title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          >
+            {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
         </div>
-        <p style={styles.logoSubtitle}>SYSTEM CONSOLE v1.1.0</p>
+        {!sidebarCollapsed && <p style={styles.logoSubtitle}>SYSTEM CONSOLE v1.1.0</p>}
         
         <nav style={styles.navMenu}>
           <button 
-            style={{...styles.navBtn, ...(activeTab === 'chat' ? styles.navBtnActive : {})}}
-            onClick={() => { setActiveTab('chat'); setSidebarOpen(false); }}
+            style={{
+              ...styles.navBtn, 
+              ...(activeTab === 'chat' ? styles.navBtnActive : {}),
+              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
+            }}
+            onClick={() => { setActiveTab('chat'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+            title={sidebarCollapsed ? "Communication Link" : undefined}
           >
             <MessageSquare size={18} />
-            <span>Communication Link</span>
-          </button>
-          
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'schedule' ? styles.navBtnActive : {})}}
-            onClick={() => { setActiveTab('schedule'); setSidebarOpen(false); }}
-          >
-            <Clock size={18} />
-            <span>Schedules & Automation</span>
-          </button>
-
-          <button 
-            style={{...styles.navBtn, ...(activeTab === 'network' ? styles.navBtnActive : {})}}
-            onClick={() => { setActiveTab('network'); setSidebarOpen(false); }}
-          >
-            <Network size={18} />
-            <span>Architecture</span>
+            {!sidebarCollapsed && <span>Communication Link</span>}
           </button>
           
           <button 
             style={{
               ...styles.navBtn, 
-              justifyContent: 'space-between', 
-              paddingRight: '12px',
-              ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) ? styles.navBtnActive : {})
+              ...(activeTab === 'schedule' ? styles.navBtnActive : {}),
+              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
             }}
-            onClick={() => setSettingsOpen(!settingsOpen)}
+            onClick={() => { setActiveTab('schedule'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+            title={sidebarCollapsed ? "Schedules & Automation" : undefined}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Settings size={18} />
-              <span>Settings</span>
-            </div>
-            {settingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            <Clock size={18} />
+            {!sidebarCollapsed && <span>Schedules & Automation</span>}
           </button>
 
-          {settingsOpen && (
+          <button 
+            style={{
+              ...styles.navBtn, 
+              ...(activeTab === 'network' ? styles.navBtnActive : {}),
+              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
+            }}
+            onClick={() => { setActiveTab('network'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+            title={sidebarCollapsed ? "Architecture" : undefined}
+          >
+            <Network size={18} />
+            {!sidebarCollapsed && <span>Architecture</span>}
+          </button>
+          
+          <div style={{ position: 'relative' }}>
+            <button 
+              style={{
+                ...styles.navBtn, 
+                justifyContent: sidebarCollapsed ? 'center' : 'space-between', 
+                width: '100%',
+                paddingRight: sidebarCollapsed ? '0px' : '12px',
+                ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) ? styles.navBtnActive : {}),
+                ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
+              }}
+              onClick={() => {
+                if (sidebarCollapsed) {
+                  setSettingsFlyoutOpen(!settingsFlyoutOpen);
+                } else {
+                  setSettingsOpen(!settingsOpen);
+                }
+              }}
+              title={sidebarCollapsed ? "Settings" : undefined}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: sidebarCollapsed ? '0px' : '12px' }}>
+                <Settings size={18} />
+                {!sidebarCollapsed && <span>Settings</span>}
+              </div>
+              {!sidebarCollapsed && (settingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+            </button>
+
+            {sidebarCollapsed && settingsFlyoutOpen && (
+              <div 
+                style={styles.flyoutMenu} 
+                className="glass-panel"
+                onMouseLeave={() => setSettingsFlyoutOpen(false)}
+              >
+                <div style={styles.flyoutHeader}>Settings</div>
+                
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('config'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Settings size={18} />
+                  <span>Core Parameters</span>
+                </button>
+
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
+                  onClick={() => {
+                    setActiveTab('subagents');
+                    selectChat(currentChatId === 'dashboard' ? 'dashboard' : currentChatId);
+                    setSidebarOpen(false);
+                    setSettingsFlyoutOpen(false);
+                  }}
+                >
+                  <Layers size={18} />
+                  <span>Sub-agents</span>
+                </button>
+
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Server size={18} />
+                  <span>MCP Servers</span>
+                </button>
+
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <BookOpen size={18} />
+                  <span>Obsidian</span>
+                </button>
+                
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'memory' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('memory'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Database size={18} />
+                  <span>Memory Vault (RAG)</span>
+                </button>
+                
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'tools' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('tools'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Wrench size={18} />
+                  <span>Core Tools</span>
+                </button>
+
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'logs' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('logs'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Terminal size={18} />
+                  <span>Decision Logs</span>
+                </button>
+                
+                <button 
+                  style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('activity'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Activity size={18} />
+                  <span>Activity Logs</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {!sidebarCollapsed && settingsOpen && (
             <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
               <button 
                 style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
@@ -1460,31 +1616,62 @@ export default function App() {
         </nav>
 
         {/* Sidebar Status Info */}
-        <div style={styles.statusBox} className="glass-panel">
-          <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>Onboard Network:</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
-              <span style={{ fontSize: '0.85rem', color: isConnected ? '#10b981' : '#ef4444' }}>
-                {isConnected ? 'ACTIVE' : 'DISCONNECTED'}
-              </span>
-            </div>
-          </div>
-          
-          <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>LLM Core:</span>
-            <div style={styles.modelTag}>
-              <Cpu size={12} style={{ color: '#00f0ff' }} />
-              <span style={styles.modelName}>{config.model.split('/').pop()}</span>
-            </div>
-          </div>
-          
-          <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>Call logs:</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#00f0ff' }}>
-              {logs.length} logs
-            </span>
-          </div>
+        <div 
+          style={{
+            ...styles.statusBox,
+            ...(sidebarCollapsed ? styles.statusBoxCollapsed : {})
+          }} 
+          className="glass-panel"
+        >
+          {sidebarCollapsed ? (
+            <>
+              <div 
+                style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }}
+                title={`Onboard Network: ${isConnected ? 'ACTIVE' : 'DISCONNECTED'}`}
+              >
+                <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
+              </div>
+              <div 
+                style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }} 
+                title={`LLM Core: ${config.model.split('/').pop()}`}
+              >
+                <Cpu size={18} style={{ color: '#00f0ff' }} />
+              </div>
+              <div 
+                style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: '#00f0ff' }}
+                title={`Call logs: ${logs.length} logs`}
+              >
+                {logs.length}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={styles.statusRow}>
+                <span style={styles.statusLabel}>Onboard Network:</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
+                  <span style={{ fontSize: '0.85rem', color: isConnected ? '#10b981' : '#ef4444' }}>
+                    {isConnected ? 'ACTIVE' : 'DISCONNECTED'}
+                  </span>
+                </div>
+              </div>
+              
+              <div style={styles.statusRow}>
+                <span style={styles.statusLabel}>LLM Core:</span>
+                <div style={styles.modelTag}>
+                  <Cpu size={12} style={{ color: '#00f0ff' }} />
+                  <span style={styles.modelName}>{config.model.split('/').pop()}</span>
+                </div>
+              </div>
+              
+              <div style={styles.statusRow}>
+                <span style={styles.statusLabel}>Call logs:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#00f0ff' }}>
+                  {logs.length} logs
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </aside>
 

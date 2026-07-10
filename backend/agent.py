@@ -78,6 +78,45 @@ _AGENT_KEYWORDS = [
     "btc", "биткоин", "ethereum", "крипто", "акции",
 ]
 
+async def generate_chat_title(user_message: str, api_key: str, api_base: str, model: str) -> str:
+    """
+    Generates a very short chat title (2-5 words) in the language of the query.
+    """
+    try:
+        import httpx
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant. Generate a very short title (2 to 5 words) for a chat conversation that starts with the user's message. Use the same language as the user's message. Return ONLY the title itself, with no quotes, preamble, or punctuation."},
+                {"role": "user",   "content": user_message}
+            ],
+            "temperature": 0.5,
+            "max_tokens": 15
+        }
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                f"{api_base}/chat/completions",
+                json=payload,
+                headers=headers
+            )
+        if resp.status_code == 200:
+            title = resp.json()["choices"][0]["message"]["content"].strip()
+            if (title.startswith('"') and title.endswith('"')) or (title.startswith("'") and title.endswith("'")):
+                title = title[1:-1].strip()
+            return title
+    except Exception as e:
+        logger.warning(f"Title generator LLM call failed ({e})")
+    
+    words = user_message.split()
+    fallback_title = " ".join(words[:4])
+    if len(words) > 4:
+        fallback_title += "..."
+    return fallback_title
+
 async def classify_complexity(user_message: str, api_key: str, api_base: str) -> str:
     """
     Uses a cheap fast LLM call to classify query complexity.
@@ -429,8 +468,9 @@ class JarvisAgent:
                         "model": self.model,
                         "messages": messages,
                         "temperature": 0.7,
-                        "tools": TOOLS_SCHEMA
                     }
+                    if "deepseek-r1" not in self.model.lower():
+                        payload["tools"] = TOOLS_SCHEMA
                     
                     is_openmodel = "openmodel.ai" in self.api_base
                     url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
@@ -798,8 +838,9 @@ class JarvisAgent:
                         "model": subagent_model,
                         "messages": messages,
                         "temperature": subagent.get("temperature", 0.7),
-                        "tools": subagent_tools
                     }
+                    if "deepseek-r1" not in subagent_model.lower():
+                        payload["tools"] = subagent_tools
                     
                     is_openmodel = "openmodel.ai" in self.api_base
                     url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"

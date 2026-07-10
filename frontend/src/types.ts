@@ -43,3 +43,8 @@ export interface AppSettings {
   language: string; // BCP-47 short code: 'ru', 'en', 'he', 'de', 'es', 'fr'
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+}
+

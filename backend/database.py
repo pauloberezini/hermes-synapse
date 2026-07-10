@@ -232,6 +232,16 @@ def init_db():
     """)
     cursor.execute("INSERT OR IGNORE INTO app_settings VALUES ('language', 'ru')")
 
+    # Create session metadata table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session_metadata (
+            session_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
     logger.info("Database initialized successfully.")
@@ -602,6 +612,50 @@ def set_setting(key: str, value: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"Error setting {key}: {e}")
+        return False
+
+# ─── SESSION METADATA HELPERS ──────────────────────────────────────────────────
+
+def save_session_title(session_id: str, title: str):
+    """Saves or updates a custom title for a chat session."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO session_metadata (session_id, title, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        """, (session_id, title))
+        conn.commit()
+        conn.close()
+        logger.info(f"Saved custom title for session {session_id}: {title}")
+    except Exception as e:
+        logger.error(f"Error saving session title for {session_id}: {e}")
+
+def get_session_title(session_id: str) -> Optional[str]:
+    """Retrieves the custom title of a session, if exists."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT title FROM session_metadata WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Error retrieving session title for {session_id}: {e}")
+        return None
+
+def delete_session_title(session_id: str) -> bool:
+    """Deletes custom title metadata for a session."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logger.error(f"Error deleting session title for {session_id}: {e}")
         return False
 
 # Auto-initialize database schema on import to prevent missing tables
