@@ -222,7 +222,16 @@ def init_db():
             PRIMARY KEY (subagent_id, key)
         )
     """)
-    
+
+    # Global app settings (KV store)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    cursor.execute("INSERT OR IGNORE INTO app_settings VALUES ('language', 'ru')")
+
     conn.commit()
     conn.close()
     logger.info("Database initialized successfully.")
@@ -562,6 +571,37 @@ def db_delete_subagent_memory(subagent_id: str, key: str) -> bool:
         return deleted
     except Exception as e:
         logger.error(f"Error deleting subagent memory: {e}")
+        return False
+
+# ─── APP SETTINGS HELPERS ────────────────────────────────────────────────────
+
+def get_setting(key: str) -> Optional[str]:
+    """Returns a global app setting value by key, or None if not found."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Error getting setting {key}: {e}")
+        return None
+
+def set_setting(key: str, value: str) -> bool:
+    """Saves or updates a global app setting."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error setting {key}: {e}")
         return False
 
 # Auto-initialize database schema on import to prevent missing tables
