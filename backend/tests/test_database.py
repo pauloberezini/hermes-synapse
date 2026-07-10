@@ -65,3 +65,24 @@ def test_clear_chat_history():
     
     database.clear_chat_history(session_id)
     assert len(database.get_chat_history(session_id)) == 0
+
+def test_session_metadata_titles():
+    session_id = "chat_test_session_title"
+    
+    # Verify title is initially None
+    assert database.get_session_title(session_id) is None
+    
+    # Save a custom title
+    database.save_session_title(session_id, "Interesting Chat About AI")
+    assert database.get_session_title(session_id) == "Interesting Chat About AI"
+    
+    # Update the title
+    database.save_session_title(session_id, "Updated Chat Title")
+    assert database.get_session_title(session_id) == "Updated Chat Title"
+    
+    # Delete the title
+    assert database.delete_session_title(session_id) is True
+    assert database.get_session_title(session_id) is None
+    
+    # Deleting again should return False (not found)
+    assert database.delete_session_title(session_id) is False

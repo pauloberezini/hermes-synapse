@@ -685,13 +685,30 @@ async def get_history_sessions():
         
         cursor.execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
         sessions = [r[0] for r in cursor.fetchall()]
+        
+        # Fetch all custom titles from session_metadata
+        cursor.execute("SELECT session_id, title FROM session_metadata")
+        metadata_map = {r[0]: r[1] for r in cursor.fetchall()}
         conn.close()
         
         # Filter out subagents, and keep only "dashboard" and custom sessions
         user_sessions = [s for s in sessions if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
-        return ["dashboard"] + user_sessions
+        
+        sessions_response = []
+        for s in ["dashboard"] + user_sessions:
+            title = metadata_map.get(s)
+            if not title:
+                if s == "dashboard":
+                    title = "Main Terminal"
+                else:
+                    title = s
+            sessions_response.append({
+                "id": s,
+                "title": title
+            })
+        return sessions_response
     except Exception as e:
-        return ["dashboard"]
+        return [{"id": "dashboard", "title": "Main Terminal"}]
 
 @app.get("/api/history/{chat_id}")
 async def get_history_api(chat_id: str, limit: int = 40):
@@ -700,8 +717,9 @@ async def get_history_api(chat_id: str, limit: int = 40):
 
 @app.delete("/api/history/{chat_id}")
 async def delete_history_api(chat_id: str):
-    from backend.database import clear_chat_history
+    from backend.database import clear_chat_history, delete_session_title
     clear_chat_history(chat_id)
+    delete_session_title(chat_id)
     # Also clear from agent's in-memory last costs or messages if needed
     if chat_id in agent_instance.last_costs:
         agent_instance.last_costs[chat_id] = 0.0
@@ -716,6 +734,7 @@ async def archive_history_session(session_id: str):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("UPDATE messages SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
+        cursor.execute("UPDATE session_metadata SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
         conn.commit()
         conn.close()
         return {"status": "success", "message": f"Session {session_id} archived"}
@@ -725,7 +744,7 @@ async def archive_history_session(session_id: str):
 @app.post("/api/history/{session_id}/fork")
 async def fork_history_session(session_id: str):
     """Forks a session by duplicating its messages to a new session_id."""
-    from backend.database import DB_PATH
+    from backend.database import DB_PATH, get_session_title, save_session_title
     import sqlite3
     import time
     new_session_id = f"{session_id}_fork_{int(time.time())}"
@@ -738,7 +757,27 @@ async def fork_history_session(session_id: str):
         """, (new_session_id, session_id))
         conn.commit()
         conn.close()
+        
+        # Fork custom title metadata
+        old_title = get_session_title(session_id)
+        if not old_title:
+            old_title = session_id
+        save_session_title(new_session_id, f"Fork of {old_title}")
+        
         return {"status": "success", "new_session_id": new_session_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class RenameSessionPayload(BaseModel):
+    title: str
+
+@app.post("/api/history/{session_id}/rename")
+async def rename_history_session(session_id: str, payload: RenameSessionPayload):
+    """Updates the custom title for a session in the DB."""
+    from backend.database import save_session_title
+    try:
+        save_session_title(session_id, payload.title)
+        return {"status": "success", "message": f"Session {session_id} renamed to {payload.title}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -875,6 +914,32 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     # Call agent
                     response_text = await agent_instance.respond(user_text, session_id=chat_id)
+                    
+                    # Auto-generate title if this is the first message in a custom chat session
+                    if chat_id.startswith("chat_"):
+                        from backend.database import get_session_title, save_session_title
+                        if not get_session_title(chat_id):
+                            async def generate_and_broadcast_title():
+                                try:
+                                    import asyncio
+                                    from backend.agent import generate_chat_title
+                                    title = await generate_chat_title(
+                                        user_message=user_text,
+                                        api_key=agent_instance.api_key,
+                                        api_base=agent_instance.api_base,
+                                        model=agent_instance.model
+                                    )
+                                    save_session_title(chat_id, title)
+                                    await manager.broadcast({
+                                        "type": "session_title_update",
+                                        "chat_id": chat_id,
+                                        "title": title
+                                    })
+                                except Exception as ex:
+                                    logger.error(f"Error generating session title: {ex}")
+                            import asyncio
+                            asyncio.create_task(generate_and_broadcast_title())
+
                     cost_usd = agent_instance.last_costs.get(chat_id, 0.0)
                     suppress_tts = agent_instance.check_and_clear_suppress_tts(chat_id)
                     
