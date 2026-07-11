@@ -150,6 +150,7 @@ export default function App() {
   // Connection channel session states
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
   const [newSessionNameInput, setNewSessionNameInput] = useState('');
+  const [newSessionAgentInput, setNewSessionAgentInput] = useState('jarvis');
 
   const [editingAgentId, setEditingAgentId] = useState('');
   const [editAgentName, setEditAgentName] = useState('');
@@ -429,6 +430,21 @@ export default function App() {
     };
   }, []);
 
+  const fetchWithAuth = useCallback((url: string, options: RequestInit = {}) => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    const headers = {
+      ...options.headers,
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    };
+    return fetch(url, { ...options, headers }).then(res => {
+      if (res.status === 401) {
+        localStorage.removeItem('jarvis_auth_token');
+        setIsAuthenticated(false);
+      }
+      return res;
+    });
+  }, []);
+
   const handleRequestOtp = async () => {
     setAuthStatus('sending');
     setAuthError('');
@@ -649,21 +665,21 @@ export default function App() {
   }, [isAuthenticated]);
 
   const fetchDocuments = () => {
-    fetch('http://localhost:8000/api/documents')
+    fetchWithAuth('http://localhost:8000/api/documents')
       .then(res => res.json())
       .then(data => setDocuments(data))
       .catch(err => console.log('Error fetching documents:', err));
   };
 
   const fetchUploads = () => {
-    fetch('http://localhost:8000/api/uploads')
+    fetchWithAuth('http://localhost:8000/api/uploads')
       .then(res => res.json())
       .then(data => setUploads(data))
       .catch(err => console.log('Error fetching uploads:', err));
   };
 
   const fetchChatSessions = () => {
-    fetch('http://localhost:8000/api/history/sessions')
+    fetchWithAuth('http://localhost:8000/api/history/sessions')
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -693,7 +709,7 @@ export default function App() {
     return id;
   };
 
-  const handleCreateNewSessionConfirm = (name: string) => {
+  const handleCreateNewSessionConfirm = async (name: string, agentId: string = 'jarvis') => {
     let sessionId = '';
     const trimmed = name.trim();
     if (trimmed) {
@@ -703,19 +719,57 @@ export default function App() {
       sessionId = `chat_${Date.now()}`;
     }
     
-    selectChat(sessionId);
-    setChatSessions(prev => {
-      if (prev.some(s => s.id === sessionId)) return prev;
-      return [...prev, { id: sessionId, title: trimmed || getSessionLabel(sessionId) }];
-    });
+    try {
+      await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId })
+      });
+    } catch (e) {
+      console.error('Error setting session agent on creation:', e);
+    }
+
+    if (trimmed) {
+      try {
+        await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/rename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: trimmed })
+        });
+      } catch (e) {
+        console.error('Error renaming session on creation:', e);
+      }
+    }
+    
+    fetchChatSessions();
+    setTimeout(() => selectChat(sessionId), 100);
   };
 
   const handleCreateNewSession = () => {
-    handleCreateNewSessionConfirm('');
+    setNewSessionNameInput('');
+    setNewSessionAgentInput('jarvis');
+    setShowNewSessionModal(true);
+  };
+
+  const handleSetSessionAgent = async (sessionId: string, agentId: string) => {
+    try {
+      const res = await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId })
+      });
+      if (res.ok) {
+        setChatSessions(prev =>
+          prev.map(s => s.id === sessionId ? { ...s, agent_id: agentId } : s)
+        );
+      }
+    } catch (e) {
+      console.error('Error updating session agent:', e);
+    }
   };
 
   const fetchSubagents = () => {
-    fetch('http://localhost:8000/api/subagents')
+    fetchWithAuth('http://localhost:8000/api/subagents')
       .then(res => res.json())
       .then(data => setSubagents(data))
       .catch(err => console.log('Error fetching subagents:', err));
@@ -725,7 +779,7 @@ export default function App() {
     const listToSearch = currentSubagentsList || subagents;
     setCurrentChatId(chatId);
     setMessages([]); // clear temporarily
-    fetch(`http://localhost:8000/api/history/${chatId}`)
+    fetchWithAuth(`http://localhost:8000/api/history/${chatId}`)
       .then(res => res.json())
       .then(data => {
         if (data && data.length > 0) {
@@ -755,9 +809,9 @@ export default function App() {
     setIsCreatingAgent(true);
     try {
       const cleanId = newAgentId.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
-      const res = await fetch('http://localhost:8000/api/subagents', {
+      const res = await fetchWithAuth('http://localhost:8000/api/subagents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: cleanId,
           name: newAgentName,
@@ -775,7 +829,7 @@ export default function App() {
         setNewAgentTemperature(0.7);
         alert('Sub-agent successfully created.');
         
-        fetch('http://localhost:8000/api/subagents')
+        fetchWithAuth('http://localhost:8000/api/subagents')
           .then(r => r.json())
           .then(data => {
             setSubagents(data);
@@ -797,7 +851,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:8000/api/subagents/${id}`, {
+      const res = await fetchWithAuth(`http://localhost:8000/api/subagents/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -823,9 +877,9 @@ export default function App() {
     }
     setIsUpdatingAgent(true);
     try {
-      const res = await fetch('http://localhost:8000/api/subagents', {
+      const res = await fetchWithAuth('http://localhost:8000/api/subagents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingAgentId,
           name: editAgentName,
@@ -837,7 +891,7 @@ export default function App() {
       });
       if (res.ok) {
         alert('Sub-agent successfully updated.');
-        fetch('http://localhost:8000/api/subagents')
+        fetchWithAuth('http://localhost:8000/api/subagents')
           .then(r => r.json())
           .then(data => {
             setSubagents(data);
@@ -863,7 +917,7 @@ export default function App() {
     formData.append('file', file);
     
     try {
-      const res = await fetch('http://localhost:8000/api/upload', {
+      const res = await fetchWithAuth('http://localhost:8000/api/upload', {
         method: 'POST',
         body: formData,
       });
@@ -882,7 +936,7 @@ export default function App() {
   };
 
   const handleCancelTimer = (id: string) => {
-    fetch(`http://localhost:8000/api/timers/${id}`, {
+    fetchWithAuth(`http://localhost:8000/api/timers/${id}`, {
       method: 'DELETE',
     })
       .then(res => res.json())
@@ -895,14 +949,14 @@ export default function App() {
   };
 
   const fetchMarketAlerts = () => {
-    fetch('http://localhost:8000/api/market/alerts')
+    fetchWithAuth('http://localhost:8000/api/market/alerts')
       .then(res => res.json())
       .then(data => setPriceAlerts(data))
       .catch(err => console.log('Error fetching market alerts:', err));
   };
 
   const handleClearActivityLogs = () => {
-    fetch('http://localhost:8000/api/activity/logs', {
+    fetchWithAuth('http://localhost:8000/api/activity/logs', {
       method: 'DELETE'
     })
       .then(res => res.json())
@@ -915,10 +969,7 @@ export default function App() {
   };
 
   const fetchModels = () => {
-    const token = localStorage.getItem('jarvis_auth_token');
-    fetch('http://localhost:8000/api/models', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
+    fetchWithAuth('http://localhost:8000/api/models')
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -932,7 +983,7 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    fetch('http://localhost:8000/api/config')
+    fetchWithAuth('http://localhost:8000/api/config')
       .then(res => res.json())
       .then(data => {
         if (data && data.system_prompt !== undefined) {
@@ -943,7 +994,7 @@ export default function App() {
       })
       .catch(() => console.log('REST config fetch skipped/failed (using WS instead)'));
 
-    fetch('http://localhost:8000/api/logs')
+    fetchWithAuth('http://localhost:8000/api/logs')
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -958,7 +1009,7 @@ export default function App() {
     fetchChatSessions();
     fetchModels();
 
-    fetch('http://localhost:8000/api/settings')
+    fetchWithAuth('http://localhost:8000/api/settings')
       .then(res => res.json())
       .then(data => { if (data?.language) setAppSettings({ language: data.language }); })
       .catch(() => {});
@@ -974,14 +1025,14 @@ export default function App() {
     if (activeTab !== 'tools') return;
 
     const fetchStats = () => {
-      fetch('http://localhost:8000/api/system/stats')
+      fetchWithAuth('http://localhost:8000/api/system/stats')
         .then(res => res.json())
         .then(data => setSystemStats(data))
         .catch(err => console.log('Error fetching system stats:', err));
     };
 
     const fetchTimersData = () => {
-      fetch('http://localhost:8000/api/timers')
+      fetchWithAuth('http://localhost:8000/api/timers')
         .then(res => res.json())
         .then(data => setTimers(data))
         .catch(err => console.log('Error fetching timers:', err));
@@ -1029,7 +1080,7 @@ export default function App() {
     if (!noteTitle.trim() || !noteContent.trim()) return;
     setIsIndexing(true);
     try {
-      const res = await fetch('http://localhost:8000/api/documents', {
+      const res = await fetchWithAuth('http://localhost:8000/api/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: noteTitle, content: noteContent })
@@ -1053,7 +1104,7 @@ export default function App() {
   const handleDeleteDocument = async (docId: string) => {
     if (!window.confirm('Delete document from long-term memory?')) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/documents/${docId}`, {
+      const res = await fetchWithAuth(`http://localhost:8000/api/documents/${docId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1073,7 +1124,7 @@ export default function App() {
     if (!memorySearchQuery.trim()) return;
     setIsSearchingMemory(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/documents/search?q=${encodeURIComponent(memorySearchQuery)}`);
+      const res = await fetchWithAuth(`http://localhost:8000/api/documents/search?q=${encodeURIComponent(memorySearchQuery)}`);
       if (res.ok) {
         const data = await res.json();
         setMemorySearchResults(data);
@@ -1137,7 +1188,7 @@ export default function App() {
     
     setMessages([]);
     try {
-      const res = await fetch(`http://localhost:8000/api/history/${currentChatId}`, {
+      const res = await fetchWithAuth(`http://localhost:8000/api/history/${currentChatId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1158,7 +1209,7 @@ export default function App() {
     e.preventDefault();
     setIsSavingConfig(true);
     try {
-      const response = await fetch('http://localhost:8000/api/config', {
+      const response = await fetchWithAuth('http://localhost:8000/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1706,6 +1757,8 @@ export default function App() {
             fetchChatSessions={fetchChatSessions}
             getSessionLabel={getSessionLabel}
             mainChatEndRef={mainChatEndRef}
+            subagents={subagents}
+            handleSetSessionAgent={handleSetSessionAgent}
           />
         )}
 
@@ -1721,7 +1774,7 @@ export default function App() {
             language={appSettings.language}
             onLanguageChange={(lang) => {
               setAppSettings({ language: lang });
-              fetch('http://localhost:8000/api/settings', {
+              fetchWithAuth('http://localhost:8000/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ language: lang }),
@@ -1838,7 +1891,7 @@ export default function App() {
         )}
 
         {activeTab === 'network' && (
-          <NetworkTab subagents={subagents} setSubagents={setSubagents} fetchSubagents={fetchSubagents} />
+          <NetworkTab subagents={subagents} setSubagents={setSubagents} fetchSubagents={fetchSubagents} models={models} />
         )}
 
         {activeTab === 'mcp' && (
@@ -1899,12 +1952,44 @@ export default function App() {
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  handleCreateNewSessionConfirm(newSessionNameInput);
+                  handleCreateNewSessionConfirm(newSessionNameInput, newSessionAgentInput);
                   setShowNewSessionModal(false);
                 }
               }}
               autoFocus
             />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                ORCHESTRATOR / AGENT
+              </label>
+              <select
+                value={newSessionAgentInput}
+                onChange={(e) => setNewSessionAgentInput(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                  color: '#fff',
+                  fontSize: '0.9rem',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="jarvis">👑 Jarvis (Main)</option>
+                {subagents.map(a => {
+                  const isOrch = a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator';
+                  const icon = isOrch ? '🧠' : '🤖';
+                  return (
+                    <option key={a.id} value={a.id}>
+                      {icon} {a.name}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
               <button 
@@ -1924,7 +2009,7 @@ export default function App() {
               </button>
               <button 
                 onClick={() => {
-                  handleCreateNewSessionConfirm(newSessionNameInput);
+                  handleCreateNewSessionConfirm(newSessionNameInput, newSessionAgentInput);
                   setShowNewSessionModal(false);
                 }}
                 style={{

@@ -686,9 +686,9 @@ async def get_history_sessions():
         cursor.execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
         sessions = [r[0] for r in cursor.fetchall()]
         
-        # Fetch all custom titles from session_metadata
-        cursor.execute("SELECT session_id, title FROM session_metadata")
-        metadata_map = {r[0]: r[1] for r in cursor.fetchall()}
+        # Fetch all custom titles and agent_ids from session_metadata
+        cursor.execute("SELECT session_id, title, agent_id FROM session_metadata")
+        metadata_map = {r[0]: {"title": r[1], "agent_id": r[2]} for r in cursor.fetchall()}
         conn.close()
         
         # Filter out subagents, and keep only "dashboard" and custom sessions
@@ -696,7 +696,9 @@ async def get_history_sessions():
         
         sessions_response = []
         for s in ["dashboard"] + user_sessions:
-            title = metadata_map.get(s)
+            meta = metadata_map.get(s, {})
+            title = meta.get("title")
+            agent_id = meta.get("agent_id")
             if not title:
                 if s == "dashboard":
                     title = "Main Terminal"
@@ -704,11 +706,26 @@ async def get_history_sessions():
                     title = s
             sessions_response.append({
                 "id": s,
-                "title": title
+                "title": title,
+                "agent_id": agent_id
             })
         return sessions_response
     except Exception as e:
-        return [{"id": "dashboard", "title": "Main Terminal"}]
+        return [{"id": "dashboard", "title": "Main Terminal", "agent_id": None}]
+
+class SessionAgentPayload(BaseModel):
+    agent_id: str
+
+@app.post("/api/history/{session_id}/agent")
+async def set_session_agent(session_id: str, payload: SessionAgentPayload):
+    """Updates the target agent/orchestrator ID for a session in the DB."""
+    from backend.database import save_session_metadata, get_session_title
+    try:
+        title = get_session_title(session_id) or session_id
+        save_session_metadata(session_id, title, agent_id=payload.agent_id)
+        return {"status": "success", "message": f"Session {session_id} target agent set to {payload.agent_id}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/history/{chat_id}")
 async def get_history_api(chat_id: str, limit: int = 40):

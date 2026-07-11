@@ -287,8 +287,9 @@ class JarvisAgent:
         self.last_saved_ids[session_id] = {"user": current_user_msg_id, "assistant": None}
 
         # Check if this session is a registered custom subagent
-        from backend.database import get_subagent
-        subagent = get_subagent(session_id)
+        from backend.database import get_subagent, get_session_agent_id
+        target_agent_id = get_session_agent_id(session_id) or session_id
+        subagent = get_subagent(target_agent_id)
         if subagent:
             if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
                 from backend.orchestrator import run_orchestration
@@ -311,7 +312,7 @@ class JarvisAgent:
                 }
                 return response_text
             else:
-                return await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id)
+                return await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id, chat_id=session_id)
 
         from backend.activity_logger import log_activity
         log_activity(
@@ -669,9 +670,9 @@ class JarvisAgent:
 
         return response_text
 
-    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None) -> str:
+    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
-        session_id = subagent["id"]
+        session_id = chat_id or subagent["id"]
         subagent_name = subagent["name"]
         system_prompt = subagent["system_prompt"]
         subagent_model = subagent["model"]

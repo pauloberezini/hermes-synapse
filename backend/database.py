@@ -242,6 +242,13 @@ def init_db():
         )
     """)
 
+    # Migration: add agent_id column to session_metadata if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
+        logger.info("Migrated session_metadata table to include agent_id column.")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
     logger.info("Database initialized successfully.")
@@ -616,20 +623,50 @@ def set_setting(key: str, value: str) -> bool:
 
 # ─── SESSION METADATA HELPERS ──────────────────────────────────────────────────
 
-def save_session_title(session_id: str, title: str):
-    """Saves or updates a custom title for a chat session."""
+def save_session_metadata(session_id: str, title: str, agent_id: Optional[str] = None):
+    """Saves or updates custom metadata (title and target agent) for a chat session."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+        
+        # Check if row exists to preserve existing values if updating selectively
+        cursor.execute("SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+        
+        final_agent_id = agent_id
+        if row and agent_id is None:
+            final_agent_id = row[0]
+            
         cursor.execute("""
-            INSERT OR REPLACE INTO session_metadata (session_id, title, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-        """, (session_id, title))
+            INSERT INTO session_metadata (session_id, title, agent_id, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(session_id) DO UPDATE SET
+                title = excluded.title,
+                agent_id = excluded.agent_id,
+                updated_at = CURRENT_TIMESTAMP
+        """, (session_id, title, final_agent_id))
         conn.commit()
         conn.close()
-        logger.info(f"Saved custom title for session {session_id}: {title}")
+        logger.info(f"Saved custom metadata for session {session_id}: title={title}, agent_id={final_agent_id}")
     except Exception as e:
-        logger.error(f"Error saving session title for {session_id}: {e}")
+        logger.error(f"Error saving session metadata for {session_id}: {e}")
+
+def save_session_title(session_id: str, title: str):
+    """Saves or updates a custom title for a chat session."""
+    save_session_metadata(session_id, title, agent_id=None)
+
+def get_session_agent_id(session_id: str) -> Optional[str]:
+    """Retrieves the mapped agent/orchestrator ID for a session."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Error retrieving session agent ID for {session_id}: {e}")
+        return None
 
 def get_session_title(session_id: str) -> Optional[str]:
     """Retrieves the custom title of a session, if exists."""

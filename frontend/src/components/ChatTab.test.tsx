@@ -37,7 +37,9 @@ describe('ChatTab Component', () => {
     handleCreateNewSession: vi.fn(),
     fetchChatSessions: vi.fn(),
     getSessionLabel: (id: string) => id === 'dashboard' ? 'Main Terminal' : id,
-    mainChatEndRef: React.createRef<HTMLDivElement>()
+    mainChatEndRef: React.createRef<HTMLDivElement>(),
+    subagents: [],
+    handleSetSessionAgent: vi.fn()
   };
 
   it('renders messages correctly', () => {

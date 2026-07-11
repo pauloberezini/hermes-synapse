@@ -81,10 +81,11 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
     state = AgentState(query, chat_id)
     
     # Resolve orchestrator ID
-    from backend.database import get_all_subagents, get_subagent
-    orch_meta = get_subagent(chat_id)
+    from backend.database import get_all_subagents, get_subagent, get_session_agent_id
+    target_orch_id = get_session_agent_id(chat_id) or chat_id
+    orch_meta = get_subagent(target_orch_id)
     if orch_meta:
-        orch_id = chat_id
+        orch_id = target_orch_id
     else:
         orch_id = "jarvis"
         orch_meta = get_subagent("jarvis")
@@ -116,7 +117,7 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
         # Custom sub-orchestrator acting as standalone agent
         state.add_trace("Orchestrator", "Start", f"Orchestrator '{orch_id}' has no connected agents. Executing as standalone agent.")
         from backend.agent import agent_instance
-        res = await agent_instance._respond_as_subagent(query, orch_meta or {"id": orch_id, "name": "Orchestrator", "system_prompt": "You are a virtual assistant.", "model": model, "skills": active_skills}, parent_skills=parent_skills)
+        res = await agent_instance._respond_as_subagent(query, orch_meta or {"id": orch_id, "name": "Orchestrator", "system_prompt": "You are a virtual assistant.", "model": model, "skills": active_skills}, parent_skills=parent_skills, chat_id=chat_id)
         return {
             "response": res,
             "traces": [{"timestamp": time.strftime("%H:%M:%S"), "agent": "Orchestrator", "action": "Finish", "message": "Executed via tools", "status": "success"}],
