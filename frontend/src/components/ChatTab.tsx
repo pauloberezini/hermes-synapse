@@ -51,6 +51,9 @@ interface ChatTabProps {
   fetchChatSessions: () => void;
   getSessionLabel: (sessionId: string) => string;
   mainChatEndRef: React.RefObject<HTMLDivElement | null>;
+  subagents: any[];
+  handleSetSessionAgent: (sessionId: string, agentId: string) => void;
+  fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
 export function ChatTab({
@@ -80,7 +83,10 @@ export function ChatTab({
   handleCreateNewSession,
   fetchChatSessions,
   getSessionLabel,
-  mainChatEndRef
+  mainChatEndRef,
+  subagents,
+  handleSetSessionAgent,
+  fetchWithAuth
 }: ChatTabProps) {
   const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
@@ -89,7 +95,7 @@ export function ChatTab({
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/history/${sessionId}/rename`, {
+      const res = await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle.trim() })
@@ -127,6 +133,33 @@ export function ChatTab({
               {currentChatId === 'dashboard' ? 'Main Terminal' : getSessionLabel(currentChatId)}
             </span>
           </div>
+
+          {/* Active Session Orchestrator Selector */}
+          {currentChatId !== 'dashboard' && !subagents.some(a => a.id === currentChatId) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '8px', background: 'rgba(255, 255, 255, 0.02)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>ORCHESTRATOR:</span>
+              <select
+                value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
+                onChange={(e) => handleSetSessionAgent(currentChatId, e.target.value)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--accent-cyan)',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="jarvis" style={{ background: '#0b0f19', color: '#fff' }}>Jarvis (Main)</option>
+                {subagents.map(a => (
+                  <option key={a.id} value={a.id} style={{ background: '#0b0f19', color: '#fff' }}>
+                    {a.name} ({a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator' ? 'Orchestrator' : 'Agent'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* TTS speaking pulse indicator */}
           {isSpeaking && (
@@ -386,7 +419,9 @@ export function ChatTab({
                             e.stopPropagation();
                             setActiveMenu(null);
                             try {
-                              const res = await fetch(`http://localhost:8000/api/history/${s}/fork`, { method: 'POST' });
+                              const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}/fork`, {
+                                method: 'POST'
+                              });
                               if (res.ok) {
                                 const data = await res.json();
                                 fetchChatSessions();
@@ -406,7 +441,9 @@ export function ChatTab({
                               setActiveMenu(null);
                               if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
                                 try {
-                                  const res = await fetch(`http://localhost:8000/api/history/dashboard`, { method: 'DELETE' });
+                                  const res = await fetchWithAuth(`http://localhost:8000/api/history/dashboard`, {
+                                    method: 'DELETE'
+                                  });
                                   if (res.ok) {
                                     selectChat('dashboard');
                                   }
@@ -425,7 +462,9 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Archive session "${label}"?`)) {
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/history/${s}/archive`, { method: 'POST' });
+                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}/archive`, {
+                                      method: 'POST'
+                                    });
                                     if (res.ok) {
                                       if (currentChatId === s) selectChat('dashboard');
                                       fetchChatSessions();
@@ -444,7 +483,9 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Are you sure you want to delete session "${label}"?`)) {
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/history/${s}`, { method: 'DELETE' });
+                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}`, {
+                                      method: 'DELETE'
+                                    });
                                     if (res.ok) {
                                       if (currentChatId === s) selectChat('dashboard');
                                       fetchChatSessions();

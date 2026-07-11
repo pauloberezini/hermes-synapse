@@ -46,5 +46,6 @@ export interface AppSettings {
 export interface ChatSession {
   id: string;
   title: string;
+  agent_id?: string;
 }
 
