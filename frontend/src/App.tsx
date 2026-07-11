@@ -1759,6 +1759,7 @@ export default function App() {
             mainChatEndRef={mainChatEndRef}
             subagents={subagents}
             handleSetSessionAgent={handleSetSessionAgent}
+            fetchWithAuth={fetchWithAuth}
           />
         )}
 

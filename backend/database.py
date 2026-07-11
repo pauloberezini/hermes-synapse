@@ -243,11 +243,16 @@ def init_db():
     """)
 
     # Migration: add agent_id column to session_metadata if it doesn't exist
-    try:
-        cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
-        logger.info("Migrated session_metadata table to include agent_id column.")
-    except sqlite3.OperationalError:
-        pass
+    cursor.execute("PRAGMA table_info(session_metadata)")
+    existing_columns = [row[1] for row in cursor.fetchall()]
+
+    if "agent_id" not in existing_columns:
+        try:
+            cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
+            logger.info("Migrated session_metadata table to include agent_id column.")
+        except sqlite3.OperationalError as e:
+            logger.error("Failed to migrate session_metadata table to include agent_id column: %s", e)
+            raise
 
     conn.commit()
     conn.close()

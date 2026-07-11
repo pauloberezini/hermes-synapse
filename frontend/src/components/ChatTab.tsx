@@ -53,6 +53,7 @@ interface ChatTabProps {
   mainChatEndRef: React.RefObject<HTMLDivElement | null>;
   subagents: any[];
   handleSetSessionAgent: (sessionId: string, agentId: string) => void;
+  fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
 export function ChatTab({
@@ -84,7 +85,8 @@ export function ChatTab({
   getSessionLabel,
   mainChatEndRef,
   subagents,
-  handleSetSessionAgent
+  handleSetSessionAgent,
+  fetchWithAuth
 }: ChatTabProps) {
   const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
@@ -93,12 +95,9 @@ export function ChatTab({
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/history/${sessionId}/rename`, {
+      const res = await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/rename`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {})
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle.trim() })
       });
       if (res.ok) {
@@ -420,9 +419,8 @@ export function ChatTab({
                             e.stopPropagation();
                             setActiveMenu(null);
                             try {
-                              const res = await fetch(`http://localhost:8000/api/history/${s}/fork`, {
-                                method: 'POST',
-                                headers: localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}
+                              const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}/fork`, {
+                                method: 'POST'
                               });
                               if (res.ok) {
                                 const data = await res.json();
@@ -443,9 +441,8 @@ export function ChatTab({
                               setActiveMenu(null);
                               if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
                                 try {
-                                  const res = await fetch(`http://localhost:8000/api/history/dashboard`, {
-                                    method: 'DELETE',
-                                    headers: localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}
+                                  const res = await fetchWithAuth(`http://localhost:8000/api/history/dashboard`, {
+                                    method: 'DELETE'
                                   });
                                   if (res.ok) {
                                     selectChat('dashboard');
@@ -465,9 +462,8 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Archive session "${label}"?`)) {
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/history/${s}/archive`, {
-                                      method: 'POST',
-                                      headers: localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}
+                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}/archive`, {
+                                      method: 'POST'
                                     });
                                     if (res.ok) {
                                       if (currentChatId === s) selectChat('dashboard');
@@ -487,9 +483,8 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Are you sure you want to delete session "${label}"?`)) {
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/history/${s}`, {
-                                      method: 'DELETE',
-                                      headers: localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}
+                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}`, {
+                                      method: 'DELETE'
                                     });
                                     if (res.ok) {
                                       if (currentChatId === s) selectChat('dashboard');
