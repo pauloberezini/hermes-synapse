@@ -50,6 +50,11 @@ interface ChatTabProps {
   fetchChatSessions: () => void;
   getSessionLabel: (sessionId: string) => string;
   mainChatEndRef: React.RefObject<HTMLDivElement | null>;
+  t?: (key: string) => string;
+  onStopGeneration?: () => void;
+  onRetryLast?: () => void;
+  hasLastUserMessage?: boolean;
+  onChangeModel?: () => void;
 }
 
 export function ChatTab({
@@ -79,15 +84,66 @@ export function ChatTab({
   handleCreateNewSession,
   fetchChatSessions,
   getSessionLabel,
-  mainChatEndRef
+  mainChatEndRef,
+  t,
+  onStopGeneration,
+  onRetryLast,
+  hasLastUserMessage,
+  onChangeModel
 }: ChatTabProps) {
   const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
+  const [expandedMeta, setExpandedMeta] = React.useState<number | null>(null);
+  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const [sessionFilter, setSessionFilter] = React.useState('');
+  const tr = React.useCallback((key: string, fallback: string) => {
+    const value = t ? t(key) : key;
+    return value === key ? fallback : value;
+  }, [t]);
+
   const messageContent = (msg: ChatMessage) => {
     if ((msg.content || '').trim()) return msg.content;
     return msg.role === 'assistant'
-      ? 'Пустой ответ модели. Попробуйте повторить запрос или уточнить формулировку.'
+      ? tr('chatEmptyResponse', 'The model returned no text. You can retry or refine the request.')
       : '';
   };
+
+  const statusLabel = (status?: string) => {
+    switch (status) {
+      case 'empty': return tr('chatStatusEmpty', 'Empty response');
+      case 'refusal': return tr('chatStatusRefusal', 'Refused');
+      case 'timeout': return tr('chatStatusTimeout', 'Timeout');
+      case 'provider_error': return tr('chatStatusProviderError', 'Provider error');
+      case 'parse_error': return tr('chatStatusParseError', 'Parse error');
+      default: return tr('chatStatusSuccess', 'Success');
+    }
+  };
+
+  const statusColor = (status?: string) => {
+    switch (status) {
+      case 'empty': return 'var(--accent-orange)';
+      case 'refusal': return 'var(--accent-orange)';
+      case 'timeout':
+      case 'provider_error':
+      case 'parse_error': return 'var(--danger)';
+      default: return 'var(--success)';
+    }
+  };
+
+  const copyRequestId = (requestId: string) => {
+    try {
+      navigator.clipboard?.writeText(requestId);
+      setCopiedId(requestId);
+      window.setTimeout(() => setCopiedId(null), 1500);
+    } catch { /* clipboard unavailable */ }
+  };
+
+  const filteredSessions = React.useMemo(() => {
+    const q = sessionFilter.trim().toLowerCase();
+    if (!q) return chatSessions;
+    return chatSessions.filter(s =>
+      s === 'dashboard' || getSessionLabel(s).toLowerCase().includes(q) || s.toLowerCase().includes(q)
+    );
+  }, [chatSessions, sessionFilter, getSessionLabel]);
 
   return (
     <div style={styles.tabWrapper}>
@@ -231,8 +287,18 @@ export function ChatTab({
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '1px' }}>ACTIVE SESSIONS</span>
           </div>
 
+          <input
+            type="text"
+            value={sessionFilter}
+            onChange={(e) => setSessionFilter(e.target.value)}
+            placeholder={tr('chatSearchAgents', 'Search sessions…')}
+            aria-label={tr('chatSearchAgents', 'Search sessions')}
+            className="form-input"
+            style={{ padding: '6px 10px', fontSize: '0.78rem', marginBottom: '4px' }}
+          />
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
-            {chatSessions.map(s => {
+            {filteredSessions.map(s => {
               const isActive = currentChatId === s;
               const label = getSessionLabel(s);
               const isDashboard = s === 'dashboard';
@@ -407,6 +473,23 @@ export function ChatTab({
 
         {/* Chat Area */}
         <div style={{ ...styles.chatArea, flex: 1, height: '100%' }} className="glass-panel">
+          {!isConnected && (
+            <div role="status" style={{
+              background: 'rgba(255, 93, 143, 0.1)',
+              border: '1px solid rgba(255, 93, 143, 0.3)',
+              color: 'var(--danger)',
+              padding: '6px 12px',
+              borderRadius: 8,
+              fontSize: '0.75rem',
+              marginBottom: 10,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}>
+              <span className="pulse-dot" style={{ width: 8, height: 8, background: 'var(--danger)' }} />
+              {tr('chatOffline', 'Assistant is offline. Reconnecting…')}
+            </div>
+          )}
           <div style={styles.chatScroller}>
             {messages.map((msg, index) => (
               <div 
@@ -480,10 +563,85 @@ export function ChatTab({
                       </div>
                     </div>
                     <div style={styles.msgText}>{renderMarkdown(messageContent(msg))}</div>
+
+                    {msg.role === 'assistant' && msg.meta && (
+                      <div style={{ marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '0.68rem', fontFamily: 'var(--font-mono)' }}>
+                          <span style={{ color: statusColor(msg.meta.status), fontWeight: 600 }}>
+                            {statusLabel(msg.meta.status)}
+                          </span>
+                          {typeof msg.meta.latency_ms === 'number' && (
+                            <span style={{ color: 'var(--text-dim)' }}>
+                              {tr('chatLatency', 'Latency')}: {msg.meta.latency_ms} ms
+                            </span>
+                          )}
+                          {(msg.meta.input_tokens != null || msg.meta.output_tokens != null) && (
+                            <span style={{ color: 'var(--text-dim)' }}>
+                              {tr('chatTokens', 'Tokens')}: {msg.meta.input_tokens ?? 0}/{msg.meta.output_tokens ?? 0}
+                            </span>
+                          )}
+                          {(msg.meta.status === 'empty' || msg.meta.status === 'timeout' ||
+                            msg.meta.status === 'provider_error' || msg.meta.status === 'parse_error') && hasLastUserMessage && (
+                            <button
+                              onClick={() => onRetryLast?.()}
+                              disabled={isGenerating}
+                              className="btn-primary"
+                              style={{ padding: '2px 8px', fontSize: '0.68rem' }}
+                            >{tr('chatRetry', 'Retry')}</button>
+                          )}
+                          {(msg.meta.status === 'empty' || msg.meta.status === 'refusal') && (
+                            <button
+                              onClick={() => onChangeModel?.()}
+                              className="btn-primary"
+                              style={{ padding: '2px 8px', fontSize: '0.68rem' }}
+                            >{tr('chatChangeModel', 'Change model')}</button>
+                          )}
+                          <button
+                            onClick={() => setExpandedMeta(expandedMeta === index ? null : index)}
+                            aria-expanded={expandedMeta === index}
+                            className="btn-primary"
+                            style={{ padding: '2px 8px', fontSize: '0.68rem' }}
+                          >{tr('chatTechDetails', 'Technical details')}</button>
+                        </div>
+
+                        {expandedMeta === index && (
+                          <div style={{ marginTop: 6, fontSize: '0.66rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {msg.meta.model && <div>{tr('chatModel', 'Model')}: {msg.meta.model}</div>}
+                            {msg.meta.provider && <div>{tr('chatProvider', 'Provider')}: {msg.meta.provider}</div>}
+                            {msg.meta.finish_reason && <div>{tr('chatFinishReason', 'Finish reason')}: {msg.meta.finish_reason}</div>}
+                            {typeof msg.meta.tool_iterations === 'number' && <div>Tool iterations: {msg.meta.tool_iterations}</div>}
+                            {msg.meta.request_id && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>ID: {msg.meta.request_id}</span>
+                                <button
+                                  onClick={() => copyRequestId(msg.meta!.request_id as string)}
+                                  title={tr('chatCopyRequestId', 'Copy request ID')}
+                                  style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center' }}
+                                >
+                                  <Copy size={11} />
+                                </button>
+                                {copiedId === msg.meta.request_id && (
+                                  <span style={{ color: 'var(--success)' }}>{tr('chatCopied', 'Copied')}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             ))}
+
+            {messages.length === 0 && !isGenerating && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text-dim)', gap: 8, padding: 40 }}>
+                <MessageSquare size={28} style={{ opacity: 0.5 }} />
+                <span style={{ fontSize: '0.85rem', textAlign: 'center' }}>
+                  {tr('chatEmptyState', 'No messages yet. Send a request to start the conversation.')}
+                </span>
+              </div>
+            )}
             
             {isGenerating && (
               <div className="hud-container">
@@ -527,11 +685,29 @@ export function ChatTab({
                 }
               }}
               placeholder={isUploading ? "Uploading file..." : "Enter command or request for Vexa, Sir..."}
+              aria-label="Message input"
               style={styles.chatInput}
               className="form-input"
               disabled={!isConnected || isUploading}
               rows={1}
             />
+            {isGenerating && (
+              <button
+                type="button"
+                onClick={() => onStopGeneration?.()}
+                className="btn-primary"
+                aria-label={tr('chatStop', 'Stop')}
+                title={tr('chatStop', 'Stop generation')}
+                style={{
+                  border: '1px solid rgba(255, 195, 72, 0.5)',
+                  color: 'var(--accent-orange)',
+                  backgroundColor: 'rgba(255, 195, 72, 0.06)'
+                }}
+              >
+                <Square size={14} fill="currentColor" />
+                <span>{tr('chatStop', 'Stop')}</span>
+              </button>
+            )}
             {isSpeaking && (
               <button 
                 type="button" 
@@ -552,9 +728,15 @@ export function ChatTab({
                 <span>Interrupt speech</span>
               </button>
             )}
-            <button type="submit" className="btn-primary" disabled={!isConnected || isUploading || !inputValue.trim()}>
+            <button
+              type="submit"
+              className="btn-primary"
+              aria-label={tr('chatSend', 'Send')}
+              disabled={!isConnected || isUploading || isGenerating || !inputValue.trim()}
+              title={isGenerating ? tr('chatWaitActive', 'Please wait for the current response to finish.') : tr('chatSend', 'Send')}
+            >
               <Send size={16} />
-              <span>Send</span>
+              <span>{tr('chatSend', 'Send')}</span>
             </button>
           </form>
         </div>

@@ -36,46 +36,45 @@ def get_agent_model(agent_role: str, fallback_model: str) -> str:
 
 
 async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> str:
+    """Subagent LLM helper.
+
+    Delegates the HTTP call + parsing to the unified normalized client
+    (``backend.llm_client``) so subagents inherit timeout, transient retry with
+    backoff, secret masking and consistent response handling. Preserves the
+    historical ``-> str`` contract and ``Exception`` on hard failure.
+    """
     api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
-    is_openmodel = "openmodel.ai" in api_base
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/pauloberezini/jarvis",
-        "X-Title": "Jarvis Personal Assistant"
-    }
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2
-    }
-    
-    url = f"{api_base}/messages" if is_openmodel else f"{api_base}/chat/completions"
-    
-    if is_openmodel:
-        from backend.agent import translate_to_anthropic_payload
-        actual_payload = translate_to_anthropic_payload(payload)
-    else:
-        actual_payload = payload
-        
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.post(
-            url,
-            json=actual_payload,
-            headers=headers
-        )
-        if response.status_code != 200:
-            raise Exception(f"LLM API error {response.status_code}: {response.text}")
-        
-        raw_data = response.json()
-        if is_openmodel:
-            from backend.agent import translate_to_openai_response
-            data = translate_to_openai_response(raw_data)
+    from backend.agent import _local_model_system_hint
+    from backend.llm_client import (
+        STATUS_PARSE_ERROR,
+        STATUS_PROVIDER_ERROR,
+        STATUS_TIMEOUT,
+        call_llm_normalized,
+    )
+
+    local_hint = _local_model_system_hint(model, api_base)
+    if local_hint:
+        messages = [dict(msg) for msg in messages]
+        for msg in messages:
+            if msg.get("role") == "system":
+                msg["content"] = (msg.get("content") or "") + local_hint
+                break
         else:
-            data = raw_data
-            
-        return data["choices"][0]["message"]["content"] or ""
+            messages.insert(0, {"role": "system", "content": local_hint.strip()})
+
+    result = await call_llm_normalized(
+        api_base=api_base,
+        api_key=api_key,
+        model=model,
+        messages=messages,
+        temperature=0.2,
+    )
+
+    if result.status in (STATUS_TIMEOUT, STATUS_PROVIDER_ERROR, STATUS_PARSE_ERROR):
+        # Do not leak provider bodies/secrets; error_message is already masked.
+        raise Exception(f"LLM call failed ({result.status}): {result.error_message}")
+
+    return result.content or ""
 
 # ─── Safety guard ────────────────────────────────────────────────────────────
 

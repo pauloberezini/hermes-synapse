@@ -4,6 +4,7 @@ import logging
 import asyncio
 import hashlib
 import re
+import json
 from typing import List, Dict, Any, Optional
 import httpx
 from dotenv import load_dotenv
@@ -128,10 +129,20 @@ TOOL_INTENT_KEYWORDS = {
 
 def _keyword_route(user_message: str) -> str:
     msg_lower = user_message.lower()
-    if any(any(kw in msg_lower for kw in kws) for kws in TOOL_INTENT_KEYWORDS.values()):
-        return "direct"
+    # Precedence (audit P0-7):
+    #   1. orchestrate — multi-step analytical requests ("сравни Bitcoin и
+    #      Ethereum") contain tool keywords but are multi-step tasks.
+    #   2. explicit real-time search phrasing ("найди", "курс", "новости") →
+    #      research agent, even if a single-tool keyword also matches.
+    #   3. single-tool intent → direct (weather/time/system/etc.).
+    #   4. remaining agent topic keywords → agent.
+    #   5. default → direct.
     if any(kw in msg_lower for kw in _ORCHESTRATE_KEYWORDS):
         return "orchestrate"
+    if any(kw in msg_lower for kw in _AGENT_SEARCH_TRIGGERS):
+        return "agent"
+    if any(any(kw in msg_lower for kw in kws) for kws in TOOL_INTENT_KEYWORDS.values()):
+        return "direct"
     if any(kw in msg_lower for kw in _AGENT_KEYWORDS):
         return "agent"
     return "direct"
@@ -174,6 +185,134 @@ def _extract_message_text(content: Any) -> str:
     return str(content)
 
 
+def _is_local_llm_endpoint(api_base: str) -> bool:
+    base = (api_base or "").lower()
+    return any(marker in base for marker in (
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "host.docker.internal",
+        "ollama",
+        "lmstudio",
+        "lm-studio",
+        "localai",
+        "vllm",
+    ))
+
+
+def _is_qwen_model(model: str) -> bool:
+    return "qwen" in (model or "").lower()
+
+
+def _local_model_system_hint(model: str, api_base: str) -> str:
+    if not (_is_local_llm_endpoint(api_base) or _is_qwen_model(model)):
+        return ""
+    hint = (
+        "\n\n[Local model compatibility]:\n"
+        "Return only the final visible answer. Do not emit hidden reasoning, analysis, "
+        "thinking traces, or <think> blocks. If you are a Qwen thinking model, use /no_think."
+    )
+    if _is_qwen_model(model):
+        hint += "\n/no_think"
+    return hint
+
+
+def _provider_display_name(api_base: str, is_openmodel: bool = False) -> str:
+    if is_openmodel:
+        return "OpenModel"
+    if _is_local_llm_endpoint(api_base):
+        return "локальной LLM"
+    return "OpenRouter"
+
+
+def _looks_like_tool_support_error(response_text: str) -> bool:
+    lowered = (response_text or "").lower()
+    return any(marker in lowered for marker in (
+        "tools",
+        "tool_calls",
+        "function calling",
+        "function_call",
+        "functions",
+        "unsupported parameter",
+        "extra inputs are not permitted",
+    ))
+
+
+def _safe_json_dumps(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value if value is not None else {}, ensure_ascii=False)
+    except Exception:
+        return "{}"
+
+
+def _parse_tool_arguments(raw_args: Any) -> Dict[str, Any]:
+    if isinstance(raw_args, dict):
+        return raw_args
+    if raw_args is None or raw_args == "":
+        return {}
+    if not isinstance(raw_args, str):
+        return {}
+    try:
+        parsed = json.loads(raw_args)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        logger.warning("Could not parse tool arguments as JSON: %r", raw_args[:500])
+        return {}
+
+
+def _normalize_tool_calls(tool_calls: Any) -> List[Dict[str, Any]]:
+    if not isinstance(tool_calls, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for idx, call in enumerate(tool_calls):
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = fn.get("name") or call.get("name")
+        if not name:
+            continue
+        normalized.append({
+            "id": call.get("id") or f"call_{idx}",
+            "type": call.get("type") or "function",
+            "function": {
+                "name": name,
+                "arguments": _safe_json_dumps(fn.get("arguments", call.get("arguments", {}))),
+            },
+        })
+    return normalized
+
+
+def _sanitize_message_for_provider(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only OpenAI chat fields accepted by strict local providers."""
+    role = message.get("role")
+    clean: Dict[str, Any] = {"role": role, "content": _extract_message_text(message.get("content"))}
+    if role == "assistant":
+        tool_calls = _normalize_tool_calls(message.get("tool_calls"))
+        if tool_calls:
+            clean["tool_calls"] = tool_calls
+    elif role == "tool":
+        clean["tool_call_id"] = message.get("tool_call_id") or message.get("id") or "call_0"
+        if message.get("name"):
+            clean["name"] = message.get("name")
+    return clean
+
+
+def _sanitize_messages_for_provider(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [_sanitize_message_for_provider(msg) for msg in messages]
+
+
+def _extract_choice_message(data: Dict[str, Any]) -> Dict[str, Any]:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError(f"LLM response has no choices: {str(data)[:500]}")
+    message = choices[0].get("message", {})
+    if not isinstance(message, dict):
+        raise ValueError(f"LLM choice has invalid message: {str(choices[0])[:500]}")
+    return message
+
+
 def _should_retry_empty_clean_response(clean_text: str) -> bool:
     # OpenAI-compatible local providers can occasionally return an empty final
     # message while loading, after tool calls, or after spending the whole budget
@@ -194,12 +333,23 @@ def _clean_model_output(text: str) -> str:
     if not text:
         return ""
 
-    cleaned = text.strip()
+    original = text.strip()
+    cleaned = original
     if "</think>" in cleaned:
-        cleaned = cleaned.split("</think>", 1)[1].strip()
-    if "<think>" in cleaned:
-        cleaned = cleaned.split("<think>", 1)[0].strip()
+        cleaned = re.sub(r"(?is)<think>.*?</think>", "", cleaned).strip()
+    elif re.match(r"(?is)^\s*<think>", cleaned):
+        # Reasoning models such as Qwen can spend the whole token budget inside an
+        # unfinished thinking block. If there is visible text after the (never
+        # closed) block, keep it; only return empty when the whole message is
+        # reasoning, so the caller can run the visible-answer retry.
+        after = re.sub(r"(?is)^\s*<think>.*", "", cleaned).strip()
+        return after
+    else:
+        cleaned = re.sub(r"(?is)<think>.*", "", cleaned).strip()
 
+    # Marker stripping keeps only the tail after an explicit "answer:" style
+    # marker. Guard against destroying a real answer: only trim when a non-empty
+    # tail remains, otherwise keep the cleaned text as-is.
     markers = [
         "final answer:",
         "answer:",
@@ -210,7 +360,9 @@ def _clean_model_output(text: str) -> str:
     for marker in markers:
         pos = lower.rfind(marker)
         if pos >= 0:
-            cleaned = cleaned[pos + len(marker):].strip()
+            tail = cleaned[pos + len(marker):].strip()
+            if tail:
+                cleaned = tail
             break
 
     visible_reasoning_prefixes = (
@@ -314,42 +466,9 @@ def _format_memory_context(memories: List[Dict[str, Any]]) -> str:
     return "\n\n[Долгосрочная память пользователя]:\n" + "\n".join(lines)
 
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    model_lower = model.lower()
-    
-    # default pricing per 1,000,000 tokens (Gemini 2.5 Pro default)
-    prompt_rate = 0.075 
-    completion_rate = 0.30
-    
-    if "gemini-2.5-pro" in model_lower:
-        prompt_rate = 0.075
-        completion_rate = 0.30
-    elif "gemini-2.5-flash" in model_lower:
-        prompt_rate = 0.0375
-        completion_rate = 0.15
-    elif "gpt-4o" in model_lower:
-        prompt_rate = 2.50
-        completion_rate = 10.00
-    elif "claude-3-5-sonnet" in model_lower:
-        prompt_rate = 3.00
-        completion_rate = 15.00
-    elif "claude-sonnet-4" in model_lower or "claude-4" in model_lower:
-        prompt_rate = 3.00
-        completion_rate = 15.00
-    elif "deepseek-r2" in model_lower:
-        prompt_rate = 0.55
-        completion_rate = 2.19
-    elif "deepseek-r1" in model_lower or "deepseek/deepseek-r1" in model_lower:
-        prompt_rate = 0.55
-        completion_rate = 2.19
-    elif "deepseek-v3" in model_lower:
-        prompt_rate = 0.14
-        completion_rate = 0.28
-    elif "deepseek-v4-flash" in model_lower or "deepseek/deepseek-v4-flash" in model_lower:
-        prompt_rate = 0.07
-        completion_rate = 0.14
-        
-    cost = (prompt_tokens * prompt_rate + completion_tokens * completion_rate) / 1_000_000.0
-    return cost
+    """Backward-compatible wrapper around the centralized cost module."""
+    from backend.cost import calculate_cost as _calculate_cost
+    return _calculate_cost(model, prompt_tokens, completion_tokens)
 
 
 # ─── Complexity Routing (Fugu-style) ──────────────────────────────────────────────────────────
@@ -379,6 +498,12 @@ _ORCHESTRATE_KEYWORDS = [
 _AGENT_KEYWORDS = [
     "найди", "поищи", "курс", "цена", "новости", "погода", "find", "search", "news",
     "btc", "биткоин", "ethereum", "крипто", "акции",
+]
+# Explicit real-time-search verbs/nouns. When present, the request is a live
+# lookup that the research subagent handles better than a single local tool, so
+# these take precedence over single-tool intent (audit P0-7).
+_AGENT_SEARCH_TRIGGERS = [
+    "найди", "поищи", "search", "find", "новости", "news", "курс", "цена",
 ]
 
 async def classify_complexity(user_message: str, api_key: str, api_base: str) -> str:
@@ -410,10 +535,10 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str) ->
         }
         payload = {
             "model": classifier_model,
-            "messages": [
-                {"role": "system", "content": _COMPLEXITY_SYSTEM},
+            "messages": _sanitize_messages_for_provider([
+                {"role": "system", "content": _COMPLEXITY_SYSTEM + _local_model_system_hint(classifier_model, api_base)},
                 {"role": "user",   "content": user_message}
-            ],
+            ]),
             "temperature": 0.0,
             "max_tokens": 5
         }
@@ -424,7 +549,7 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str) ->
                 headers=headers
             )
         if resp.status_code == 200:
-            level = resp.json()["choices"][0]["message"]["content"].strip().lower()
+            level = _clean_model_output(_extract_message_text(_extract_choice_message(resp.json()).get("content"))).strip().lower()
             if level in ("direct", "agent", "orchestrate"):
                 return level
     except Exception as e:
@@ -518,6 +643,9 @@ class JarvisAgent:
         self.max_tokens = _env_int("LLM_MAX_TOKENS", 256 if self.fast_mode else 1024)
         self.tool_max_tokens = _env_int("LLM_TOOL_MAX_TOKENS", 512 if self.fast_mode else 1024)
         self.temperature = _env_float("LLM_TEMPERATURE", 0.2 if self.fast_mode else 0.7)
+        # Hard ceilings to prevent runaway agent loops / cost (audit P0, P1-4).
+        self.max_tool_iterations = _env_int("LLM_MAX_TOOL_ITERATIONS", 8)
+        self.request_timeout = _env_float("LLM_REQUEST_TIMEOUT", 60.0)
         self.auto_rag = _env_bool("RAG_AUTO_CONTEXT", False)
         self.memory_enabled = _env_bool("MEMORY_ENABLED", True)
         self.memory_auto_save = _env_bool("MEMORY_AUTO_SAVE", True)
@@ -906,6 +1034,7 @@ class JarvisAgent:
                 f"Отвечай кратко и напрямую. Не показывай ход рассуждений."
             )
         system_prompt = FAST_SYSTEM_PROMPT if self.fast_mode else self.system_prompt
+        system_info += _local_model_system_hint(self.model, self.api_base)
         messages = [{"role": "system", "content": system_prompt + system_info}]
         for msg in history:
             messages.append(msg)
@@ -926,13 +1055,33 @@ class JarvisAgent:
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
+        retried_without_tools = False
+        tool_iterations = 0
+        last_finish_reason = None
+        last_request_id = None
+        response_status = "success"
 
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
+            async with httpx.AsyncClient(timeout=self.request_timeout) as client:
                 while True:
+                    # Hard cap on agent-loop iterations to prevent runaway
+                    # tool loops and unbounded cost (audit P0/P1-4).
+                    if tool_iterations >= self.max_tool_iterations:
+                        logger.warning(
+                            "Agent loop hit max iterations (%s) for session %s; stopping.",
+                            self.max_tool_iterations, session_id,
+                        )
+                        error_msg = f"max_tool_iterations ({self.max_tool_iterations}) reached"
+                        if not response_text.strip():
+                            response_text = (
+                                "Сэр, задача потребовала слишком много последовательных "
+                                "шагов и была остановлена в целях безопасности. "
+                                "Пожалуйста, уточните запрос или разбейте его на части."
+                            )
+                        break
                     payload = {
                         "model": self.model,
-                        "messages": messages,
+                        "messages": _sanitize_messages_for_provider(messages),
                         "temperature": self.temperature,
                         "max_tokens": self.tool_max_tokens if selected_tools else self.max_tokens,
                     }
@@ -950,8 +1099,29 @@ class JarvisAgent:
                     )
                     
                     if response.status_code != 200:
+                        if (
+                            selected_tools
+                            and not retried_without_tools
+                            and _is_local_llm_endpoint(self.api_base)
+                            and _looks_like_tool_support_error(response.text)
+                        ):
+                            logger.warning(
+                                "Local LLM rejected tool-calling for session %s. Retrying once without tools. Error: %s",
+                                session_id,
+                                response.text[:500],
+                            )
+                            retried_without_tools = True
+                            selected_tools = []
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "The local model endpoint rejected tool-calling. "
+                                    "Answer directly without tools and clearly say if live data cannot be verified."
+                                )
+                            })
+                            continue
                         error_msg = f"HTTP Error {response.status_code}: {response.text}"
-                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+                        provider_name = _provider_display_name(self.api_base, is_openmodel)
                         response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
                         break
                         
@@ -960,11 +1130,21 @@ class JarvisAgent:
                     usage = data.get("usage", {})
                     total_prompt_tokens += usage.get("prompt_tokens", 0)
                     total_completion_tokens += usage.get("completion_tokens", 0)
+                    # Diagnostics: capture finish reason + provider request id
+                    # (secret-free) for tracing / UI tech-details (audit P0-4).
+                    try:
+                        _choices = data.get("choices") or []
+                        last_finish_reason = (_choices[0] or {}).get("finish_reason") if _choices else None
+                    except Exception:
+                        last_finish_reason = None
+                    last_request_id = (
+                        response.headers.get("x-request-id")
+                        or (raw_data.get("id") if isinstance(raw_data, dict) else None)
+                    )
+
+                    choice_msg = _extract_choice_message(data)
                     
-                    choice = data["choices"][0]
-                    choice_msg = choice["message"]
-                    
-                    tool_calls = choice_msg.get("tool_calls")
+                    tool_calls = _normalize_tool_calls(choice_msg.get("tool_calls"))
                     if not tool_calls:
                         # Final text response reached
                         raw_response_text = _extract_message_text(choice_msg.get("content"))
@@ -975,7 +1155,7 @@ class JarvisAgent:
                             try:
                                 retry_payload = {
                                     "model": self.model,
-                                    "messages": messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
+                                    "messages": _sanitize_messages_for_provider(messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}]),
                                     "temperature": min(self.temperature, 0.3),
                                     "max_tokens": self.max_tokens,
                                 }
@@ -992,7 +1172,7 @@ class JarvisAgent:
                                     retry_usage = retry_data.get("usage", {})
                                     total_prompt_tokens += retry_usage.get("prompt_tokens", 0)
                                     total_completion_tokens += retry_usage.get("completion_tokens", 0)
-                                    retry_choice_msg = retry_data["choices"][0]["message"]
+                                    retry_choice_msg = _extract_choice_message(retry_data)
                                     response_text = _clean_model_output(_extract_message_text(retry_choice_msg.get("content")))
                                 else:
                                     logger.warning(
@@ -1040,7 +1220,7 @@ class JarvisAgent:
                             try:
                                 payload_fallback = {
                                     "model": self.model,
-                                    "messages": messages,
+                                    "messages": _sanitize_messages_for_provider(messages),
                                     "temperature": min(self.temperature, 0.5),
                                     "max_tokens": self.max_tokens,
                                 }
@@ -1054,7 +1234,7 @@ class JarvisAgent:
                                 if response_fallback.status_code == 200:
                                     raw_fallback_data = response_fallback.json()
                                     fallback_data = translate_to_openai_response(raw_fallback_data) if is_openmodel else raw_fallback_data
-                                    response_text = _clean_model_output(_extract_message_text(fallback_data["choices"][0]["message"].get("content")))
+                                    response_text = _clean_model_output(_extract_message_text(_extract_choice_message(fallback_data).get("content")))
                                     total_completion_tokens += fallback_data.get("usage", {}).get("completion_tokens", 0)
                                 else:
                                     response_text = "Сэр, операция по вашему запросу выполнена успешно."
@@ -1063,7 +1243,12 @@ class JarvisAgent:
                                 response_text = "Сэр, операция по вашему запросу выполнена успешно."
 
                         if not response_text.strip():
-                            logger.warning("Model returned an empty final response for session %s", session_id)
+                            logger.warning(
+                                "Model returned an empty final response for session %s "
+                                "(finish_reason=%s, request_id=%s)",
+                                session_id, last_finish_reason, last_request_id,
+                            )
+                            response_status = "empty"
                             response_text = _empty_model_response_fallback("Vexa")
                         
                         # Calculate cost
@@ -1090,6 +1275,7 @@ class JarvisAgent:
                     # LLM decided to execute one or more tools
                     logger.info(f"Jarvis selected tools: {[tc.get('function', {}).get('name') for tc in tool_calls]}")
                     tool_executed = True
+                    tool_iterations += 1
                     
                     from backend.activity_logger import log_activity
                     log_activity(
@@ -1099,17 +1285,13 @@ class JarvisAgent:
                     )
                     
                     # 1. Append assistant's tool-call response to messages thread
-                    messages.append(choice_msg)
+                    messages.append(_sanitize_message_for_provider({**choice_msg, "tool_calls": tool_calls}))
                     
                     # 2. Run each tool call and append the results
-                    import json
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
-                        try:
-                            tool_args = json.loads(tool_args_str)
-                        except Exception:
-                            tool_args = {}
+                        tool_args = _parse_tool_arguments(tool_args_str)
                             
                         # Execute the local python function
                         log_activity(
@@ -1147,10 +1329,26 @@ class JarvisAgent:
                         })
                         
                 latency_ms = int((time.time() - start_time) * 1000)
+        except asyncio.CancelledError:
+            # Propagate cancellation (e.g. UI "Stop") without swallowing it.
+            raise
+        except (httpx.TimeoutException, asyncio.TimeoutError) as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            error_msg = "timeout"
+            response_status = "timeout"
+            logger.warning("LLM request timed out for session %s after %ss",
+                           session_id, self.request_timeout)
+            response_text = (
+                "Сэр, модель не ответила вовремя (превышен таймаут). "
+                "Попробуйте повторить запрос или выбрать другую модель."
+            )
         except Exception as e:
             latency_ms = int((time.time() - start_time) * 1000)
-            error_msg = str(e)
-            logger.exception("Error during OpenRouter chat completion call")
+            # Do not leak provider bodies / secrets into the stored error string.
+            from backend.llm_client import mask_secrets
+            error_msg = mask_secrets(str(e))[:300]
+            response_status = "provider_error"
+            logger.exception("Error during LLM chat completion call")
             response_text = "Прошу прощения, Сэр. Произошел сбой при обработке вашего запроса."
 
         try:
@@ -1197,6 +1395,25 @@ class JarvisAgent:
             save_decision_log(log_entry)
         except Exception as db_err:
             logger.error(f"Failed to save decision log to DB: {db_err}")
+
+        # Secret-free run metadata for the UI tech-details panel (audit P0-4/P0-5).
+        try:
+            self.last_run_metadata[session_id] = {
+                **self.last_run_metadata.get(session_id, {}),
+                "status": response_status if error_msg is None or response_status != "success" else "success",
+                "model": self.model,
+                "provider": _provider_display_name(self.api_base, "openmodel.ai" in self.api_base),
+                "finish_reason": last_finish_reason,
+                "request_id": last_request_id,
+                "latency_ms": latency_ms,
+                "input_tokens": total_prompt_tokens,
+                "output_tokens": total_completion_tokens,
+                "cost_usd": self.last_costs.get(session_id, 0.0),
+                "tool_iterations": tool_iterations,
+                "error": error_msg,
+            }
+        except Exception:
+            pass
 
         return response_text
 
@@ -1250,6 +1467,7 @@ class JarvisAgent:
             f"КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО искать, использовать, упоминать, цитировать или пересказывать в ответах Сэру готовые прогнозы, чужие статьи, советы или мнения о валуйных ставках (например, 'готовые прогнозы', 'валуйные ставки по версии LiveSport', 'экспертные мнения'). Вы должны искать исключительно сырые числовые данные: пары соперников, точное время начала матчей и коэффициенты (odds/котировки) букмекеров. Любые выводы и математические расчеты валуйности (EV = Probability * Odds - 1) вы обязаны делать строго самостоятельно и приводить только свои собственные результаты, не ссылаясь на чужие мнения!\n"
             f"Вы не имеете права лениться делать расчеты: если точных числовых коэффициентов в поиске нет, вы обязаны провести математическое прогнозирование (например, рассчитать вероятности победы/ничьей/поражения по распределению Пуассона на основе средней результативности или статистики голов команд) и рассчитать ожидаемую валуйность (EV = P * Odds - 1) на основе расчетных вероятностей и примерных коэффициентов, вместо выдачи сухого отказа или цитирования чужих прогнозов."
         )
+        system_info += _local_model_system_hint(subagent_model, self.api_base)
         messages = [{"role": "system", "content": system_prompt + system_info}]
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
@@ -1366,13 +1584,14 @@ class JarvisAgent:
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
+        retried_without_tools = False
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
                 while True:
                     payload = {
                         "model": subagent_model,
-                        "messages": messages,
+                        "messages": _sanitize_messages_for_provider(messages),
                         "temperature": subagent.get("temperature", 0.7),
                         "max_tokens": self.tool_max_tokens if selected_subagent_tools else self.max_tokens,
                     }
@@ -1390,8 +1609,29 @@ class JarvisAgent:
                     )
                     
                     if response.status_code != 200:
+                        if (
+                            selected_subagent_tools
+                            and not retried_without_tools
+                            and _is_local_llm_endpoint(self.api_base)
+                            and _looks_like_tool_support_error(response.text)
+                        ):
+                            logger.warning(
+                                "Local LLM rejected subagent tool-calling for session %s. Retrying once without tools. Error: %s",
+                                session_id,
+                                response.text[:500],
+                            )
+                            retried_without_tools = True
+                            selected_subagent_tools = []
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "The local model endpoint rejected tool-calling. "
+                                    "Answer directly without tools and clearly say if live data cannot be verified."
+                                )
+                            })
+                            continue
                         error_msg = f"HTTP Error {response.status_code}: {response.text}"
-                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+                        provider_name = _provider_display_name(self.api_base, is_openmodel)
                         response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
                         break
                         
@@ -1401,10 +1641,9 @@ class JarvisAgent:
                     total_prompt_tokens += usage.get("prompt_tokens", 0)
                     total_completion_tokens += usage.get("completion_tokens", 0)
                     
-                    choice = data["choices"][0]
-                    choice_msg = choice["message"]
+                    choice_msg = _extract_choice_message(data)
                     
-                    tool_calls = choice_msg.get("tool_calls")
+                    tool_calls = _normalize_tool_calls(choice_msg.get("tool_calls"))
                     if not tool_calls:
                         raw_response_text = _extract_message_text(choice_msg.get("content"))
                         response_text = _clean_model_output(raw_response_text)
@@ -1414,7 +1653,7 @@ class JarvisAgent:
                             try:
                                 retry_payload = {
                                     "model": subagent_model,
-                                    "messages": messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
+                                    "messages": _sanitize_messages_for_provider(messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}]),
                                     "temperature": min(subagent.get("temperature", 0.7), 0.3),
                                     "max_tokens": self.max_tokens,
                                 }
@@ -1431,7 +1670,7 @@ class JarvisAgent:
                                     retry_usage = retry_data.get("usage", {})
                                     total_prompt_tokens += retry_usage.get("prompt_tokens", 0)
                                     total_completion_tokens += retry_usage.get("completion_tokens", 0)
-                                    retry_choice_msg = retry_data["choices"][0]["message"]
+                                    retry_choice_msg = _extract_choice_message(retry_data)
                                     response_text = _clean_model_output(_extract_message_text(retry_choice_msg.get("content")))
                                 else:
                                     logger.warning(
@@ -1477,16 +1716,12 @@ class JarvisAgent:
                     logger.info(f"Subagent {subagent_name} selected tools: {[tc.get('function', {}).get('name') for tc in tool_calls]}")
                     tool_executed = True
                     
-                    messages.append(choice_msg)
+                    messages.append(_sanitize_message_for_provider({**choice_msg, "tool_calls": tool_calls}))
                     
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
-                        try:
-                            import json
-                            tool_args = json.loads(tool_args_str)
-                        except Exception:
-                            tool_args = {}
+                        tool_args = _parse_tool_arguments(tool_args_str)
                             
                         log_activity(
                             activity_type="active",
@@ -1506,7 +1741,7 @@ class JarvisAgent:
         except Exception as e:
             latency_ms = int((time.time() - start_time) * 1000)
             error_msg = str(e)
-            logger.exception("Error during OpenRouter subagent chat completion call")
+            logger.exception("Error during LLM subagent chat completion call")
             response_text = "Прошу прощения, Сэр. Произошел сбой при обработке запроса субагента."
 
         # Add call record to global decision logs

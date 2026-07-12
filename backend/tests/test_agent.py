@@ -1,4 +1,5 @@
 import pytest
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from backend.agent import JarvisAgent, DEFAULT_SYSTEM_PROMPT
 from backend import database
@@ -201,6 +202,101 @@ def test_calculate_cost():
     cost_flash = calculate_cost("google/gemini-2.5-flash", 1000, 2000)
     assert cost_flash == pytest.approx((1000 * 0.0375 / 1_000_000) + (2000 * 0.15 / 1_000_000))
 
+def test_local_provider_message_sanitization_and_qwen_reasoning_cleanup():
+    from backend.agent import (
+        _clean_model_output,
+        _normalize_tool_calls,
+        _parse_tool_arguments,
+        _sanitize_message_for_provider,
+    )
+
+    assert _clean_model_output("<think>\nreasoning only") == ""
+    assert _clean_model_output("<think>hidden</think>\nГотово, Сэр.") == "Готово, Сэр."
+
+    raw_call = {
+        "id": "abc",
+        "function": {
+            "name": "get_weather",
+            "arguments": {"location": "Minsk", "days_ahead": 0},
+        },
+    }
+    normalized = _normalize_tool_calls([raw_call])
+    assert isinstance(normalized[0]["function"]["arguments"], str)
+    assert _parse_tool_arguments(normalized[0]["function"]["arguments"]) == {"location": "Minsk", "days_ahead": 0}
+
+    sanitized = _sanitize_message_for_provider({
+        "role": "assistant",
+        "content": None,
+        "reasoning_content": "private local-model trace",
+        "thinking": "qwen trace",
+        "tool_calls": [raw_call],
+    })
+    assert "reasoning_content" not in sanitized
+    assert "thinking" not in sanitized
+    assert sanitized["content"] == ""
+    assert sanitized["tool_calls"][0]["function"]["arguments"] == '{"location": "Minsk", "days_ahead": 0}'
+
+@pytest.mark.asyncio
+@patch("backend.tools.execute_tool")
+@patch("httpx.AsyncClient.post")
+async def test_respond_sanitizes_qwen_tool_messages_between_local_calls(mock_post, mock_execute_tool, agent):
+    agent.api_base = "http://localhost:11434/v1"
+    agent.model = "qwen3:6b"
+
+    tool_response = MagicMock()
+    tool_response.status_code = 200
+    tool_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "I should call weather.",
+                    "tool_calls": [
+                        {
+                            "id": "call_weather",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"location": "Minsk", "days_ahead": 0},
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 5},
+    }
+
+    final_response = MagicMock()
+    final_response.status_code = 200
+    final_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "<think>hidden</think>\nВ Минске сейчас прохладно, Сэр.",
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 30, "completion_tokens": 10},
+    }
+
+    mock_post.side_effect = [tool_response, final_response]
+    mock_execute_tool.return_value = '{"status": "mock", "temperature": "+20°C"}'
+
+    response = await agent.respond("Какая погода в Минске?", session_id="local_qwen_tool")
+
+    assert response == "В Минске сейчас прохладно, Сэр."
+    assert mock_execute_tool.call_args.args[1] == {"location": "Minsk", "days_ahead": 0}
+
+    second_payload = mock_post.call_args_list[1].kwargs["json"]
+    assistant_message = next(msg for msg in second_payload["messages"] if msg["role"] == "assistant")
+    assert "reasoning_content" not in assistant_message
+    assert "thinking" not in assistant_message
+    assert assistant_message["content"] == ""
+    assert json.loads(assistant_message["tool_calls"][0]["function"]["arguments"]) == {"location": "Minsk", "days_ahead": 0}
+
 @pytest.mark.asyncio
 async def test_classify_complexity():
     from backend.agent import classify_complexity
@@ -341,6 +437,70 @@ def test_translate_to_openai_response():
     assert json.loads(tool_calls[0]["function"]["arguments"]) == {"location": "Haifa"}
     assert openai_resp["usage"]["prompt_tokens"] == 15
     assert openai_resp["usage"]["completion_tokens"] == 25
+
+@pytest.mark.asyncio
+@patch("backend.tools.execute_tool")
+@patch("httpx.AsyncClient.post")
+async def test_respond_caps_tool_loop_iterations(mock_post, mock_execute_tool, agent):
+    """A model that keeps requesting tools must be stopped at the iteration cap
+    instead of looping forever (audit P0 runaway-loop guard)."""
+    agent.max_tool_iterations = 3
+
+    def _tool_call_response(*args, **kwargs):
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_loop",
+                        "type": "function",
+                        "function": {"name": "get_weather",
+                                     "arguments": {"location": "Minsk", "days_ahead": 0}},
+                    }],
+                }
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1},
+        }
+        return r
+
+    mock_post.side_effect = _tool_call_response
+    mock_execute_tool.return_value = '{"status": "ok"}'
+
+    response = await agent.respond("погода?", session_id="loop_cap")
+
+    # The loop must stop; the model was called at most cap+1 times.
+    assert mock_post.call_count <= agent.max_tool_iterations + 1
+    assert "остановлен" in response.lower() or response.strip()
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.post")
+async def test_respond_timeout_returns_graceful_message(mock_post, agent):
+    import httpx as _httpx
+    mock_post.side_effect = _httpx.TimeoutException("timed out")
+    response = await agent.respond("Привет", session_id="timeout_sess")
+    # No stack trace leaks to the user; a graceful message is returned.
+    assert "Traceback" not in response
+    assert response.strip()
+
+
+def test_calculate_cost_delegates_to_cost_module():
+    from backend.agent import calculate_cost
+    from backend.cost import calculate_cost as cost_calc
+    assert calculate_cost("google/gemini-2.5-pro", 1000, 2000) == cost_calc(
+        "google/gemini-2.5-pro", 1000, 2000
+    )
+
+
+def test_keyword_route_precedence():
+    from backend.agent import _keyword_route
+    assert _keyword_route("сравни Bitcoin и Ethereum") == "orchestrate"
+    assert _keyword_route("найди курс биткоина") == "agent"
+    assert _keyword_route("Привет, как дела?") == "direct"
+
 
 def test_suppress_tts(agent):
     session_id = "test_sess"

@@ -969,7 +969,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     saved_ids = agent_instance.last_saved_ids.get(chat_id, {})
                     user_msg_id = saved_ids.get("user")
                     assistant_msg_id = saved_ids.get("assistant")
-                    
+
+                    # Secret-free run diagnostics for the UI tech-details panel.
+                    run_meta = agent_instance.last_run_metadata.get(chat_id, {}) or {}
+                    meta = {
+                        "status": run_meta.get("status", "success"),
+                        "model": run_meta.get("model"),
+                        "provider": run_meta.get("provider"),
+                        "finish_reason": run_meta.get("finish_reason"),
+                        "request_id": run_meta.get("request_id"),
+                        "latency_ms": run_meta.get("latency_ms"),
+                        "input_tokens": run_meta.get("input_tokens"),
+                        "output_tokens": run_meta.get("output_tokens"),
+                        "tool_iterations": run_meta.get("tool_iterations"),
+                    }
+
                     # Broadcast agent response
                     await manager.broadcast({
                         "type": "chat_message",
@@ -978,7 +992,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "chat_id": chat_id,
                         "cost_usd": cost_usd,
                         "suppress_tts": suppress_tts,
-                        "id": assistant_msg_id
+                        "id": assistant_msg_id,
+                        "meta": meta,
                     })
                     
                     # Broadcast user message ID update

@@ -1,11 +1,24 @@
 import React from 'react';
 
+export interface LLMRunMeta {
+  status?: 'success' | 'tool_call' | 'empty' | 'refusal' | 'timeout' | 'provider_error' | 'parse_error' | string;
+  model?: string | null;
+  provider?: string | null;
+  finish_reason?: string | null;
+  request_id?: string | null;
+  latency_ms?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  tool_iterations?: number | null;
+}
+
 export interface ChatMessage {
   id?: number;
   role: 'user' | 'assistant' | 'system';
   content: string;
   chat_id?: string | number;
   cost_usd?: number;
+  meta?: LLMRunMeta;
 }
 
 export interface DecisionLog {

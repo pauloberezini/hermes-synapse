@@ -77,4 +77,51 @@ describe('ChatTab Component', () => {
     expect(screen.getAllByText('Main Terminal').length).toBeGreaterThan(0);
     expect(screen.getByText('chat_123')).toBeInTheDocument();
   });
+
+  it('disables send while generating', () => {
+    render(<ChatTab {...defaultProps} inputValue="hi" isGenerating={true} />);
+    const send = screen.getByRole('button', { name: /send/i });
+    expect(send).toBeDisabled();
+  });
+
+  it('shows a Stop button while generating and calls onStopGeneration', () => {
+    const onStopGeneration = vi.fn();
+    render(<ChatTab {...defaultProps} isGenerating={true} onStopGeneration={onStopGeneration} />);
+    const stop = screen.getByRole('button', { name: /stop/i });
+    fireEvent.click(stop);
+    expect(onStopGeneration).toHaveBeenCalled();
+  });
+
+  it('renders an empty state when there are no messages', () => {
+    render(<ChatTab {...defaultProps} messages={[]} />);
+    expect(screen.getByText(/no messages yet/i)).toBeInTheDocument();
+  });
+
+  it('shows an offline banner when disconnected', () => {
+    render(<ChatTab {...defaultProps} isConnected={false} />);
+    expect(screen.getByText(/offline/i)).toBeInTheDocument();
+  });
+
+  it('shows Retry action for an empty response and calls onRetryLast', () => {
+    const onRetryLast = vi.fn();
+    render(
+      <ChatTab
+        {...defaultProps}
+        hasLastUserMessage={true}
+        onRetryLast={onRetryLast}
+        messages={[{ role: 'assistant' as const, content: '', meta: { status: 'empty' } }]}
+      />
+    );
+    const retry = screen.getByRole('button', { name: /retry/i });
+    fireEvent.click(retry);
+    expect(onRetryLast).toHaveBeenCalled();
+  });
+
+  it('filters sessions by search query', () => {
+    render(<ChatTab {...defaultProps} />);
+    const search = screen.getByPlaceholderText(/search sessions/i);
+    fireEvent.change(search, { target: { value: 'zzz-no-match' } });
+    // dashboard is always kept; the other session is filtered out.
+    expect(screen.queryByText('chat_123')).not.toBeInTheDocument();
+  });
 });

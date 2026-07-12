@@ -44,7 +44,6 @@ import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
-import { SettingsTab } from './components/SettingsTab';
 import { AgentsAdminTab } from './components/AgentsAdminTab';
 import { OfficeTab } from './components/OfficeTab';
 
@@ -52,8 +51,9 @@ import { OfficeTab } from './components/OfficeTab';
 initFetchInterceptor();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'settings'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
+    if (saved === 'settings') return 'tools';
     return (saved as any) || 'chat';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -133,10 +133,13 @@ export default function App() {
   const subagentChatEndRef = useRef<HTMLDivElement | null>(null);
   const lastSentTimeRef = useRef<number>(0);
   const ttsEnabledRef = useRef(true);       // ref so WS handler always sees current value
+  const isGeneratingRef = useRef(false);    // ref so send guard sees current value
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
   const micStateRef = useRef<'off' | 'listening' | 'capturing' | 'transcribing'>('off');
+  // Last user message per session, used by the "Retry" action (P0 UX).
+  const lastUserMessageRef = useRef<Record<string, string>>({});
 
   const [subagents, setSubagents] = useState<AgentModel[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string>(() => {
@@ -185,7 +188,7 @@ export default function App() {
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
-    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'settings'].includes(activeTab)) {
+    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) {
       setSettingsOpen(true);
     }
   }, [activeTab]);
@@ -267,9 +270,37 @@ export default function App() {
     micStateRef.current = micState;
   }, [micState]);
 
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
+
+  // Draft persistence: restore the unsent draft when switching sessions (P0 UX).
+  useEffect(() => {
+    try {
+      const draft = localStorage.getItem(`hermes.draft.${currentChatId}`) || '';
+      setInputValue(draft);
+    } catch { /* localStorage unavailable — non-fatal */ }
+  }, [currentChatId]);
+
+  useEffect(() => {
+    try {
+      if (inputValue) {
+        localStorage.setItem(`hermes.draft.${currentChatId}`, inputValue);
+      } else {
+        localStorage.removeItem(`hermes.draft.${currentChatId}`);
+      }
+    } catch { /* localStorage unavailable — non-fatal */ }
+  }, [inputValue, currentChatId]);
+
   const sendChatText = useCallback((text: string) => {
     const command = text.trim();
     if (!command || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
+
+    // Block concurrent sends while a response is generating (P0 UX).
+    if (isGeneratingRef.current) {
+      console.warn('Response in progress; ignoring new submission.');
+      return false;
+    }
 
     const now = Date.now();
     if (now - lastSentTimeRef.current < 300) {
@@ -277,6 +308,7 @@ export default function App() {
       return false;
     }
     lastSentTimeRef.current = now;
+    lastUserMessageRef.current[currentChatIdRef.current] = command;
 
     window.speechSynthesis?.cancel();
     setIsSpeaking(false);
@@ -567,7 +599,8 @@ export default function App() {
                 role: data.role,
                 content: data.content,
                 chat_id: msgChatId,
-                cost_usd: data.cost_usd
+                cost_usd: data.cost_usd,
+                meta: data.meta
               }]);
             }
             if (data.role === 'assistant') {
@@ -1132,6 +1165,23 @@ export default function App() {
     }
   };
 
+  // Stop the current generation locally. The backend request continues, but the
+  // UI is unblocked so the user can send again; the late reply is still saved.
+  const handleStopGeneration = useCallback(() => {
+    setIsGenerating(false);
+    window.speechSynthesis?.cancel();
+    setIsSpeaking(false);
+    setPlayingMsgIndex(null);
+  }, []);
+
+  // Re-send the last user message for the current session (P0 UX "Retry").
+  const handleRetryLast = useCallback(() => {
+    const last = lastUserMessageRef.current[currentChatIdRef.current];
+    if (last) {
+      sendChatText(last);
+    }
+  }, [sendChatText]);
+
   const handleClearChat = async () => {
     if (!window.confirm('Sir, are you sure you want to completely clear the history of this session?')) return;
     
@@ -1431,10 +1481,11 @@ export default function App() {
           
           <button
             style={{
-              ...navStyle('settings'),
+              ...styles.navBtn,
+              ...(isSidebarCollapsed ? styles.navBtnCollapsed : {}),
               justifyContent: 'space-between',
               paddingRight: '12px',
-              ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'settings'].includes(activeTab)) ? styles.navBtnActive : {})
+              ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) ? styles.navBtnActive : {})
             }}
             onClick={() => setSettingsOpen(!settingsOpen)}
             title={t('navSettings')}
@@ -1465,15 +1516,6 @@ export default function App() {
               >
                 <Wrench size={18} />
                 <span>{t('navTools')}</span>
-              </button>
-
-              <button
-                style={navStyle('settings')}
-                onClick={() => { setActiveTab('settings'); setSidebarOpen(false); }}
-                title={t('navGeneral')}
-              >
-                <Settings size={18} />
-                <span>{t('navGeneral')}</span>
               </button>
 
               {!isSidebarCollapsed && <span className="nav-section-label">AGENTS</span>}
@@ -1599,6 +1641,11 @@ export default function App() {
             fetchChatSessions={fetchChatSessions}
             getSessionLabel={getSessionLabel}
             mainChatEndRef={mainChatEndRef}
+            t={t}
+            onStopGeneration={handleStopGeneration}
+            onRetryLast={handleRetryLast}
+            hasLastUserMessage={!!lastUserMessageRef.current[currentChatId]}
+            onChangeModel={() => setActiveTab('config')}
           />
         )}
 
@@ -1744,10 +1791,6 @@ export default function App() {
 
         {activeTab === 'mcp' && (
           <MCPTab />
-        )}
-
-        {activeTab === 'settings' && (
-          <SettingsTab t={t} />
         )}
 
       </main>

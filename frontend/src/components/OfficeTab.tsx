@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bed, BriefcaseBusiness, CheckCircle2, CircleDashed, Coffee, Cpu, Loader2, Monitor } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bed,
+  BriefcaseBusiness,
+  CheckCircle2,
+  CircleDashed,
+  Coffee,
+  Cpu,
+  Loader2,
+  MessageSquare,
+  Monitor,
+  MoreHorizontal,
+  Radio,
+  Video,
+} from 'lucide-react';
 import type { AgentModel } from '../types';
 import { styles } from '../styles';
 
@@ -105,6 +119,18 @@ function compactName(name: string) {
   return name.length > 18 ? `${name.slice(0, 16)}...` : name;
 }
 
+function hashString(value: string) {
+  return value.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
+function avatarVariant(agent: AgentModel, index: number) {
+  return Math.abs(hashString(agent.id || agent.name || `${index}`) + index) % 8;
+}
+
+function roomTheme(project: string, index: number) {
+  return Math.abs(hashString(project) + index) % 6;
+}
+
 function groupAgentsByProject(agents: AgentModel[], t: (key: string) => string): AgentProjectGroup[] {
   const groups = new Map<string, AgentModel[]>();
   agents.forEach(agent => {
@@ -142,16 +168,20 @@ function getProjectZones(agents: AgentModel[], t: (key: string) => string): Offi
 function PixelPerson({ agent, index, pose = 'work' }: { agent: AgentModel; index: number; pose?: AgentStatusKind }) {
   const status = agentStatus(agent);
   const color = statusColor(status);
-  const variant = index % 4;
+  const variant = avatarVariant(agent, index);
 
   return (
-    <div className={`pixel-person pixel-person-${variant} pixel-person-${pose}`} title={`${agent.name} - ${statusLabel(status)}`}>
+    <div className={`pixel-person pixel-person-${variant} pixel-person-${pose} pixel-person-${statusKind(status)}`} title={`${agent.name} - ${statusLabel(status)}`}>
+      <span className="pixel-shadow" />
       <span className="pixel-status" style={{ background: color, boxShadow: `0 0 8px ${color}` }} />
       <span className="pixel-head" />
       <span className="pixel-hair" />
+      <span className="pixel-face" />
       <span className="pixel-body" />
       <span className="pixel-arm pixel-arm-left" />
       <span className="pixel-arm pixel-arm-right" />
+      <span className="pixel-leg pixel-leg-left" />
+      <span className="pixel-leg pixel-leg-right" />
       {pose === 'idle' && <span className="pixel-coffee-cup" />}
       {pose === 'waiting' && <span className="pixel-wait-bubble">?</span>}
       {pose === 'error' && <span className="pixel-warning-bubble">!</span>}
@@ -161,7 +191,21 @@ function PixelPerson({ agent, index, pose = 'work' }: { agent: AgentModel; index
   );
 }
 
-function PixelDesk({ agent, index, selectChat, zone, t }: { agent: AgentModel; index: number; selectChat?: (chatId: string) => void; zone: 'work' | 'task'; t: (key: string) => string }) {
+function PixelDesk({
+  agent,
+  index,
+  selectChat,
+  onFocus,
+  zone,
+  t,
+}: {
+  agent: AgentModel;
+  index: number;
+  selectChat?: (chatId: string) => void;
+  onFocus?: (agent: AgentModel) => void;
+  zone: 'work' | 'task';
+  t: (key: string) => string;
+}) {
   const status = agentStatus(agent);
   const progress = Math.max(0, Math.min(100, agent.progress ?? 0));
   const color = statusColor(status);
@@ -171,7 +215,10 @@ function PixelDesk({ agent, index, selectChat, zone, t }: { agent: AgentModel; i
     <button
       type="button"
       className={`pixel-workstation pixel-workstation-${zone}`}
-      onClick={() => selectChat?.(agent.id)}
+      onClick={() => {
+        onFocus?.(agent);
+        selectChat?.(agent.id);
+      }}
       title={`${agent.name}: ${agent.current_task || agent.last_action || statusLabel(status, t)}`}
     >
       <div className="pixel-desk">
@@ -181,6 +228,7 @@ function PixelDesk({ agent, index, selectChat, zone, t }: { agent: AgentModel; i
         </div>
         <div className="pixel-keyboard" />
         <div className="pixel-mug" />
+        <div className="pixel-paper-stack" />
       </div>
       <PixelPerson agent={agent} index={index} pose={kind} />
       <div className="pixel-agent-label">
@@ -191,7 +239,19 @@ function PixelDesk({ agent, index, selectChat, zone, t }: { agent: AgentModel; i
   );
 }
 
-function PixelAgentSpot({ agent, index, selectChat, t }: { agent: AgentModel; index: number; selectChat?: (chatId: string) => void; t: (key: string) => string }) {
+function PixelAgentSpot({
+  agent,
+  index,
+  selectChat,
+  onFocus,
+  t,
+}: {
+  agent: AgentModel;
+  index: number;
+  selectChat?: (chatId: string) => void;
+  onFocus?: (agent: AgentModel) => void;
+  t: (key: string) => string;
+}) {
   const status = agentStatus(agent);
   const kind = statusKind(status);
   const color = statusColor(status);
@@ -200,7 +260,10 @@ function PixelAgentSpot({ agent, index, selectChat, t }: { agent: AgentModel; in
     <button
       type="button"
       className={`pixel-agent-spot pixel-agent-spot-${kind}`}
-      onClick={() => selectChat?.(agent.id)}
+      onClick={() => {
+        onFocus?.(agent);
+        selectChat?.(agent.id);
+      }}
       title={`${agent.name}: ${agent.current_task || agent.last_action || statusLabel(status, t)}`}
     >
       <PixelPerson agent={agent} index={index} pose={kind} />
@@ -247,7 +310,19 @@ function PixelZoneFurniture({ zone }: { zone: OfficeZoneKey }) {
   return <div className="pixel-wall-screen"><span /><span /></div>;
 }
 
-function PixelZone({ zone, selectChat, projectIndex, t }: { zone: OfficeZone; selectChat?: (chatId: string) => void; projectIndex: number; t: (key: string) => string }) {
+function PixelZone({
+  zone,
+  selectChat,
+  onFocus,
+  projectIndex,
+  t,
+}: {
+  zone: OfficeZone;
+  selectChat?: (chatId: string) => void;
+  onFocus?: (agent: AgentModel) => void;
+  projectIndex: number;
+  t: (key: string) => string;
+}) {
   const isDeskZone = zone.key === 'work' || zone.key === 'task';
 
   return (
@@ -264,9 +339,9 @@ function PixelZone({ zone, selectChat, projectIndex, t }: { zone: OfficeZone; se
         <div className={isDeskZone ? 'pixel-workstations' : 'pixel-zone-agents'}>
           {zone.agents.map((agent, index) => (
             isDeskZone ? (
-              <PixelDesk key={agent.id} agent={agent} index={index + projectIndex} selectChat={selectChat} zone={zone.key === 'task' ? 'task' : 'work'} t={t} />
+              <PixelDesk key={agent.id} agent={agent} index={index + projectIndex} selectChat={selectChat} onFocus={onFocus} zone={zone.key === 'task' ? 'task' : 'work'} t={t} />
             ) : (
-              <PixelAgentSpot key={agent.id} agent={agent} index={index + projectIndex} selectChat={selectChat} t={t} />
+              <PixelAgentSpot key={agent.id} agent={agent} index={index + projectIndex} selectChat={selectChat} onFocus={onFocus} t={t} />
             )
           ))}
         </div>
@@ -275,16 +350,51 @@ function PixelZone({ zone, selectChat, projectIndex, t }: { zone: OfficeZone; se
   );
 }
 
+function PixelAgentCard({ agent, selectChat, t }: { agent: AgentModel; selectChat?: (chatId: string) => void; t: (key: string) => string }) {
+  const status = agentStatus(agent);
+  const color = statusColor(status);
+  const progress = Math.max(0, Math.min(100, agent.progress ?? 0));
+
+  return (
+    <aside className="pixel-presence-card">
+      <div className="pixel-presence-profile">
+        <PixelPerson agent={agent} index={3} pose={statusKind(status)} />
+        <div>
+          <strong>{agent.name}</strong>
+          <span style={{ color }}>{statusLabel(status, t)}</span>
+        </div>
+      </div>
+      <div className="pixel-presence-actions">
+        <button type="button" onClick={() => selectChat?.(agent.id)}><MessageSquare size={15} /> Chat</button>
+        <span aria-label="Signal"><Radio size={15} /></span>
+        <span aria-label="Video"><Video size={15} /></span>
+        <span aria-label="More"><MoreHorizontal size={15} /></span>
+      </div>
+      <div className="pixel-presence-schedule">
+        <div>
+          <span>2 PM</span>
+          <strong>{agent.current_task || agent.last_action || t('noActiveTask')}</strong>
+          <em>{progress}%</em>
+        </div>
+        <div className="pixel-time-line" />
+      </div>
+    </aside>
+  );
+}
+
 function PixelOffice({ groups, selectChat, t }: { groups: AgentProjectGroup[]; selectChat?: (chatId: string) => void; t: (key: string) => string }) {
+  const [focusedAgent, setFocusedAgent] = useState<AgentModel | null>(null);
   const allAgents = groups.flatMap(group => group.agents);
   const workingCount = allAgents.filter(agent => ['work', 'task'].includes(statusKind(agentStatus(agent)))).length;
   const idleCount = allAgents.filter(agent => ['idle', 'done', 'waiting'].includes(statusKind(agentStatus(agent)))).length;
   const errorCount = allAgents.filter(agent => statusKind(agentStatus(agent)) === 'error').length;
   const offlineCount = allAgents.filter(agent => statusKind(agentStatus(agent)) === 'offline').length;
   const totalCount = groups.reduce((sum, group) => sum + group.agents.length, 0);
+  const displayAgent = focusedAgent || allAgents.find(agent => ['work', 'task'].includes(statusKind(agentStatus(agent)))) || allAgents[0] || null;
 
   return (
     <section className="pixel-office-shell">
+      <div className="pixel-office-backdrop" />
       <div className="pixel-office-header">
         <div>
           <div style={styles.sceneKicker}>PIXEL AI OFFICE</div>
@@ -300,6 +410,15 @@ function PixelOffice({ groups, selectChat, t }: { groups: AgentProjectGroup[]; s
       </div>
 
       <div className="pixel-office-map">
+        <div className="pixel-campus-rim" />
+        <div className="pixel-campus-corridor pixel-campus-corridor-main" />
+        <div className="pixel-campus-corridor pixel-campus-corridor-side" />
+        <div className="pixel-elevator"><span /><span /></div>
+        <div className="pixel-vending-machine"><span /><i /></div>
+        <div className="pixel-water-cooler"><span /></div>
+        <div className="pixel-clock" />
+        <div className="pixel-map-coordinate">2,031 x 1,705</div>
+        {displayAgent && <PixelAgentCard agent={displayAgent} selectChat={selectChat} t={t} />}
         {groups.length === 0 ? (
           <div className="pixel-empty-room">
             <BriefcaseBusiness size={28} />
@@ -307,7 +426,10 @@ function PixelOffice({ groups, selectChat, t }: { groups: AgentProjectGroup[]; s
           </div>
         ) : (
           groups.map((group, groupIndex) => (
-            <section key={group.project} className={`pixel-room pixel-room-${groupIndex % 4}`}>
+            <section key={group.project} className={`pixel-room pixel-room-${roomTheme(group.project, groupIndex)}`}>
+              <div className="pixel-room-wall pixel-room-wall-top" />
+              <div className="pixel-room-wall pixel-room-wall-left" />
+              <div className="pixel-room-door" />
               <div className="pixel-room-label">
                 <BriefcaseBusiness size={14} />
                 <span>{group.project}</span>
@@ -315,9 +437,11 @@ function PixelOffice({ groups, selectChat, t }: { groups: AgentProjectGroup[]; s
               <div className="pixel-room-floor">
                 <div className="pixel-plant pixel-plant-left" />
                 <div className="pixel-plant pixel-plant-right" />
+                <div className="pixel-bookshelf" />
+                <div className="pixel-window" />
                 <div className="pixel-project-zones">
                   {getProjectZones(group.agents, t).map(zone => (
-                    <PixelZone key={zone.key} zone={zone} selectChat={selectChat} projectIndex={groupIndex} t={t} />
+                    <PixelZone key={zone.key} zone={zone} selectChat={selectChat} onFocus={setFocusedAgent} projectIndex={groupIndex} t={t} />
                   ))}
                 </div>
               </div>
