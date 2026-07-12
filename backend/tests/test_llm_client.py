@@ -12,6 +12,7 @@ from backend.llm_client import (
     call_llm_normalized,
     mask_secrets,
     normalize_openai_response,
+    normalize_stream_chunks,
 )
 
 
@@ -223,3 +224,22 @@ def test_public_dict_has_no_raw_body():
     public = r.to_public_dict()
     assert "raw_response" not in public
     assert public["status"] == lc.STATUS_SUCCESS
+
+
+def test_normalize_streaming_chunks():
+    result = normalize_stream_chunks([
+        {"choices": [{"delta": {"content": "При"}, "finish_reason": None}]},
+        {"choices": [{"delta": {"content": "вет"}, "finish_reason": "stop"}],
+         "usage": {"prompt_tokens": 2, "completion_tokens": 2}},
+    ], provider="p", model="m")
+    assert result.status == lc.STATUS_SUCCESS
+    assert result.content == "Привет"
+    assert result.usage.total_tokens is None
+
+
+def test_interrupted_stream_is_provider_error():
+    result = normalize_stream_chunks([
+        {"choices": [{"delta": {"content": "partial"}, "finish_reason": None}]},
+    ], provider="p", model="m")
+    assert result.status == lc.STATUS_PROVIDER_ERROR
+    assert result.content == "partial"

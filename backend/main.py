@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -72,6 +73,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hermes.main")
 
+# In-flight chat tasks keyed by opaque client run id. This is process-local by
+# design; a multi-worker deployment must move cancellation to a shared run queue.
+ACTIVE_CHAT_RUNS: dict[str, asyncio.Task] = {}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
@@ -135,6 +141,14 @@ app = FastAPI(
     description="Backend services for the Jarvis AI Personal Assistant",
     lifespan=lifespan
 )
+
+@app.post("/api/runs/{run_id}/cancel")
+async def cancel_chat_run(run_id: str):
+    task = ACTIVE_CHAT_RUNS.get(run_id)
+    if task is None or task.done():
+        return {"status": "not_running", "run_id": run_id}
+    task.cancel()
+    return {"status": "cancelling", "run_id": run_id}
 
 from backend.auth import validate_session
 from fastapi.responses import JSONResponse
@@ -954,6 +968,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if msg.get("type") == "chat_message":
                     user_text = msg.get("content")
                     chat_id = msg.get("chat_id", "dashboard")
+                    run_id = str(msg.get("run_id") or "")[:128]
                     # Broadcast user message to all dashboard connections
                     await manager.broadcast({
                         "type": "chat_message",
@@ -962,7 +977,24 @@ async def websocket_endpoint(websocket: WebSocket):
                         "chat_id": chat_id
                     })
                     # Call agent
-                    response_text = await agent_instance.respond(user_text, session_id=chat_id)
+                    current_task = asyncio.current_task()
+                    if run_id and current_task:
+                        ACTIVE_CHAT_RUNS[run_id] = current_task
+                    try:
+                        response_text = await agent_instance.respond(user_text, session_id=chat_id)
+                    except asyncio.CancelledError:
+                        await manager.broadcast({
+                            "type": "chat_cancelled", "chat_id": chat_id,
+                            "run_id": run_id,
+                        })
+                        # The WebSocket handler itself is the registered task. Clear
+                        # cancellation so this connection can keep serving messages.
+                        if current_task and hasattr(current_task, "uncancel"):
+                            current_task.uncancel()
+                        continue
+                    finally:
+                        if run_id:
+                            ACTIVE_CHAT_RUNS.pop(run_id, None)
                     cost_usd = agent_instance.last_costs.get(chat_id, 0.0)
                     suppress_tts = agent_instance.check_and_clear_suppress_tts(chat_id)
                     

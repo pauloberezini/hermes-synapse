@@ -344,6 +344,65 @@ def normalize_openai_response(
     return resp
 
 
+def normalize_stream_chunks(
+    chunks: List[Dict[str, Any]], *, provider: str, model: str,
+    request_id: Optional[str] = None, latency_ms: Optional[int] = None,
+) -> NormalizedLLMResponse:
+    """Collapse captured OpenAI-compatible SSE chunks into the same contract.
+
+    Transport code can feed decoded ``data:`` payloads here. An interrupted
+    stream without a terminal finish reason is classified as ``provider_error``
+    instead of being mistaken for a successful empty response.
+    """
+    content: List[str] = []
+    reasoning: List[str] = []
+    tool_calls: Dict[int, Dict[str, Any]] = {}
+    finish_reason: Optional[str] = None
+    usage: Dict[str, Any] = {}
+    saw_choice = False
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        usage.update(chunk.get("usage") or {})
+        choices = chunk.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            continue
+        saw_choice = True
+        choice = choices[0]
+        finish_reason = choice.get("finish_reason") or finish_reason
+        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+        text = delta.get("content")
+        if isinstance(text, str):
+            content.append(text)
+        thought = delta.get("reasoning") or delta.get("reasoning_content")
+        if isinstance(thought, str):
+            reasoning.append(thought)
+        for call in delta.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            idx = int(call.get("index", 0))
+            current = tool_calls.setdefault(idx, {"id": call.get("id") or f"call_{idx}", "type": "function", "function": {"name": "", "arguments": ""}})
+            fn = call.get("function") or {}
+            current["function"]["name"] += fn.get("name") or ""
+            current["function"]["arguments"] += fn.get("arguments") or ""
+    if not saw_choice or finish_reason is None:
+        return NormalizedLLMResponse(
+            status=STATUS_PROVIDER_ERROR, provider=provider, model=model,
+            content="".join(content) or None, reasoning="".join(reasoning) or None,
+            request_id=request_id, latency_ms=latency_ms,
+            raw_response_available=bool(chunks),
+            error_message="Model stream ended before a terminal chunk.",
+        )
+    body = {
+        "choices": [{"message": {"content": "".join(content), "reasoning": "".join(reasoning) or None,
+                                    "tool_calls": list(tool_calls.values())},
+                     "finish_reason": finish_reason}],
+        "usage": usage,
+    }
+    return normalize_openai_response(body, provider=provider, model=model,
+                                     request_id=request_id, latency_ms=latency_ms)
+
+
 # ── Public async entry point ──────────────────────────────────────────────────
 
 async def call_llm_normalized(

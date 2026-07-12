@@ -134,6 +134,7 @@ export default function App() {
   const lastSentTimeRef = useRef<number>(0);
   const ttsEnabledRef = useRef(true);       // ref so WS handler always sees current value
   const isGeneratingRef = useRef(false);    // ref so send guard sees current value
+  const activeRunIdRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
@@ -313,10 +314,13 @@ export default function App() {
     window.speechSynthesis?.cancel();
     setIsSpeaking(false);
     setPlayingMsgIndex(null);
+    const runId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    activeRunIdRef.current = runId;
     wsRef.current.send(JSON.stringify({
       type: 'chat_message',
       content: command,
-      chat_id: currentChatIdRef.current
+      chat_id: currentChatIdRef.current,
+      run_id: runId
     }));
     setIsGenerating(true);
     return true;
@@ -604,6 +608,7 @@ export default function App() {
               }]);
             }
             if (data.role === 'assistant') {
+              activeRunIdRef.current = null;
               setIsGenerating(false);
               if (data.suppress_tts) {
                 window.speechSynthesis?.cancel();
@@ -629,6 +634,9 @@ export default function App() {
                 });
               }
             }
+          } else if (data.type === 'chat_cancelled') {
+            activeRunIdRef.current = null;
+            setIsGenerating(false);
           } else if (data.type === 'user_message_id_update') {
             const msgChatId = data.chat_id || 'dashboard';
             if (msgChatId === currentChatIdRef.current) {
@@ -1165,9 +1173,16 @@ export default function App() {
     }
   };
 
-  // Stop the current generation locally. The backend request continues, but the
-  // UI is unblocked so the user can send again; the late reply is still saved.
   const handleStopGeneration = useCallback(() => {
+    const runId = activeRunIdRef.current;
+    if (runId) {
+      const token = localStorage.getItem('jarvis_auth_token');
+      void fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      activeRunIdRef.current = null;
+    }
     setIsGenerating(false);
     window.speechSynthesis?.cancel();
     setIsSpeaking(false);

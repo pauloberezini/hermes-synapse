@@ -388,6 +388,13 @@ def _memory_key(prefix: str, value: str) -> str:
     return f"{prefix}_{digest}"
 
 
+def _safe_prompt_metadata(text: str) -> str:
+    """Non-reversible prompt metadata for operational logs."""
+    raw = text or ""
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"prompt[len={len(raw)}, sha256={digest}]"
+
+
 def _looks_sensitive(text: str) -> bool:
     lowered = text.lower()
     sensitive_markers = [
@@ -845,7 +852,7 @@ class JarvisAgent:
         log_activity(
             activity_type="active",
             source="Agent",
-            message=f"👤 Получен запрос от Сэра: '{user_message}'"
+            message=f"Получен пользовательский запрос: {_safe_prompt_metadata(user_message)}"
         )
 
         saved_memory_facts: List[Dict[str, str]] = []
@@ -1040,13 +1047,6 @@ class JarvisAgent:
             messages.append(msg)
         messages.append({"role": "user", "content": user_content})
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/pauloberezini/hermes",
-            "X-Title": "Vexa Personal Assistant"
-        }
-
         start_time = time.time()
         response_text = ""
         latency_ms = 0
@@ -1055,13 +1055,20 @@ class JarvisAgent:
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
-        retried_without_tools = False
         tool_iterations = 0
         last_finish_reason = None
         last_request_id = None
         response_status = "success"
 
         try:
+            from backend.llm_client import (
+                STATUS_EMPTY,
+                STATUS_PARSE_ERROR,
+                STATUS_PROVIDER_ERROR,
+                STATUS_REFUSAL,
+                STATUS_TIMEOUT,
+                call_llm_normalized,
+            )
             async with httpx.AsyncClient(timeout=self.request_timeout) as client:
                 while True:
                     # Hard cap on agent-loop iterations to prevent runaway
@@ -1079,168 +1086,61 @@ class JarvisAgent:
                                 "Пожалуйста, уточните запрос или разбейте его на части."
                             )
                         break
-                    payload = {
-                        "model": self.model,
-                        "messages": _sanitize_messages_for_provider(messages),
-                        "temperature": self.temperature,
-                        "max_tokens": self.tool_max_tokens if selected_tools else self.max_tokens,
-                    }
-                    if selected_tools:
-                        payload["tools"] = selected_tools
-                    
-                    is_openmodel = "openmodel.ai" in self.api_base
-                    url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
-                    actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
-                    
-                    response = await client.post(
-                        url,
-                        json=actual_payload,
-                        headers=headers
+                    normalized = await call_llm_normalized(
+                        api_base=self.api_base,
+                        api_key=self.api_key,
+                        model=self.model,
+                        messages=messages,
+                        temperature=self.temperature,
+                        max_tokens=self.tool_max_tokens if selected_tools else self.max_tokens,
+                        tools=selected_tools or None,
+                        timeout=self.request_timeout,
+                        # Once a tool ran it may have had side effects. Never replay
+                        # the following model request automatically.
+                        max_retries=0 if tool_executed else None,
+                        client=client,
                     )
-                    
-                    if response.status_code != 200:
-                        if (
-                            selected_tools
-                            and not retried_without_tools
-                            and _is_local_llm_endpoint(self.api_base)
-                            and _looks_like_tool_support_error(response.text)
-                        ):
-                            logger.warning(
-                                "Local LLM rejected tool-calling for session %s. Retrying once without tools. Error: %s",
-                                session_id,
-                                response.text[:500],
-                            )
-                            retried_without_tools = True
-                            selected_tools = []
-                            messages.append({
-                                "role": "user",
-                                "content": (
-                                    "The local model endpoint rejected tool-calling. "
-                                    "Answer directly without tools and clearly say if live data cannot be verified."
-                                )
-                            })
-                            continue
-                        error_msg = f"HTTP Error {response.status_code}: {response.text}"
-                        provider_name = _provider_display_name(self.api_base, is_openmodel)
-                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
-                        break
-                        
-                    raw_data = response.json()
-                    data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
-                    usage = data.get("usage", {})
-                    total_prompt_tokens += usage.get("prompt_tokens", 0)
-                    total_completion_tokens += usage.get("completion_tokens", 0)
-                    # Diagnostics: capture finish reason + provider request id
-                    # (secret-free) for tracing / UI tech-details (audit P0-4).
-                    try:
-                        _choices = data.get("choices") or []
-                        last_finish_reason = (_choices[0] or {}).get("finish_reason") if _choices else None
-                    except Exception:
-                        last_finish_reason = None
-                    last_request_id = (
-                        response.headers.get("x-request-id")
-                        or (raw_data.get("id") if isinstance(raw_data, dict) else None)
-                    )
+                    total_prompt_tokens += normalized.usage.input_tokens or 0
+                    total_completion_tokens += normalized.usage.output_tokens or 0
+                    last_finish_reason = normalized.finish_reason
+                    last_request_id = normalized.request_id
+                    response_status = normalized.status
 
-                    choice_msg = _extract_choice_message(data)
-                    
-                    tool_calls = _normalize_tool_calls(choice_msg.get("tool_calls"))
+                    if normalized.status in (STATUS_TIMEOUT, STATUS_PROVIDER_ERROR, STATUS_PARSE_ERROR):
+                        error_msg = normalized.error_message or normalized.status
+                        messages_by_status = {
+                            STATUS_TIMEOUT: "Модель не ответила вовремя. Повторите запрос или выберите другую модель.",
+                            STATUS_PROVIDER_ERROR: "Провайдер модели временно недоступен. Повторите запрос позже.",
+                            STATUS_PARSE_ERROR: "Провайдер вернул ответ в неподдерживаемом формате.",
+                        }
+                        response_text = messages_by_status[normalized.status]
+                        break
+
+                    tool_calls = normalized.tool_calls
                     if not tool_calls:
                         # Final text response reached
-                        raw_response_text = _extract_message_text(choice_msg.get("content"))
-                        response_text = _clean_model_output(raw_response_text)
+                        response_text = normalized.content or ""
 
-                        if _should_retry_empty_clean_response(response_text):
-                            logger.info("Vexa final response was empty after cleanup. Retrying for visible final answer...")
-                            try:
-                                retry_payload = {
-                                    "model": self.model,
-                                    "messages": _sanitize_messages_for_provider(messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}]),
-                                    "temperature": min(self.temperature, 0.3),
-                                    "max_tokens": self.max_tokens,
-                                }
-                                retry_url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
-                                retry_actual_payload = translate_to_anthropic_payload(retry_payload) if is_openmodel else retry_payload
-                                response_retry = await client.post(
-                                    retry_url,
-                                    json=retry_actual_payload,
-                                    headers=headers
-                                )
-                                if response_retry.status_code == 200:
-                                    raw_retry_data = response_retry.json()
-                                    retry_data = translate_to_openai_response(raw_retry_data) if is_openmodel else raw_retry_data
-                                    retry_usage = retry_data.get("usage", {})
-                                    total_prompt_tokens += retry_usage.get("prompt_tokens", 0)
-                                    total_completion_tokens += retry_usage.get("completion_tokens", 0)
-                                    retry_choice_msg = _extract_choice_message(retry_data)
-                                    response_text = _clean_model_output(_extract_message_text(retry_choice_msg.get("content")))
-                                else:
-                                    logger.warning(
-                                        "Final answer retry failed for session %s with status %s",
-                                        session_id,
-                                        response_retry.status_code
-                                    )
-                            except Exception as retry_err:
-                                logger.warning(
-                                    "Final answer retry raised for session %s: %s",
-                                    session_id,
-                                    retry_err
-                                )
-                        
-                        # Fallback: if Gemini returned empty text content after executing tools,
-                        # request a verbal confirmation so the user is never left with an empty bubble
-                        if not response_text.strip() and tool_executed:
-                            logger.info("Vexa returned empty response content after tool execution. Requesting final verbal confirmation...")
-                            
-                            # Check if any tool returned an error
-                            errors = []
-                            for msg in messages:
-                                if msg.get("role") == "tool":
-                                    try:
-                                        import json
-                                        content_obj = json.loads(msg.get("content", "{}"))
-                                        if "error" in content_obj:
-                                            errors.append(str(content_obj["error"]))
-                                    except Exception:
-                                        pass
-                            
-                            if errors:
-                                error_text = ", ".join(errors)
-                                fallback_prompt = (
-                                    f"При выполнении действий произошли ошибки: {error_text}. "
-                                    f"Пожалуйста, сообщите об этом Сэру в вежливом и лаконичном стиле Vexa, объяснив причину неудачи."
-                                )
-                            else:
-                                fallback_prompt = "Пожалуйста, подтвердите Сэру кратким отчетом в своем фирменном стиле Vexa, что действия успешно завершены."
-                                
-                            messages.append({
-                                "role": "user",
-                                "content": fallback_prompt
-                            })
-                            try:
-                                payload_fallback = {
-                                    "model": self.model,
-                                    "messages": _sanitize_messages_for_provider(messages),
-                                    "temperature": min(self.temperature, 0.5),
-                                    "max_tokens": self.max_tokens,
-                                }
-                                fallback_url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
-                                actual_payload_fallback = translate_to_anthropic_payload(payload_fallback) if is_openmodel else payload_fallback
-                                response_fallback = await client.post(
-                                    fallback_url,
-                                    json=actual_payload_fallback,
-                                    headers=headers
-                                )
-                                if response_fallback.status_code == 200:
-                                    raw_fallback_data = response_fallback.json()
-                                    fallback_data = translate_to_openai_response(raw_fallback_data) if is_openmodel else raw_fallback_data
-                                    response_text = _clean_model_output(_extract_message_text(_extract_choice_message(fallback_data).get("content")))
-                                    total_completion_tokens += fallback_data.get("usage", {}).get("completion_tokens", 0)
-                                else:
-                                    response_text = "Сэр, операция по вашему запросу выполнена успешно."
-                            except Exception as fallback_err:
-                                logger.error(f"Error during verbal confirmation fallback: {fallback_err}")
-                                response_text = "Сэр, операция по вашему запросу выполнена успешно."
+                        # A semantic empty retry is safe only before any tool with
+                        # possible side effects. It is separate from transport retry.
+                        if normalized.status == STATUS_EMPTY and not tool_executed:
+                            retry = await call_llm_normalized(
+                                api_base=self.api_base, api_key=self.api_key,
+                                model=self.model,
+                                messages=messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
+                                temperature=min(self.temperature, 0.3),
+                                max_tokens=self.max_tokens, timeout=self.request_timeout,
+                                max_retries=0, client=client,
+                            )
+                            total_prompt_tokens += retry.usage.input_tokens or 0
+                            total_completion_tokens += retry.usage.output_tokens or 0
+                            last_finish_reason = retry.finish_reason or last_finish_reason
+                            last_request_id = retry.request_id or last_request_id
+                            response_status = retry.status
+                            response_text = retry.content or ""
+
+                        if normalized.status == STATUS_REFUSAL and not response_text:
+                            response_text = "Провайдер отклонил запрос в соответствии с политикой безопасности."
 
                         if not response_text.strip():
                             logger.warning(
@@ -1285,7 +1185,7 @@ class JarvisAgent:
                     )
                     
                     # 1. Append assistant's tool-call response to messages thread
-                    messages.append(_sanitize_message_for_provider({**choice_msg, "tool_calls": tool_calls}))
+                    messages.append({"role": "assistant", "content": normalized.content or "", "tool_calls": tool_calls})
                     
                     # 2. Run each tool call and append the results
                     for tool_call in tool_calls:
@@ -1382,8 +1282,8 @@ class JarvisAgent:
             "success": error_msg is None,
             "error": error_msg,
             "prompt_tokens_estimate": sum(len(m.get("content") or "") for m in messages) // 4,
-            "user_message": user_message,
-            "assistant_response": response_text,
+            "user_message": _safe_prompt_metadata(user_message),
+            "assistant_response": _safe_prompt_metadata(response_text),
             "traces": []
         }
         

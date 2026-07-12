@@ -204,6 +204,27 @@ On first launch, Hermes seeds the following 9 agents into the database automatic
 
 ---
 
+## LLM diagnostics and retry policy
+
+All OpenAI-compatible provider responses are normalized into explicit statuses:
+`success`, `tool_call`, `empty`, `refusal`, `timeout`, `provider_error`, and
+`parse_error`. Chat technical details expose only safe metadata (model,
+provider request ID, finish reason, latency, tokens and cost), never raw provider
+bodies or API keys.
+
+Configure resilience with `LLM_REQUEST_TIMEOUT`, `LLM_MAX_RETRIES`, and
+`LLM_MAX_TOOL_ITERATIONS`. Transient transport failures use bounded exponential
+backoff with jitter. Automatic retry is disabled after a tool may have produced
+side effects. The chat Stop action cancels the active backend coroutine by run
+ID; in a multi-worker deployment this registry must be backed by a shared queue.
+
+For local checks, install the backend dev group and use `python -m pytest`. In
+`frontend`, use an actively supported Node release, then run `npm run lint`,
+`npm test`, and `npm run build`. Tests mock provider calls and do not use paid
+APIs. The architecture/threat audit is in
+`../docs/product-and-architecture-audit.md`; the P2 roadmap is in
+`../docs/product-roadmap.md`.
+
 ## 🛡️ License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
