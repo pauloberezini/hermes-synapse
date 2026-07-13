@@ -267,6 +267,11 @@ async def get_logs():
     from backend.database import get_decision_logs
     return get_decision_logs(100)
 
+@app.get("/api/metrics")
+async def get_metrics():
+    from backend.database import db_get_aggregated_metrics
+    return db_get_aggregated_metrics()
+
 class DocumentCreate(BaseModel):
     title: str
     content: str

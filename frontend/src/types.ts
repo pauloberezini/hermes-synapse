@@ -19,6 +19,9 @@ export interface DecisionLog {
   user_message: string;
   assistant_response: string;
   traces?: { timestamp: string; agent: string; action: string; message: string; status: string }[];
+  agent_id?: string;
+  completion_tokens_estimate?: number;
+  cost_usd?: number;
 }
 
 export interface ActivityLog {
