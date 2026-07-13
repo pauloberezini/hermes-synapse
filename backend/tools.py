@@ -971,7 +971,8 @@ TOOLS_SCHEMA = [
                 "properties": {
                     "title": {"type": "string", "description": "Краткое, информативное название заметки (имя файла без .md)"},
                     "content": {"type": "string", "description": "Содержимое заметки в Markdown-формате. Структурируйте через заголовки, списки, ссылки."},
-                    "folder": {"type": "string", "description": "Папка внутри хранилища. Определяйте по таксономии из описания. Можно вложенные: 'Research/AI'"}
+                    "folder": {"type": "string", "description": "Папка внутри хранилища. Определяйте по таксономии из описания. Можно вложенные: 'Research/AI'"},
+                    "source": {"type": "string", "description": "Исходный файл или ссылка, откуда взят контент (например, имя загруженного файла). Оставьте пустым если не применимо."}
                 },
                 "required": ["title", "content", "folder"]
             }
@@ -1202,7 +1203,7 @@ def get_github_summary(repo_name: Optional[str] = None, request_type: str = "all
             if not output:
                 return f"Не удалось получить данные для репозитория {repo}."
             return f"## Сводка репозитория {repo}:\n\n" + "\n\n".join(output)
-            
+
     try:
         return _run_async(_fetch())
     except Exception as e:
@@ -1218,7 +1219,7 @@ def get_rss_digest(feed_source: str = "Habr", limit: int = 5) -> str:
         "lenta": "https://lenta.ru/rss/news"
     }
     url = feeds.get(feed_source.lower().strip(), feeds["habr"])
-    
+
     async def _fetch():
         import xml.etree.ElementTree as ET
         from bs4 import BeautifulSoup
@@ -1381,18 +1382,38 @@ def read_obsidian_note(note_path: str) -> str:
     return json.dumps({"path": note_path, "content": content}, ensure_ascii=False)
 
 
-def create_obsidian_note(title: str, content: str, folder: str = "Jarvis") -> str:
+def create_obsidian_note(title: str, content: str, folder: str = "Jarvis", source: str = "") -> str:
     """Create a new note in the Obsidian vault under the specified folder."""
     import re
     # Sanitize filename
     safe_title = re.sub(r'[<>:"/\\|?*]', '-', title).strip()
     note_path = f"{folder}/{safe_title}.md" if folder else f"{safe_title}.md"
 
-    # Add a YAML frontmatter timestamp
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M")
-    full_content = f"---\ncreated: {now}\ncreated_by: Jarvis\n---\n\n# {title}\n\n{content}"
+    # Build YAML frontmatter — rich enough for Dataview / Templater plugins
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+    # UTC+3 (Israel/Jerusalem) with ISO offset — portable and timezone-aware
+    tz_offset = timedelta(hours=3)
+    now_local = now_utc.astimezone(timezone(tz_offset))
+    created_ts = now_local.strftime("%Y-%m-%dT%H:%M:%S%z")  # e.g. 2026-07-13T12:00:00+0300
+
+    # Derive tags from folder hierarchy: "Research/AI" → ["research", "ai"]
+    auto_tags = [seg.lower().replace(" ", "-") for seg in folder.split("/") if seg]
+    tags_yaml = "\n".join(f"  - {t}" for t in auto_tags)
+
+    source_line = f'source: "{source}"\n' if source else ""
+    aliases_line = f'aliases:\n  - "{title}"\n' if title else ""
+
+    frontmatter = (
+        f"---\n"
+        f"created: {created_ts}\n"
+        f"created_by: Jarvis\n"
+        f"{source_line}"
+        f"tags:\n{tags_yaml}\n"
+        f"{aliases_line}"
+        f"---\n"
+    )
+    full_content = f"{frontmatter}\n# {title}\n\n{content}"
 
     async def _create():
         from backend.obsidian import create_note
@@ -1594,7 +1615,8 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         return create_obsidian_note(
             title=arguments.get("title", ""),
             content=arguments.get("content", ""),
-            folder=arguments.get("folder", "Jarvis")
+            folder=arguments.get("folder", "Jarvis"),
+            source=arguments.get("source", "")
         )
 
     elif name == "sync_obsidian_vault":

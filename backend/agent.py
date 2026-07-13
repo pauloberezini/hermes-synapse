@@ -208,6 +208,7 @@ CRITICAL RULES FOR CREATING SUB-AGENTS:
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
   * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1` model.
   * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `google/gemini-2.5-flash` model.
+  * For sub-agents managing document indexing, processing research papers, knowledge curation, or RAG tasks (which require a large context window and robust tool calling) — choose the `google/gemini-2.5-flash` model.
   * For simple tasks, quick web search, RSS news reading, or basic Q&A — choose the `deepseek/deepseek-v4-flash` model.
   * For general intellectual and text tasks of high complexity (sophisticated assistant) — choose the `google/gemini-2.5-pro` model.
 
@@ -685,6 +686,8 @@ class JarvisAgent:
         )
 
         history = self.get_history(session_id)
+        from backend import database as db
+        db.save_message(session_id, "user", user_message)
         
         # Search relevant memory chunks in Qdrant (RAG)
         from backend import rag

@@ -96,6 +96,8 @@ export default function App() {
 
   const [uploads, setUploads] = useState<{ name: string; size_bytes: number }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  // File attached to the current chat message (text context, not dataset upload)
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTTSEnabled, setIsTTSEnabled] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -908,33 +910,6 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    try {
-      const res = await fetchWithAuth('http://localhost:8000/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      if (res.ok) {
-        fetchUploads();
-        alert(`File ${file.name} successfully uploaded.`);
-      } else {
-        alert('Error uploading file.');
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Backend connection error during file upload.');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
   const handleCancelTimer = (id: string) => {
     fetchWithAuth(`http://localhost:8000/api/timers/${id}`, {
       method: 'DELETE',
@@ -1157,6 +1132,69 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [messages, currentChatId, activeTab]);
 
+  // Handle attaching a file to the current chat message.
+  // – PDF: sent to backend /api/parse-pdf for server-side text extraction (limit 500 KB text).
+  // – Other text formats: read client-side via FileReader (limit 150 KB).
+  const handleChatFileAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ''; // reset so the same file can be reselected after removal
+
+    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
+      // ── PDF path: server-side extraction ─────────────────────────────────────
+      const MAX_PDF_MB = 25; // raw file size guard before sending to server
+      if (file.size > MAX_PDF_MB * 1024 * 1024) {
+        alert(`PDF "${file.name}" exceeds ${MAX_PDF_MB} MB. Please use a smaller file.`);
+        return;
+      }
+      setIsUploading(true);
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetchWithAuth('http://localhost:8000/api/parse-pdf', {
+          method: 'POST',
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+          alert(`PDF parse failed: ${err.detail}`);
+          return;
+        }
+        const data = await res.json();
+        setAttachedFile({
+          name: file.name,
+          content: data.text,
+          type: 'pdf',
+          pages: data.pages,
+          truncated: data.truncated,
+        });
+      } catch (err) {
+        console.error('PDF parse error:', err);
+        alert('Could not connect to backend to parse PDF.');
+      } finally {
+        setIsUploading(false);
+      }
+    } else {
+      // ── Text path: client-side FileReader ────────────────────────────────────
+      const MAX_TEXT_BYTES = 150 * 1024; // 150 KB
+      if (file.size > MAX_TEXT_BYTES) {
+        alert(`File "${file.name}" is too large for inline chat context (max 150 KB). Use the Memory tab to index it into the knowledge base instead.`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const content = evt.target?.result as string;
+        setAttachedFile({ name: file.name, content, type: 'text' });
+      };
+      reader.onerror = () => {
+        alert(`Failed to read file "${file.name}".`);
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+  };
+
   // Send message through WebSocket
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1173,14 +1211,20 @@ export default function App() {
     setIsSpeaking(false);
     setPlayingMsgIndex(null);
 
-    wsRef.current.send(JSON.stringify({
+    const payload: Record<string, unknown> = {
       type: 'chat_message',
       content: inputValue,
       chat_id: currentChatId
-    }));
-    
+    };
+    if (attachedFile) {
+      payload.attached_file = attachedFile;
+    }
+
+    wsRef.current.send(JSON.stringify(payload));
+
     setIsGenerating(true);
     setInputValue('');
+    setAttachedFile(null);
   };
 
   const handleClearChat = async () => {
@@ -1748,10 +1792,12 @@ export default function App() {
             config={config}
             isConnected={isConnected}
             isUploading={isUploading}
+            attachedFile={attachedFile}
+            setAttachedFile={setAttachedFile}
             speakText={speakText}
             handleClearChat={handleClearChat}
             handleSendMessage={handleSendMessage}
-            handleFileUpload={handleFileUpload}
+            handleChatFileAttach={handleChatFileAttach}
             selectChat={selectChat}
             handleCreateNewSession={handleCreateNewSession}
             fetchChatSessions={fetchChatSessions}

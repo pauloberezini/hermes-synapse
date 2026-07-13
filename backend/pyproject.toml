@@ -25,6 +25,7 @@ dependencies = [
     "google-auth-httplib2>=0.2.0",
     "google-api-python-client>=2.95.0",
     "todoist-api-python>=2.1.3",
+    "pypdf>=4.0.0",
 ]
 
 [dependency-groups]
@@ -37,6 +38,16 @@ dev = [
 postgres = [
     "sqlalchemy>=2.0",
     "psycopg2-binary>=2.9",
+]
+# Optional: CCXT crypto market data (open-source, no API key for public endpoints)
+# Activate with: uv sync --group market-ccxt
+market-ccxt = [
+    "ccxt>=4.0",
+]
+# Optional: Alpaca US equity market data (requires free Alpaca account)
+# Activate with: uv sync --group market-alpaca
+market-alpaca = [
+    "alpaca-py>=0.8",
 ]
 
 [tool.pytest.ini_options]

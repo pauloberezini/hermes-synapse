@@ -16,7 +16,9 @@ import {
   Copy,
   Cpu,
   Lock,
-  Edit2
+  Edit2,
+  FileText,
+  X as XIcon
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig, ChatSession } from '../types';
 import { styles } from '../styles';
@@ -41,11 +43,14 @@ interface ChatTabProps {
   config: SystemConfig;
   isConnected: boolean;
   isUploading: boolean;
-  
+  // File attachment for chat context
+  attachedFile: { name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null;
+  setAttachedFile: (file: { name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null) => void;
+  handleChatFileAttach: (e: React.ChangeEvent<HTMLInputElement>) => void;
+
   speakText: (text: string, index: number) => void;
   handleClearChat: () => void;
   handleSendMessage: (e: React.FormEvent) => void;
-  handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   selectChat: (chatId: string) => void;
   handleCreateNewSession: () => void;
   fetchChatSessions: () => void;
@@ -75,10 +80,12 @@ export function ChatTab({
   config,
   isConnected,
   isUploading,
+  attachedFile,
+  setAttachedFile,
+  handleChatFileAttach,
   speakText,
   handleClearChat,
   handleSendMessage,
-  handleFileUpload,
   selectChat,
   handleCreateNewSession,
   fetchChatSessions,
@@ -608,59 +615,116 @@ export function ChatTab({
             <div ref={mainChatEndRef} />
           </div>
 
-          {/* Chat Input */}
-          <form onSubmit={handleSendMessage} style={styles.chatInputRow}>
-            <label style={{ ...styles.uploadBtn, cursor: (!isConnected || isUploading) ? 'not-allowed' : 'pointer' }}>
-              <input 
-                type="file" 
-                onChange={handleFileUpload} 
-                style={{ display: 'none' }} 
-                disabled={!isConnected || isUploading}
-                accept=".csv,.xlsx,.xls"
-              />
-              <Paperclip size={18} style={{ color: (!isConnected || isUploading) ? 'var(--text-dim)' : 'var(--accent-cyan)' }} />
-            </label>
-            <textarea 
-              ref={textareaRef}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder={isUploading ? "Uploading file..." : "Enter command or request for Jarvis, Sir..."}
-              style={styles.chatInput}
-              className="form-input"
-              disabled={!isConnected || isUploading}
-              rows={1}
-            />
-            {isSpeaking && (
-              <button 
-                type="button" 
-                onClick={() => {
-                  window.speechSynthesis?.cancel();
-                  setIsSpeaking(false);
-                  setPlayingMsgIndex(null);
-                }}
-                className="btn-primary"
-                style={{
-                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                  color: '#ef4444',
-                  backgroundColor: 'rgba(239, 68, 68, 0.05)'
-                }}
-                title="Interrupt current assistant speech"
-              >
-                <Square size={14} fill="currentColor" />
-                <span>Interrupt speech</span>
-              </button>
+          {/* Chat Input Area */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {/* Attached file badge */}
+            {attachedFile && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '5px 12px',
+                background: 'rgba(0, 240, 255, 0.06)',
+                borderTop: '1px solid rgba(0, 240, 255, 0.18)',
+                borderLeft: '1px solid rgba(0, 240, 255, 0.18)',
+                borderRight: '1px solid rgba(0, 240, 255, 0.18)',
+                borderRadius: '8px 8px 0 0',
+                fontSize: '0.78rem',
+                color: 'var(--accent-cyan)',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                <FileText size={13} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }}>
+                  {attachedFile.name}
+                </span>
+                <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem', flexShrink: 0 }}>
+                  {attachedFile.pages
+                    ? `${attachedFile.pages} pages${attachedFile.truncated ? ' (truncated)' : ''}`
+                    : `(${Math.round(new TextEncoder().encode(attachedFile.content).length / 1024 * 10) / 10} KB)`
+                  }
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAttachedFile(null)}
+                  title="Remove attachment"
+                  style={{
+                    marginLeft: 'auto',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-dim)',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <XIcon size={13} />
+                </button>
+              </div>
             )}
-            <button type="submit" className="btn-primary" disabled={!isConnected || isUploading || !inputValue.trim()}>
-              <Send size={16} />
-              <span>Send</span>
-            </button>
-          </form>
+
+            {/* Chat Input Row */}
+            <form onSubmit={handleSendMessage} style={{
+              ...styles.chatInputRow,
+              ...(attachedFile ? { borderRadius: '0 0 8px 8px', borderTop: 'none' } : {})
+            }}>
+              {/* Text-file attach button (paperclip) */}
+              <label
+                title="Attach a text file as chat context (.md, .txt, .json, .py, …)"
+                style={{ ...styles.uploadBtn, cursor: (!isConnected || isUploading) ? 'not-allowed' : 'pointer' }}
+              >
+                <input
+                  type="file"
+                  onChange={handleChatFileAttach}
+                  style={{ display: 'none' }}
+                  disabled={!isConnected || isUploading}
+                  accept=".md,.txt,.json,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.sh,.csv,.xml,.html,.css,.env,.toml,.ini,.log,.pdf"
+                />
+                <Paperclip size={18} style={{ color: (!isConnected || isUploading) ? 'var(--text-dim)' : (attachedFile ? '#10b981' : 'var(--accent-cyan)') }} />
+              </label>
+              <textarea
+                ref={textareaRef}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={isUploading ? "Uploading file..." : attachedFile ? `Ask Jarvis about "${attachedFile.name}"...` : "Enter command or request for Jarvis, Sir..."}
+                style={styles.chatInput}
+                className="form-input"
+                disabled={!isConnected || isUploading}
+                rows={1}
+              />
+              {isSpeaking && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.speechSynthesis?.cancel();
+                    setIsSpeaking(false);
+                    setPlayingMsgIndex(null);
+                  }}
+                  className="btn-primary"
+                  style={{
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    color: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.05)'
+                  }}
+                  title="Interrupt current assistant speech"
+                >
+                  <Square size={14} fill="currentColor" />
+                  <span>Interrupt speech</span>
+                </button>
+              )}
+              <button type="submit" className="btn-primary" disabled={!isConnected || isUploading || !inputValue.trim()}>
+                <Send size={16} />
+                <span>Send</span>
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </div>
