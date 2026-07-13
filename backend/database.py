@@ -46,36 +46,15 @@ class DatabaseBackend(ABC):
         """Yield a DB-API 2.0 compatible connection (auto-commit/close on exit)."""
         ...
 
-    def execute(self, sql: str, params: tuple = ()) -> list:
-        """Execute a single statement and return all rows."""
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            conn.commit()
-            return cur.fetchall()
+    @abstractmethod
+    def translate_placeholder(self, sql: str) -> str:
+        """Translate SQLite '?' placeholder to backend placeholder (e.g. %s)."""
+        ...
 
-    def executemany(self, sql: str, params_list: list) -> None:
-        """Execute a statement for multiple parameter tuples."""
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.executemany(sql, params_list)
-            conn.commit()
-
-    def lastrowid(self, sql: str, params: tuple = ()) -> Optional[int]:
-        """Execute an INSERT and return the last inserted row id."""
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            conn.commit()
-            return cur.lastrowid
-
-    def rowcount(self, sql: str, params: tuple = ()) -> int:
-        """Execute a DELETE/UPDATE and return affected row count."""
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            conn.commit()
-            return cur.rowcount
+    @abstractmethod
+    def init_schema(self) -> None:
+        """Create tables, indexes, and run migrations for this backend."""
+        ...
 
 
 class SQLiteBackend(DatabaseBackend):
@@ -89,6 +68,12 @@ class SQLiteBackend(DatabaseBackend):
         finally:
             conn.close()
 
+    def translate_placeholder(self, sql: str) -> str:
+        return sql
+
+    def init_schema(self) -> None:
+        _init_sqlite_schema()
+
 
 class PostgresBackend(DatabaseBackend):
     """Optional PostgreSQL backend — activated via DATABASE_URL env var.
@@ -99,13 +84,12 @@ class PostgresBackend(DatabaseBackend):
 
     def __init__(self, url: str):
         try:
-            from sqlalchemy import create_engine, text  # noqa: F401
+            from sqlalchemy import create_engine  # noqa: F401
         except ImportError as e:
             raise ImportError(
                 "PostgreSQL backend requires SQLAlchemy and psycopg2.\n"
                 "Install with: uv add sqlalchemy psycopg2-binary"
             ) from e
-        from sqlalchemy import create_engine
         self._engine = create_engine(url, pool_pre_ping=True)
 
     @contextmanager
@@ -120,6 +104,12 @@ class PostgresBackend(DatabaseBackend):
             raise
         finally:
             raw_conn.close()
+
+    def translate_placeholder(self, sql: str) -> str:
+        return sql.replace("?", "%s")
+
+    def init_schema(self) -> None:
+        _init_postgres_schema()
 
 
 def _create_backend() -> DatabaseBackend:
@@ -140,8 +130,8 @@ def _create_backend() -> DatabaseBackend:
     return SQLiteBackend()
 
 
-# Module-level singleton backend — replaced in tests via monkeypatch
-_backend: DatabaseBackend = None  # type: ignore[assignment]
+# Module-level singleton backend
+_backend: Optional[DatabaseBackend] = None
 
 
 def _get_backend() -> DatabaseBackend:
@@ -151,21 +141,87 @@ def _get_backend() -> DatabaseBackend:
         _backend = _create_backend()
     return _backend
 
+
+def _set_backend_for_tests(backend: Optional[DatabaseBackend]) -> None:
+    """Test-only hook to inject or reset the backend singleton."""
+    global _backend
+    _backend = backend
+
+
+# ---------------------------------------------------------------------------
+# Module-level helper execution functions (SQL parameter translation handled)
+# ---------------------------------------------------------------------------
+
+def _execute(sql: str, params: tuple = ()) -> list:
+    backend = _get_backend()
+    sql_translated = backend.translate_placeholder(sql)
+    with backend.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(sql_translated, params)
+        conn.commit()
+        try:
+            return cur.fetchall()
+        except Exception:
+            return []
+
+
+def _executemany(sql: str, params_list: list) -> None:
+    backend = _get_backend()
+    sql_translated = backend.translate_placeholder(sql)
+    with backend.connect() as conn:
+        cur = conn.cursor()
+        cur.executemany(sql_translated, params_list)
+        conn.commit()
+
+
+def _lastrowid(sql: str, params: tuple = ()) -> Optional[int]:
+    backend = _get_backend()
+    sql_translated = backend.translate_placeholder(sql)
+    if isinstance(backend, PostgresBackend):
+        # PostgreSQL uses returning clause for insert ID
+        if "returning" not in sql_translated.lower():
+            sql_translated = sql_translated.rstrip(";") + " RETURNING id"
+        with backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql_translated, params)
+            row = cur.fetchone()
+            conn.commit()
+            return row[0] if row else None
+    else:
+        with backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql_translated, params)
+            last_id = cur.lastrowid
+            conn.commit()
+            return last_id
+
+
+def _rowcount(sql: str, params: tuple = ()) -> int:
+    backend = _get_backend()
+    sql_translated = backend.translate_placeholder(sql)
+    with backend.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(sql_translated, params)
+        conn.commit()
+        return cur.rowcount
+
+
+
+# ---------------------------------------------------------------------------
+# Pluggable schema creation & migrations
+# ---------------------------------------------------------------------------
+
 def init_db():
     """Initializes the database and creates the tables if they don't exist."""
-    # Ensure data directory exists
+    _get_backend().init_schema()
+
+
+def _init_sqlite_schema():
+    logger.info(f"Initializing SQLite database (path={DB_PATH})")
     os.makedirs(DB_DIR, exist_ok=True)
-
-    # Reset the backend singleton so the next call re-reads DATABASE_URL.
-    # This is important when init_db() is called after env vars are changed
-    # (e.g. in tests using tmp_path fixtures).
-    global _backend
-    _backend = None
-
-    logger.info(f"Initializing database (path={DB_PATH})")
     conn = _get_conn()
     cursor = conn.cursor()
-    
+
     # Create chat messages table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
@@ -177,20 +233,19 @@ def init_db():
             cost_usd REAL DEFAULT 0.0
         )
     """)
-    
+
     # Create index for fast session lookups
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_session_id ON messages (session_id)
     """)
-    
+
     # Run migration to add cost_usd if table existed before
     try:
         cursor.execute("ALTER TABLE messages ADD COLUMN cost_usd REAL DEFAULT 0.0")
         logger.info("Migrated messages table to include cost_usd column.")
     except sqlite3.OperationalError:
-        # Column already exists
         pass
-        
+
     # Create decision logs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS decision_logs (
@@ -207,7 +262,7 @@ def init_db():
             traces TEXT NOT NULL
         )
     """)
-    
+
     # Create activity logs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS activity_logs (
@@ -244,7 +299,6 @@ def init_db():
             cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
             logger.info(f"Added column {col} to subagents table.")
         except sqlite3.OperationalError:
-            # Column already exists
             pass
 
     # Pre-populate default subagents if table is empty
@@ -252,113 +306,14 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         logger.info("Pre-populating default subagents.")
         default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
-        default_agents = [
-            (
-                "jarvis", "Jarvis (Main)",
-                "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
-                default_model, "orchestrator", None, "", 100, 350
-            ),
-            (
-                "research", "Search Agent",
-                "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
-                default_model, "agent", "jarvis", "web_search", 450, 100
-            ),
-            (
-                "code", "Code Engineer",
-                "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
-                default_model, "agent", "jarvis", "python_sandbox", 450, 220
-            ),
-            (
-                "analyst", "Data Analyst",
-                "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
-                default_model, "agent", "jarvis", "python_sandbox", 450, 340
-            ),
-            (
-                "scheduler", "Scheduler",
-                "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
-                default_model, "agent", "jarvis", "timers_alarms", 450, 460
-            ),
-            (
-                "monitor", "Market Monitor",
-                "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
-                default_model, "agent", "jarvis", "market_monitor", 450, 580
-            ),
-            (
-                "planner", "Daily Planner",
-                "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
-                default_model, "agent", "jarvis", "google_calendar,todoist_sync", 450, 700
-            ),
-            (
-                "sysops", "Sys Ops",
-                "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
-                default_model, "agent", "jarvis", "shell_execution", 450, 820
-            ),
-            (
-                "football", "Football Analyst",
-                "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
-                default_model, "agent", "jarvis", "web_search", 450, 940
-            ),
-        ]
+        default_agents = _get_default_agents(default_model)
         cursor.executemany("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [t + (0.7,) for t in default_agents])
         logger.info("Successfully seeded default agents.")
     else:
-        # Migration: upsert new default agents that don't exist yet,
-        # and update existing ones if they still have old prompts.
-        upserts = [
-            ("jarvis", "Jarvis (Main)",
-             "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
-             "orchestrator", None, "", 100, 350),
-            ("research", "Search Agent",
-             "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
-             "agent", "jarvis", "web_search", 450, 100),
-            ("code", "Code Engineer",
-             "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
-             "agent", "jarvis", "python_sandbox", 450, 220),
-            ("analyst", "Data Analyst",
-             "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
-             "agent", "jarvis", "python_sandbox", 450, 340),
-            ("scheduler", "Scheduler",
-             "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
-             "agent", "jarvis", "timers_alarms", 450, 460),
-            ("monitor", "Market Monitor",
-             "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
-             "agent", "jarvis", "market_monitor", 450, 580),
-            ("planner", "Daily Planner",
-             "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
-             "agent", "jarvis", "google_calendar,todoist_sync", 450, 700),
-            ("sysops", "Sys Ops",
-             "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
-             "agent", "jarvis", "shell_execution", 450, 820),
-            ("football", "Football Analyst",
-             "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
-             "agent", "jarvis", "web_search", 450, 940),
-        ]
-        default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
-        for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
-            cursor.execute("""
-                INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    system_prompt = excluded.system_prompt,
-                    agent_type = excluded.agent_type,
-                    parent_id = excluded.parent_id,
-                    skills = excluded.skills
-                WHERE subagents.system_prompt IN (
-                    'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
-                    'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
-                    'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
-                    'You are a research agent. Search for information on the internet using web_search.',
-                    'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
-                    'You are a Code Engineer. Write and execute Python scripts.',
-                    'Вы — Аналитик-Визуализатор. Создавайте графики.',
-                    'You are an Analyst-Visualizer. Create charts.'
-                )
-            """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
-        logger.info("Checked and migrated default subagents.")
+        _migrate_existing_subagents_sqlite(cursor)
 
     # Create subagent memory table
     cursor.execute("""
@@ -404,12 +359,290 @@ def init_db():
 
     conn.commit()
     conn.close()
-    logger.info("Database initialized successfully.")
+    logger.info("SQLite Database initialized successfully.")
+
+
+def _init_postgres_schema():
+    logger.info("Initializing PostgreSQL database schema")
+    backend = _get_backend()
+    with backend.connect() as conn:
+        cursor = conn.cursor()
+
+        # Create chat messages table (PostgreSQL uses SERIAL)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                cost_usd REAL DEFAULT 0.0
+            )
+        """)
+
+        # Create index for fast session lookups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_id ON messages (session_id)
+        """)
+
+        # Create decision logs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS decision_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                success INTEGER NOT NULL,
+                error TEXT,
+                prompt_tokens_estimate INTEGER NOT NULL,
+                user_message TEXT NOT NULL,
+                assistant_response TEXT NOT NULL,
+                traces TEXT NOT NULL
+            )
+        """)
+
+        # Create activity logs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                message TEXT NOT NULL,
+                token_cost REAL DEFAULT 0.0
+            )
+        """)
+
+        # Create subagents table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subagents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                system_prompt TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                agent_type TEXT DEFAULT 'agent',
+                parent_id TEXT,
+                skills TEXT DEFAULT '',
+                x INTEGER DEFAULT 100,
+                y INTEGER DEFAULT 100,
+                temperature REAL DEFAULT 0.7
+            )
+        """)
+
+        # PostgreSQL Migration helper: verify and add subagents columns
+        for col, definition in [
+            ("agent_type", "TEXT DEFAULT 'agent'"),
+            ("parent_id", "TEXT"),
+            ("skills", "TEXT DEFAULT ''"),
+            ("x", "INTEGER DEFAULT 100"),
+            ("y", "INTEGER DEFAULT 100"),
+            ("temperature", "REAL DEFAULT 0.7"),
+        ]:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='subagents' AND column_name=%s",
+                (col,)
+            )
+            if not cursor.fetchone():
+                cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
+                logger.info(f"PostgreSQL Migration: added column {col} to subagents table.")
+
+        # Seed subagents if table is empty
+        cursor.execute("SELECT COUNT(*) FROM subagents")
+        if cursor.fetchone()[0] == 0:
+            logger.info("Pre-populating default subagents in PostgreSQL.")
+            default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+            default_agents = _get_default_agents(default_model)
+            cursor.executemany("""
+                INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, [t + (0.7,) for t in default_agents])
+            logger.info("Successfully seeded default agents in PostgreSQL.")
+        else:
+            _migrate_existing_subagents_postgres(cursor)
+
+        # Create subagent memory table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subagent_memory (
+                subagent_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (subagent_id, key)
+            )
+        """)
+
+        # Global app settings (KV store)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        cursor.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'ru') ON CONFLICT (key) DO NOTHING")
+
+        # Create session metadata table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_metadata (
+                session_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                agent_id TEXT
+            )
+        """)
+
+        # PostgreSQL Migration helper: verify and add agent_id to session_metadata
+        cursor.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name='session_metadata' AND column_name='agent_id'"
+        )
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
+            logger.info("PostgreSQL Migration: added column agent_id to session_metadata table.")
+
+        conn.commit()
+    logger.info("PostgreSQL Database initialized successfully.")
+
+
+def _get_default_agents(default_model: str) -> list:
+    return [
+        (
+            "jarvis", "Jarvis (Main)",
+            "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+            default_model, "orchestrator", None, "", 100, 350
+        ),
+        (
+            "research", "Search Agent",
+            "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
+            default_model, "agent", "jarvis", "web_search", 450, 100
+        ),
+        (
+            "code", "Code Engineer",
+            "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
+            default_model, "agent", "jarvis", "python_sandbox", 450, 220
+        ),
+        (
+            "analyst", "Data Analyst",
+            "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
+            default_model, "agent", "jarvis", "python_sandbox", 450, 340
+        ),
+        (
+            "scheduler", "Scheduler",
+            "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
+            default_model, "agent", "jarvis", "timers_alarms", 450, 460
+        ),
+        (
+            "monitor", "Market Monitor",
+            "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
+            default_model, "agent", "jarvis", "market_monitor", 450, 580
+        ),
+        (
+            "planner", "Daily Planner",
+            "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
+            default_model, "agent", "jarvis", "google_calendar,todoist_sync", 450, 700
+        ),
+        (
+            "sysops", "Sys Ops",
+            "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
+            default_model, "agent", "jarvis", "shell_execution", 450, 820
+        ),
+        (
+            "football", "Football Analyst",
+            "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
+            default_model, "agent", "jarvis", "web_search", 450, 940
+        ),
+    ]
+
+
+def _migrate_existing_subagents_sqlite(cursor):
+    upserts = _get_default_agents_migrations()
+    default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+    for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
+        cursor.execute("""
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                system_prompt = excluded.system_prompt,
+                agent_type = excluded.agent_type,
+                parent_id = excluded.parent_id,
+                skills = excluded.skills
+            WHERE subagents.system_prompt IN (
+                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
+                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
+                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
+                'You are a research agent. Search for information on the internet using web_search.',
+                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
+                'You are a Code Engineer. Write and execute Python scripts.',
+                'Вы — Аналитик-Визуализатор. Создавайте графики.',
+                'You are an Analyst-Visualizer. Create charts.'
+            )
+        """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
+
+
+def _migrate_existing_subagents_postgres(cursor):
+    upserts = _get_default_agents_migrations()
+    default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+    for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
+        cursor.execute("""
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                system_prompt = excluded.system_prompt,
+                agent_type = excluded.agent_type,
+                parent_id = excluded.parent_id,
+                skills = excluded.skills
+            WHERE subagents.system_prompt IN (
+                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
+                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
+                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
+                'You are a research agent. Search for information on the internet using web_search.',
+                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
+                'You are a Code Engineer. Write and execute Python scripts.',
+                'Вы — Аналитик-Визуализатор. Создавайте графики.',
+                'You are an Analyst-Visualizer. Create charts.'
+            )
+        """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
+
+
+def _get_default_agents_migrations() -> list:
+    return [
+        ("jarvis", "Jarvis (Main)",
+         "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+         "orchestrator", None, "", 100, 350),
+        ("research", "Search Agent",
+         "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
+         "agent", "jarvis", "web_search", 450, 100),
+        ("code", "Code Engineer",
+         "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
+         "agent", "jarvis", "python_sandbox", 450, 220),
+        ("analyst", "Data Analyst",
+         "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
+         "agent", "jarvis", "python_sandbox", 450, 340),
+         ("scheduler", "Scheduler",
+         "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
+         "agent", "jarvis", "timers_alarms", 450, 460),
+        ("monitor", "Market Monitor",
+         "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
+         "agent", "jarvis", "market_monitor", 450, 580),
+        ("planner", "Daily Planner",
+         "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
+         "agent", "jarvis", "google_calendar,todoist_sync", 450, 700),
+        ("sysops", "Sys Ops",
+         "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
+         "agent", "jarvis", "shell_execution", 450, 820),
+        ("football", "Football Analyst",
+         "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
+         "agent", "jarvis", "web_search", 450, 940),
+    ]
+
 
 def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0) -> Optional[int]:
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
-        return _get_backend().lastrowid(
+        return _lastrowid(
             "INSERT INTO messages (session_id, role, content, cost_usd) VALUES (?, ?, ?, ?)",
             (session_id, role, content, cost_usd),
         )
@@ -420,7 +653,7 @@ def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0
 def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Retrieves the last N messages for a given chat session, in chronological order."""
     try:
-        rows = _get_backend().execute("""
+        rows = _execute("""
             SELECT id, role, content, cost_usd FROM (
                 SELECT id, role, content, cost_usd FROM messages
                 WHERE session_id = ?
@@ -435,7 +668,7 @@ def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
 def clear_chat_history(session_id: str):
     """Deletes all messages in the database for a session."""
     try:
-        _get_backend().rowcount("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        _rowcount("DELETE FROM messages WHERE session_id = ?", (session_id,))
         logger.info(f"Cleared database history for session: {session_id}")
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
@@ -443,7 +676,7 @@ def clear_chat_history(session_id: str):
 def save_decision_log(log: Dict[str, Any]):
     """Saves a single agent decision log to the database."""
     try:
-        _get_backend().execute("""
+        _execute("""
             INSERT INTO decision_logs (
                 timestamp, session_id, model, latency_ms, success,
                 error, prompt_tokens_estimate, user_message, assistant_response, traces
@@ -466,7 +699,7 @@ def save_decision_log(log: Dict[str, Any]):
 def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
     """Retrieves the last N decision logs from the database, sorted by new first."""
     try:
-        rows = _get_backend().execute("""
+        rows = _execute("""
             SELECT timestamp, session_id, model, latency_ms, success,
                    error, prompt_tokens_estimate, user_message, assistant_response, traces
             FROM decision_logs
@@ -498,7 +731,7 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
 def save_activity_log(log: Dict[str, Any]):
     """Saves a single activity log to the database."""
     try:
-        _get_backend().execute("""
+        _execute("""
             INSERT INTO activity_logs (timestamp, type, source, message, token_cost)
             VALUES (?, ?, ?, ?, ?)
         """, (
@@ -514,7 +747,7 @@ def save_activity_log(log: Dict[str, Any]):
 def get_activity_logs(limit: int = 200) -> List[Dict[str, Any]]:
     """Retrieves the last N activity logs from the database, sorted chronologically."""
     try:
-        rows = _get_backend().execute("""
+        rows = _execute("""
             SELECT timestamp, type, source, message, token_cost FROM (
                 SELECT timestamp, type, source, message, token_cost, id FROM activity_logs
                 ORDER BY id DESC LIMIT ?
@@ -531,7 +764,7 @@ def get_activity_logs(limit: int = 200) -> List[Dict[str, Any]]:
 def clear_activity_logs():
     """Deletes all activity logs in the database."""
     try:
-        _get_backend().rowcount("DELETE FROM activity_logs")
+        _rowcount("DELETE FROM activity_logs")
         logger.info("Cleared activity logs database.")
     except Exception as e:
         logger.error(f"Error clearing activity logs: {e}")
@@ -552,7 +785,7 @@ def save_subagent(
 ):
     """Saves or updates a subagent's configuration in the database."""
     try:
-        _get_backend().execute("""
+        _execute("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
@@ -573,7 +806,7 @@ def save_subagent(
 def get_subagent(id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a subagent by its ID."""
     try:
-        rows = _get_backend().execute("""
+        rows = _execute("""
             SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
             FROM subagents WHERE id = ?
         """, (id,))
@@ -600,7 +833,7 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
 def get_all_subagents() -> List[Dict[str, Any]]:
     """Retrieves all registered subagents from the database."""
     try:
-        rows = _get_backend().execute("""
+        rows = _execute("""
             SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
             FROM subagents ORDER BY id ASC
         """)
@@ -627,7 +860,7 @@ def get_all_subagents() -> List[Dict[str, Any]]:
 def delete_subagent(id: str) -> bool:
     """Deletes a subagent from the database. Returns True if deleted, False otherwise."""
     try:
-        deleted = _get_backend().rowcount("DELETE FROM subagents WHERE id = ?", (id,)) > 0
+        deleted = _rowcount("DELETE FROM subagents WHERE id = ?", (id,)) > 0
         if deleted:
             logger.info(f"Subagent deleted: {id}")
         return deleted
@@ -638,7 +871,7 @@ def delete_subagent(id: str) -> bool:
 def db_save_subagent_memory(subagent_id: str, key: str, value: str):
     """Saves or updates a memory fact (key-value pair) for a specific subagent."""
     try:
-        _get_backend().execute("""
+        _execute("""
             INSERT OR REPLACE INTO subagent_memory (subagent_id, key, value, updated_at)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         """, (subagent_id, key, value))
@@ -650,12 +883,12 @@ def db_get_subagent_memory(subagent_id: str, key: Optional[str] = None) -> Dict[
     """Retrieves saved facts for a specific subagent. Returns a dict of key -> value."""
     try:
         if key:
-            rows = _get_backend().execute(
+            rows = _execute(
                 "SELECT key, value FROM subagent_memory WHERE subagent_id = ? AND key = ?",
                 (subagent_id, key),
             )
         else:
-            rows = _get_backend().execute(
+            rows = _execute(
                 "SELECT key, value FROM subagent_memory WHERE subagent_id = ?",
                 (subagent_id,),
             )
@@ -667,7 +900,7 @@ def db_get_subagent_memory(subagent_id: str, key: Optional[str] = None) -> Dict[
 def db_delete_subagent_memory(subagent_id: str, key: str) -> bool:
     """Deletes a memory fact for a specific subagent."""
     try:
-        return _get_backend().rowcount(
+        return _rowcount(
             "DELETE FROM subagent_memory WHERE subagent_id = ? AND key = ?",
             (subagent_id, key),
         ) > 0
@@ -680,7 +913,7 @@ def db_delete_subagent_memory(subagent_id: str, key: str) -> bool:
 def get_setting(key: str) -> Optional[str]:
     """Returns a global app setting value by key, or None if not found."""
     try:
-        rows = _get_backend().execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+        rows = _execute("SELECT value FROM app_settings WHERE key = ?", (key,))
         return rows[0][0] if rows else None
     except Exception as e:
         logger.error(f"Error getting setting {key}: {e}")
@@ -689,7 +922,7 @@ def get_setting(key: str) -> Optional[str]:
 def set_setting(key: str, value: str) -> bool:
     """Saves or updates a global app setting."""
     try:
-        _get_backend().execute(
+        _execute(
             "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, value),
         )
@@ -704,14 +937,14 @@ def save_session_metadata(session_id: str, title: str, agent_id: Optional[str] =
     """Saves or updates custom metadata (title and target agent) for a chat session."""
     try:
         # Check if row exists to preserve existing values if updating selectively
-        rows = _get_backend().execute(
+        rows = _execute(
             "SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,)
         )
         final_agent_id = agent_id
         if rows and agent_id is None:
             final_agent_id = rows[0][0]
 
-        _get_backend().execute("""
+        _execute("""
             INSERT INTO session_metadata (session_id, title, agent_id, updated_at)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(session_id) DO UPDATE SET
@@ -730,7 +963,7 @@ def save_session_title(session_id: str, title: str):
 def get_session_agent_id(session_id: str) -> Optional[str]:
     """Retrieves the mapped agent/orchestrator ID for a session."""
     try:
-        rows = _get_backend().execute(
+        rows = _execute(
             "SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,)
         )
         return rows[0][0] if rows else None
@@ -741,7 +974,7 @@ def get_session_agent_id(session_id: str) -> Optional[str]:
 def get_session_title(session_id: str) -> Optional[str]:
     """Retrieves the custom title of a session, if exists."""
     try:
-        rows = _get_backend().execute(
+        rows = _execute(
             "SELECT title FROM session_metadata WHERE session_id = ?", (session_id,)
         )
         return rows[0][0] if rows else None
@@ -752,7 +985,7 @@ def get_session_title(session_id: str) -> Optional[str]:
 def delete_session_title(session_id: str) -> bool:
     """Deletes custom title metadata for a session."""
     try:
-        return _get_backend().rowcount(
+        return _rowcount(
             "DELETE FROM session_metadata WHERE session_id = ?", (session_id,)
         ) > 0
     except Exception as e:

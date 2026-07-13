@@ -15,6 +15,8 @@ Coverage:
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
+from unittest.mock import MagicMock
 import pytest
 from backend import database
 
@@ -221,3 +223,44 @@ def test_public_api_smoke():
     assert mem == {"fact": "42"}
     assert database.db_delete_subagent_memory("agent_wal", "fact") is True
     assert database.db_get_subagent_memory("agent_wal") == {}
+
+
+# ---------------------------------------------------------------------------
+# 9: PostgresBackend Selection & Singleton test
+# ---------------------------------------------------------------------------
+
+def test_postgres_backend_selected_via_database_url(monkeypatch):
+    """When DATABASE_URL is set to a postgresql connection string,
+    PostgresBackend must be selected and behave as a singleton.
+    """
+    monkeypatch.setenv("DATABASE_URL", "postgresql://testuser:testpass@localhost:5432/testdb")
+    
+    # Track instantiations of PostgresBackend using a lightweight test double
+    instantiations = []
+    
+    class DummyPostgresBackend(database.DatabaseBackend):
+        def __init__(self, url):
+            instantiations.append(url)
+            
+        @contextmanager
+        def connect(self):
+            yield MagicMock()
+            
+        def translate_placeholder(self, sql):
+            return sql.replace("?", "%s")
+            
+        def init_schema(self):
+            pass
+            
+    monkeypatch.setattr(database, "PostgresBackend", DummyPostgresBackend)
+    database._set_backend_for_tests(None)  # reset singleton
+    
+    # Retrieve backend twice
+    backend1 = database._get_backend()
+    backend2 = database._get_backend()
+    
+    assert isinstance(backend1, DummyPostgresBackend)
+    assert backend1 is backend2  # singleton check
+    assert len(instantiations) == 1
+    assert instantiations[0] == "postgresql://testuser:testpass@localhost:5432/testdb"
+
