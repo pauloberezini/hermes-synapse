@@ -329,6 +329,62 @@ async def upload_file(file: UploadFile = File(...)):
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
+@app.post("/api/parse-pdf")
+async def parse_pdf(file: UploadFile = File(...)):
+    """
+    Extract plain text from an uploaded PDF using pypdf (OSS, pure-Python).
+    Returns { text, pages, truncated } — text is capped at 500 KB.
+    """
+    import io
+    from fastapi import HTTPException
+    MAX_TEXT_BYTES = 500 * 1024  # 500 KB extracted text limit for PDF
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only .pdf files are accepted.")
+    try:
+        pdf_bytes = await file.read()
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            raise HTTPException(status_code=500, detail="pypdf is not installed in the backend. Add 'pypdf>=4.0.0' to dependencies.")
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pages_count = len(reader.pages)
+        extracted_parts = []
+        total_bytes = 0
+        truncated = False
+
+        for page_num, page in enumerate(reader.pages, start=1):
+            page_text = page.extract_text() or ""
+            chunk = f"--- Page {page_num} ---\n{page_text}\n"
+            chunk_bytes = len(chunk.encode("utf-8"))
+            if total_bytes + chunk_bytes > MAX_TEXT_BYTES:
+                # Include partial page up to limit
+                remaining = MAX_TEXT_BYTES - total_bytes
+                if remaining > 0:
+                    extracted_parts.append(chunk.encode("utf-8")[:remaining].decode("utf-8", errors="ignore"))
+                truncated = True
+                break
+            extracted_parts.append(chunk)
+            total_bytes += chunk_bytes
+
+        full_text = "".join(extracted_parts).strip()
+        if not full_text:
+            raise HTTPException(status_code=422, detail="Could not extract text from this PDF. It may be scanned/image-based.")
+
+        logger.info(f"PDF parsed: '{file.filename}', {pages_count} pages, {total_bytes} bytes extracted, truncated={truncated}")
+        return {
+            "text": full_text,
+            "pages": pages_count,
+            "truncated": truncated,
+            "extracted_bytes": total_bytes
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF parse error for '{file.filename}': {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse PDF: {str(e)}")
+
 @app.get("/api/uploads")
 async def list_uploads():
     import os
@@ -920,17 +976,67 @@ async def websocket_endpoint(websocket: WebSocket):
                 import json
                 msg = json.loads(data)
                 if msg.get("type") == "chat_message":
-                    user_text = msg.get("content")
+                    user_text = msg.get("content", "")
                     chat_id = msg.get("chat_id", "dashboard")
-                    # Broadcast user message to all dashboard connections
+
+                    # Build display text (shown in chat history — clean, no raw file dump)
+                    display_text = user_text
+
+                    # Inject attached file content into agent context only
+                    attached_file = msg.get("attached_file")
+                    agent_text = user_text
+                    if attached_file and isinstance(attached_file, dict):
+                        fname = attached_file.get("name", "file")
+                        ftype = attached_file.get("type", "text")   # "text" | "pdf"
+                        fcontent = attached_file.get("content", "")
+                        fpages = attached_file.get("pages")          # PDF only
+                        ftruncated = attached_file.get("truncated", False)
+
+                        if fcontent:
+                            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else "txt"
+                            code_lang = {
+                                "py": "python", "js": "javascript", "ts": "typescript",
+                                "tsx": "tsx", "jsx": "jsx", "sh": "bash",
+                                "json": "json", "yaml": "yaml", "yml": "yaml",
+                                "md": "markdown", "html": "html", "css": "css",
+                                "toml": "toml", "xml": "xml"
+                            }.get(ext, "")
+
+                            meta_lines = [f"File: {fname}"]
+                            if fpages:
+                                meta_lines.append(f"Pages: {fpages}")
+                            if ftruncated:
+                                meta_lines.append("Note: content truncated at limit — summary of the beginning of the document")
+                            meta = " | ".join(meta_lines)
+
+                            agent_text = (
+                                f"<file_context>\n"
+                                f"<!-- {meta} -->\n"
+                                f"```{code_lang}\n{fcontent}\n```\n"
+                                f"</file_context>\n\n"
+                                f"Sir's request: {user_text}"
+                            )
+                            # Also append a hint so agent knows Obsidian save is available
+                            if any(kw in user_text.lower() for kw in [
+                                "сохрани", "запиши", "obsidian", "в заметки", "save", "store", "note"
+                            ]):
+                                agent_text += (
+                                    "\n\n[Hint for agent: Sir wants to save this file to Obsidian. "
+                                    "Use create_obsidian_note with an informative title derived from the "
+                                    f"filename '{fname}' and the file content. Determine the folder from the "
+                                    "taxonomy automatically.]"
+                                )
+
+                    # Broadcast display_text to chat (user sees original question only)
                     await manager.broadcast({
                         "type": "chat_message",
                         "role": "user",
-                        "content": user_text,
+                        "content": display_text,
                         "chat_id": chat_id
                     })
-                    # Call agent
-                    response_text = await agent_instance.respond(user_text, session_id=chat_id)
+                    # Call agent with enriched context
+                    response_text = await agent_instance.respond(agent_text, session_id=chat_id)
+
                     
                     # Auto-generate title if this is the first message in a custom chat session
                     if chat_id.startswith("chat_"):

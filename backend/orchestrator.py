@@ -80,6 +80,12 @@ class AgentState:
 async def run_orchestration(query: str, api_key: str, model: str, chat_id: str = "default", parent_skills: Optional[str] = None) -> Dict[str, Any]:
     state = AgentState(query, chat_id)
     
+    import re
+    file_context = ""
+    match = re.search(r"(<file_context>.*?</file_context>)", query, re.DOTALL)
+    if match:
+        file_context = match.group(1)
+    
     # Resolve orchestrator ID
     from backend.database import get_all_subagents, get_subagent, get_session_agent_id
     target_orch_id = get_session_agent_id(chat_id) or chat_id
@@ -271,6 +277,8 @@ Rules:
                 context_str = "\n\nData from previous steps:\n" + "\n---\n".join(context_parts)
 
             contextual_instructions = instructions + context_str
+            if file_context:
+                contextual_instructions = file_context + "\n\n" + contextual_instructions
             state.add_trace("Router", "Route", f"Step {state.current_step_idx+1}/{len(state.steps)}: Delegating to agent '{child_agent['name']}' ({agent_type})")
             
             # Check node execution type

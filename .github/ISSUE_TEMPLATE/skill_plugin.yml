@@ -1,0 +1,75 @@
+name: 🧩 New Skill / Plugin Proposal
+description: Propose a new community skill or tool integration for Hermes
+title: "[Skill]: "
+labels: ["skill", "community", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Proposing a New Hermes Skill
+        Skills are pluggable tool sets that extend what agents can do.
+        Examples: web search, code sandbox, calendar, RAG, market data...
+
+  - type: input
+    id: skill_name
+    attributes:
+      label: Skill name (snake_case)
+      placeholder: "e.g. github_integration, notion_sync, slack_notifier"
+    validations:
+      required: true
+
+  - type: textarea
+    id: skill_description
+    attributes:
+      label: What does this skill do?
+      description: Short description of the tools it exposes to agents.
+      placeholder: "Allows agents to read/write GitHub issues, PRs, and commits..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: tools
+    attributes:
+      label: Proposed tool functions
+      description: List the individual tool functions this skill would provide.
+      placeholder: |
+        - `get_github_issues(repo: str, state: str)` → list open/closed issues
+        - `create_github_issue(repo: str, title: str, body: str)` → create new issue
+        - `get_pr_status(repo: str, pr_number: int)` → check PR merge status
+    validations:
+      required: true
+
+  - type: input
+    id: external_api
+    attributes:
+      label: External API / service used (if any)
+      placeholder: "e.g. GitHub REST API (free, no account required for public repos)"
+
+  - type: checkboxes
+    id: oss_check
+    attributes:
+      label: OSS Compatibility
+      options:
+        - label: The service has a free tier OR is fully self-hostable
+          required: true
+        - label: API keys are read from env vars (not hardcoded)
+          required: true
+        - label: The skill degrades gracefully if the API key is missing
+          required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Current status
+      options:
+        - Just an idea — looking for feedback
+        - Proof of concept ready — have working code
+        - Implemented locally — ready for PR review
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation notes
+      description: Any notes on how you'd implement it, dependencies needed, etc.

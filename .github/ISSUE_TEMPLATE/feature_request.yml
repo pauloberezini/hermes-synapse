@@ -1,0 +1,72 @@
+name: 💡 Feature Request
+description: Propose a new feature or improvement for Hermes
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! Before submitting, please note:
+        **Hermes is OSS-first.** Features requiring proprietary, paid-only services
+        without an open-source alternative will be redirected to an OSS-compatible approach.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: A clear description of the problem or limitation you're experiencing.
+      placeholder: "I always have to manually do X, which is tedious because..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like to see this solved?
+      placeholder: "Add a skill/option that allows..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches or workarounds you've already tried?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature area
+      options:
+        - New Skill / Tool Integration
+        - Agent Orchestration / Planning
+        - Dashboard UI / UX
+        - API / Backend
+        - RAG / Memory
+        - Deployment / Docker
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: oss_check
+    attributes:
+      label: OSS Compatibility Check
+      description: Please confirm your proposal aligns with Hermes's open-source principles.
+      options:
+        - label: This feature does NOT require a proprietary/paid-only service (or provides an OSS alternative)
+          required: true
+        - label: This feature can be developed and tested locally without cloud accounts
+          required: true
+        - label: This feature follows the modular skill/plugin pattern
+          required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this feature and open a pull request
+        - label: I can help test this feature

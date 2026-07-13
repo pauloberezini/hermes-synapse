@@ -2,8 +2,8 @@ services:
   backend:
     build:
       context: .
-      dockerfile: backend/Dockerfile
-    container_name: jarvis-backend
+      dockerfile: backend/Dockerfile.dev
+    container_name: hermes-backend-dev
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -14,56 +14,53 @@ services:
       - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-pro}
+      - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-flash}
       - QDRANT_HOST=qdrant
       - OBSIDIAN_HOST=host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      # Mount backend source for hot-reload
       - ./backend:/app/backend
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      # Qdrant is a distroless image (no shell/curl/python) — cannot add a
-      # healthcheck inside it. We use service_started and give the backend
-      # a long enough start_period so Qdrant is ready before it connects.
       - qdrant
     networks:
-      - hermes-net
+      - hermes-dev-net
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: jarvis-dashboard
+      dockerfile: Dockerfile.dev
+    container_name: hermes-frontend-dev
     restart: unless-stopped
     ports:
-      - "9119:80"
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
     depends_on:
       - backend
     networks:
-      - hermes-net
+      - hermes-dev-net
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: jarvis-qdrant
+    container_name: hermes-qdrant-dev
     restart: unless-stopped
     ports:
       - "6333:6333"
-      - "6334:6334"
     volumes:
-      - qdrant_data:/qdrant/storage
-    # NOTE: qdrant/qdrant is a distroless/scratch image — no curl, wget, python,
-    # or any shell tools available. A Docker healthcheck cannot be added here.
-    # The backend's rag.py already handles Qdrant connection failures gracefully
-    # (logs an error and retries on next request) so this is safe.
+      - qdrant_dev_data:/qdrant/storage
+    # NOTE: qdrant/qdrant is distroless — no shell tools for healthcheck.
+    # Backend rag.py handles connection errors gracefully on startup.
     networks:
-      - hermes-net
+      - hermes-dev-net
 
 networks:
-  hermes-net:
+  hermes-dev-net:
     driver: bridge
 
 volumes:
-  qdrant_data:
-
+  qdrant_dev_data:
