@@ -294,9 +294,10 @@ class JarvisAgent:
         if subagent:
             if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
                 from backend.orchestrator import run_orchestration
+                start_time = time.time()
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
-                
+                latency_ms = int((time.time() - start_time) * 1000)
                 
                 # Save the assistant message exchange in the DB
                 from backend import database as db
@@ -311,6 +312,35 @@ class JarvisAgent:
                     "user": current_user_msg_id,
                     "assistant": assistant_msg_id
                 }
+
+                # Log decision log for the orchestrator
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                log_entry = {
+                    "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
+                    "session_id": session_id,
+                    "model": self.model,
+                    "latency_ms": latency_ms,
+                    "success": not response_text.startswith("Apologies, Sir."),
+                    "error": None if not response_text.startswith("Apologies, Sir.") else response_text,
+                    "prompt_tokens_estimate": prompt_est,
+                    "user_message": user_message,
+                    "assistant_response": response_text,
+                    "traces": orch_result.get("traces", []),
+                    "agent_id": target_agent_id,
+                    "completion_tokens_estimate": completion_est,
+                    "cost_usd": cost_usd
+                }
+                
+                DECISION_LOGS.insert(0, log_entry)
+                if len(DECISION_LOGS) > 100:
+                    DECISION_LOGS.pop()
+                try:
+                    from backend.database import save_decision_log
+                    save_decision_log(log_entry)
+                except Exception as db_err:
+                    logger.error(f"Failed to save decision log to DB: {db_err}")
+                    
                 return response_text
             else:
                 return await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id, chat_id=session_id)
@@ -647,6 +677,9 @@ class JarvisAgent:
         # Add call record to global decision logs
         from datetime import datetime
         from zoneinfo import ZoneInfo
+        prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
+        completion_est = len(response_text) // 4
+        cost_usd = calculate_cost(self.model, prompt_est, completion_est)
         log_entry = {
             "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
             "session_id": session_id,
@@ -654,10 +687,13 @@ class JarvisAgent:
             "latency_ms": latency_ms,
             "success": error_msg is None,
             "error": error_msg,
-            "prompt_tokens_estimate": sum(len(m.get("content") or "") for m in messages) // 4,
+            "prompt_tokens_estimate": prompt_est,
             "user_message": user_message,
             "assistant_response": response_text,
-            "traces": []
+            "traces": [],
+            "agent_id": "jarvis",
+            "completion_tokens_estimate": completion_est,
+            "cost_usd": cost_usd
         }
         
         DECISION_LOGS.insert(0, log_entry)
@@ -933,6 +969,9 @@ class JarvisAgent:
             response_text = "Прошу прощения, Сэр. Произошел сбой при обработке запроса субагента."
 
         # Add call record to global decision logs
+        prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
+        completion_est = len(response_text) // 4
+        cost_usd = calculate_cost(subagent_model, prompt_est, completion_est)
         log_entry = {
             "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
             "session_id": session_id,
@@ -940,10 +979,13 @@ class JarvisAgent:
             "latency_ms": latency_ms,
             "success": error_msg is None,
             "error": error_msg,
-            "prompt_tokens_estimate": sum(len(m.get("content") or "") for m in messages) // 4,
+            "prompt_tokens_estimate": prompt_est,
             "user_message": user_message,
             "assistant_response": response_text,
-            "traces": []
+            "traces": [],
+            "agent_id": subagent["id"],
+            "completion_tokens_estimate": completion_est,
+            "cost_usd": cost_usd
         }
         
         DECISION_LOGS.insert(0, log_entry)

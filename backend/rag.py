@@ -31,7 +31,7 @@ def get_qdrant_client() -> QdrantClient:
         _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
     return _qdrant_client
 
-def init_rag():
+def raw_init_rag():
     """Initializes the RAG collection in Qdrant if it doesn't already exist."""
     try:
         client = get_qdrant_client()
@@ -71,8 +71,8 @@ def chunk_text(text: str, chunk_size: int = 600, overlap: int = 150) -> List[str
         start += chunk_size - overlap
     return chunks
 
-def index_document(doc_id: str, title: str, text: str,
-                   source: str = "manual", note_path: str = "") -> bool:
+def raw_index_document(doc_id: str, title: str, text: str,
+                      source: str = "manual", note_path: str = "") -> bool:
     """Chunks the text, generates embeddings, and uploads them to Qdrant.
     
     Args:
@@ -126,8 +126,8 @@ def index_document(doc_id: str, title: str, text: str,
         logger.error(f"Error indexing document '{title}': {e}")
         return False
 
-def search_memory(query: str, limit: int = 3, threshold: float = 0.7,
-                  source_filter: str = "") -> List[Dict[str, Any]]:
+def raw_search_memory(query: str, limit: int = 3, threshold: float = 0.7,
+                      source_filter: str = "") -> List[Dict[str, Any]]:
     """Searches memory for relevant chunks and returns list of hits above the threshold.
     
     Args:
@@ -179,7 +179,7 @@ def search_memory(query: str, limit: int = 3, threshold: float = 0.7,
         logger.error(f"Error searching vector DB: {e}")
         return []
 
-def delete_document(doc_id: str) -> bool:
+def raw_delete_document(doc_id: str) -> bool:
     """Deletes all vector points associated with a document ID."""
     try:
         client = get_qdrant_client()
@@ -247,3 +247,24 @@ def list_documents(source_filter: str = "") -> List[Dict[str, str]]:
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
         return []
+
+# ─── PLUGGABLE ADAPTERS ────────────────────────────────-----------------------
+
+def init_rag():
+    from backend.memory import get_memory_engine
+    get_memory_engine().init_memory()
+
+def index_document(doc_id: str, title: str, text: str,
+                   source: str = "manual", note_path: str = "") -> bool:
+    from backend.memory import get_memory_engine
+    return get_memory_engine().index_document(doc_id, title, text, source, note_path)
+
+def search_memory(query: str, limit: int = 3, threshold: float = 0.7,
+                  source_filter: str = "") -> List[Dict[str, Any]]:
+    from backend.memory import get_memory_engine
+    return get_memory_engine().search_memory(query, limit, threshold, source_filter)
+
+def delete_document(doc_id: str) -> bool:
+    from backend.memory import get_memory_engine
+    return get_memory_engine().delete_document(doc_id)
+

@@ -16,7 +16,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  ChevronLeft
+  ChevronLeft,
+  BarChart3
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -42,6 +43,7 @@ import { SubagentsTab } from './components/SubagentsTab';
 import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
+import { MetricsTab } from './components/MetricsTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -52,7 +54,7 @@ const langToLocale: Record<string, string> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
     return (saved as any) || 'chat';
   });
@@ -73,6 +75,8 @@ export default function App() {
   ]);
   const [logs, setLogs] = useState<DecisionLog[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [metrics, setMetrics] = useState<any>(null);
+  const [isMetricsLoading, setIsMetricsLoading] = useState(false);
   const [config, setConfig] = useState<SystemConfig>({
     system_prompt: '',
     model: 'google/gemini-2.5-pro'
@@ -673,6 +677,26 @@ export default function App() {
       .catch(err => console.log('Error fetching documents:', err));
   };
 
+  const fetchMetrics = () => {
+    setIsMetricsLoading(true);
+    fetchWithAuth('http://localhost:8000/api/metrics')
+      .then(res => res.json())
+      .then(data => {
+        setMetrics(data);
+        setIsMetricsLoading(false);
+      })
+      .catch(err => {
+        console.log('Error fetching metrics:', err);
+        setIsMetricsLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'metrics') {
+      fetchMetrics();
+    }
+  }, [activeTab]);
+
   const fetchUploads = () => {
     fetchWithAuth('http://localhost:8000/api/uploads')
       .then(res => res.json())
@@ -977,6 +1001,8 @@ export default function App() {
         }
       })
       .catch(() => console.log('REST logs fetch skipped/failed'));
+      
+    fetchMetrics();
       
     fetchDocuments();
     fetchUploads();
@@ -1627,6 +1653,14 @@ export default function App() {
                 </button>
                 
                 <button 
+                  style={{...styles.navBtn, ...(activeTab === 'metrics' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('metrics'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <BarChart3 size={18} />
+                  <span>Metrics Dashboard</span>
+                </button>
+                
+                <button 
                   style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
                   onClick={() => { setActiveTab('activity'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
                 >
@@ -1697,6 +1731,14 @@ export default function App() {
               >
                 <Terminal size={18} />
                 <span>Decision Logs</span>
+              </button>
+              
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'metrics' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('metrics'); setSidebarOpen(false); }}
+              >
+                <BarChart3 size={18} />
+                <span>Metrics Dashboard</span>
               </button>
               
               <button 
@@ -1835,6 +1877,14 @@ export default function App() {
             logs={logs}
             selectedLog={selectedLog}
             setSelectedLog={setSelectedLog}
+          />
+        )}
+
+        {activeTab === 'metrics' && (
+          <MetricsTab
+            metrics={metrics}
+            isLoading={isMetricsLoading}
+            onRefresh={fetchMetrics}
           />
         )}
 

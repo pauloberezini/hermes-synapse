@@ -263,6 +263,50 @@ def _init_sqlite_schema():
         )
     """)
 
+    # Migration: add agent_id, completion_tokens_estimate, cost_usd to decision_logs
+    cursor.execute("PRAGMA table_info(decision_logs)")
+    existing_dec_cols = [row[1] for row in cursor.fetchall()]
+    if "agent_id" not in existing_dec_cols:
+        try:
+            cursor.execute("ALTER TABLE decision_logs ADD COLUMN agent_id TEXT DEFAULT 'jarvis'")
+            logger.info("Migrated decision_logs table to include agent_id column.")
+        except sqlite3.OperationalError:
+            pass
+    if "completion_tokens_estimate" not in existing_dec_cols:
+        try:
+            cursor.execute("ALTER TABLE decision_logs ADD COLUMN completion_tokens_estimate INTEGER DEFAULT 0")
+            logger.info("Migrated decision_logs table to include completion_tokens_estimate column.")
+        except sqlite3.OperationalError:
+            pass
+    if "cost_usd" not in existing_dec_cols:
+        try:
+            cursor.execute("ALTER TABLE decision_logs ADD COLUMN cost_usd REAL DEFAULT 0.0")
+            logger.info("Migrated decision_logs table to include cost_usd column.")
+        except sqlite3.OperationalError:
+            pass
+
+    # Create Graph RAG tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS graph_nodes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT,
+            description TEXT,
+            doc_id TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS graph_edges (
+            source TEXT NOT NULL,
+            target TEXT NOT NULL,
+            description TEXT,
+            weight REAL DEFAULT 1.0,
+            doc_id TEXT,
+            PRIMARY KEY (source, target, doc_id)
+        )
+    """)
+
+
     # Create activity logs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS activity_logs (
@@ -401,6 +445,42 @@ def _init_postgres_schema():
                 traces TEXT NOT NULL
             )
         """)
+
+        # PostgreSQL Migration helper: verify and add decision_logs columns
+        for col, definition in [
+            ("agent_id", "TEXT DEFAULT 'jarvis'"),
+            ("completion_tokens_estimate", "INTEGER DEFAULT 0"),
+            ("cost_usd", "REAL DEFAULT 0.0"),
+        ]:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='decision_logs' AND column_name=%s",
+                (col,)
+            )
+            if not cursor.fetchone():
+                cursor.execute(f"ALTER TABLE decision_logs ADD COLUMN {col} {definition}")
+                logger.info(f"PostgreSQL Migration: added column {col} to decision_logs table.")
+
+        # Create Graph RAG tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT,
+                description TEXT,
+                doc_id TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                description TEXT,
+                weight REAL DEFAULT 1.0,
+                doc_id TEXT,
+                PRIMARY KEY (source, target, doc_id)
+            )
+        """)
+
 
         # Create activity logs table
         cursor.execute("""
@@ -679,8 +759,9 @@ def save_decision_log(log: Dict[str, Any]):
         _execute("""
             INSERT INTO decision_logs (
                 timestamp, session_id, model, latency_ms, success,
-                error, prompt_tokens_estimate, user_message, assistant_response, traces
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                error, prompt_tokens_estimate, user_message, assistant_response, traces,
+                agent_id, completion_tokens_estimate, cost_usd
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             log["timestamp"],
             log["session_id"],
@@ -692,6 +773,9 @@ def save_decision_log(log: Dict[str, Any]):
             log["user_message"],
             log["assistant_response"],
             json.dumps(log.get("traces", [])),
+            log.get("agent_id", "jarvis"),
+            log.get("completion_tokens_estimate", 0),
+            log.get("cost_usd", 0.0),
         ))
     except Exception as e:
         logger.error(f"Error saving decision log to database: {e}")
@@ -701,7 +785,8 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
     try:
         rows = _execute("""
             SELECT timestamp, session_id, model, latency_ms, success,
-                   error, prompt_tokens_estimate, user_message, assistant_response, traces
+                   error, prompt_tokens_estimate, user_message, assistant_response, traces,
+                   agent_id, completion_tokens_estimate, cost_usd
             FROM decision_logs
             ORDER BY id DESC LIMIT ?
         """, (limit,))
@@ -722,6 +807,9 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
                 "user_message": r[7],
                 "assistant_response": r[8],
                 "traces": traces,
+                "agent_id": r[10] if len(r) > 10 else "jarvis",
+                "completion_tokens_estimate": r[11] if len(r) > 11 else 0,
+                "cost_usd": r[12] if len(r) > 12 else 0.0,
             })
         return logs
     except Exception as e:
@@ -992,5 +1080,168 @@ def delete_session_title(session_id: str) -> bool:
         logger.error(f"Error deleting session title for {session_id}: {e}")
         return False
 
+# ─── GRAPH DATABASE HELPERS ──────────────────────────────────────────────────
+
+def db_save_graph_node(node_id: str, name: str, node_type: str, description: str, doc_id: str):
+    """Saves or updates a graph node in the database."""
+    try:
+        _execute("""
+            INSERT INTO graph_nodes (id, name, type, description, doc_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                type = excluded.type,
+                description = excluded.description,
+                doc_id = excluded.doc_id
+        """, (node_id, name, node_type, description, doc_id))
+    except Exception as e:
+        logger.error(f"Error saving graph node: {e}")
+
+def db_save_graph_edge(source: str, target: str, description: str, weight: float, doc_id: str):
+    """Saves or updates a graph edge in the database."""
+    try:
+        _execute("""
+            INSERT INTO graph_edges (source, target, description, weight, doc_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(source, target, doc_id) DO UPDATE SET
+                description = excluded.description,
+                weight = excluded.weight
+        """, (source, target, description, weight, doc_id))
+    except Exception as e:
+        logger.error(f"Error saving graph edge: {e}")
+
+def db_get_graph_nodes(doc_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves graph nodes, optionally filtered by doc_id."""
+    try:
+        if doc_id:
+            rows = _execute("SELECT id, name, type, description, doc_id FROM graph_nodes WHERE doc_id = ?", (doc_id,))
+        else:
+            rows = _execute("SELECT id, name, type, description, doc_id FROM graph_nodes")
+        return [
+            {"id": r[0], "name": r[1], "type": r[2], "description": r[3], "doc_id": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error getting graph nodes: {e}")
+        return []
+
+def db_get_graph_edges(doc_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves graph edges, optionally filtered by doc_id."""
+    try:
+        if doc_id:
+            rows = _execute("SELECT source, target, description, weight, doc_id FROM graph_edges WHERE doc_id = ?", (doc_id,))
+        else:
+            rows = _execute("SELECT source, target, description, weight, doc_id FROM graph_edges")
+        return [
+            {"source": r[0], "target": r[1], "description": r[2], "weight": r[3], "doc_id": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error getting graph edges: {e}")
+        return []
+
+def db_clear_graph(doc_id: Optional[str] = None):
+    """Deletes nodes and edges from the graph."""
+    try:
+        if doc_id:
+            _rowcount("DELETE FROM graph_nodes WHERE doc_id = ?", (doc_id,))
+            _rowcount("DELETE FROM graph_edges WHERE doc_id = ?", (doc_id,))
+        else:
+            _rowcount("DELETE FROM graph_nodes")
+            _rowcount("DELETE FROM graph_edges")
+    except Exception as e:
+        logger.error(f"Error clearing graph: {e}")
+
+# ─── AGGREGATED METRICS HELPER ───────────────────────────────────────────────
+
+def db_get_aggregated_metrics() -> Dict[str, Any]:
+    """Computes aggregated success rates and latency metrics by agent and by model."""
+    try:
+        # 1. Summary
+        summary_row = _execute("""
+            SELECT COUNT(*), AVG(latency_ms), SUM(success), 
+                   SUM(prompt_tokens_estimate + completion_tokens_estimate),
+                   SUM(cost_usd)
+            FROM decision_logs
+        """)
+        
+        total_calls = summary_row[0][0] if summary_row and summary_row[0][0] is not None else 0
+        avg_latency = float(summary_row[0][1]) if summary_row and summary_row[0][1] is not None else 0.0
+        sum_success = summary_row[0][2] if summary_row and summary_row[0][2] is not None else 0
+        total_tokens = summary_row[0][3] if summary_row and summary_row[0][3] is not None else 0
+        total_cost = float(summary_row[0][4]) if summary_row and summary_row[0][4] is not None else 0.0
+        
+        success_rate = (sum_success / total_calls * 100.0) if total_calls > 0 else 100.0
+        
+        summary = {
+            "total_calls": total_calls,
+            "avg_latency_ms": round(avg_latency, 1),
+            "success_rate": round(success_rate, 1),
+            "total_tokens": total_tokens,
+            "total_cost_usd": round(total_cost, 6)
+        }
+
+        # 2. By Agent
+        agent_rows = _execute("""
+            SELECT agent_id, COUNT(*), SUM(success), AVG(latency_ms),
+                   SUM(prompt_tokens_estimate + completion_tokens_estimate),
+                   SUM(cost_usd)
+            FROM decision_logs
+            GROUP BY agent_id
+        """)
+        by_agent = []
+        for r in agent_rows:
+            agent_calls = r[1]
+            agent_success = r[2] or 0
+            agent_tokens = r[4] or 0
+            agent_cost = float(r[5]) if r[5] is not None else 0.0
+            
+            by_agent.append({
+                "agent_id": r[0],
+                "total_calls": agent_calls,
+                "success_rate": round((agent_success / agent_calls * 100.0), 1) if agent_calls > 0 else 100.0,
+                "avg_latency_ms": round(float(r[3]), 1) if r[3] is not None else 0.0,
+                "total_tokens": agent_tokens,
+                "total_cost_usd": round(agent_cost, 6)
+            })
+
+        # 3. By Model
+        model_rows = _execute("""
+            SELECT model, COUNT(*), SUM(success), AVG(latency_ms),
+                   SUM(prompt_tokens_estimate + completion_tokens_estimate),
+                   SUM(cost_usd)
+            FROM decision_logs
+            GROUP BY model
+        """)
+        by_model = []
+        for r in model_rows:
+            model_calls = r[1]
+            model_success = r[2] or 0
+            model_tokens = r[4] or 0
+            model_cost = float(r[5]) if r[5] is not None else 0.0
+            
+            by_model.append({
+                "model": r[0],
+                "total_calls": model_calls,
+                "success_rate": round((model_success / model_calls * 100.0), 1) if model_calls > 0 else 100.0,
+                "avg_latency_ms": round(float(r[3]), 1) if r[3] is not None else 0.0,
+                "total_tokens": model_tokens,
+                "total_cost_usd": round(model_cost, 6)
+            })
+
+        return {
+            "summary": summary,
+            "by_agent": by_agent,
+            "by_model": by_model
+        }
+    except Exception as e:
+        logger.error(f"Error computing aggregated metrics: {e}")
+        return {
+            "summary": {"total_calls": 0, "avg_latency_ms": 0.0, "success_rate": 100.0, "total_tokens": 0, "total_cost_usd": 0.0},
+            "by_agent": [],
+            "by_model": []
+        }
+
 # Auto-initialize database schema on import to prevent missing tables
 init_db()
+
