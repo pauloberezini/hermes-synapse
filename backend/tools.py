@@ -1311,8 +1311,8 @@ def create_subagent(
     system_prompt: str,
     model: Optional[str] = None,
     role: str = "Specialist",
-    model_type: str = "external",
-    model_provider: str = "openrouter",
+    model_type: str = "local",
+    model_provider: str = "ollama",
 ) -> str:
     """Creates a new subagent with a dedicated system prompt and model, or updates an existing one."""
     from backend.database import save_subagent
@@ -1320,7 +1320,7 @@ def create_subagent(
     import re
     clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', subagent_id).lower()
     if not model:
-        model = os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
+        model = os.getenv("LLM_MODEL", "qwen3:8b")
     save_subagent(
         clean_id,
         name,

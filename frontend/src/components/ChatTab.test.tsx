@@ -124,4 +124,25 @@ describe('ChatTab Component', () => {
     // dashboard is always kept; the other session is filtered out.
     expect(screen.queryByText('chat_123')).not.toBeInTheDocument();
   });
+
+  it('renders native streamed content and optional thinking output', () => {
+    render(
+      <ChatTab
+        {...defaultProps}
+        isGenerating={true}
+        messages={[{
+          role: 'assistant' as const,
+          content: 'Partial answer',
+          thinking: 'Private model trace',
+          streaming: true,
+          run_id: 'run-1',
+          meta: { provider: 'ollama', model: 'qwen3:8b', status: 'streaming' },
+        }]}
+      />
+    );
+    expect(screen.getByText('Partial answer')).toBeInTheDocument();
+    expect(screen.getByText('Model thinking')).toBeInTheDocument();
+    expect(screen.getByText('Private model trace')).toBeInTheDocument();
+    expect(screen.queryByText(/cognitive compiling/i)).not.toBeInTheDocument();
+  });
 });

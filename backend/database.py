@@ -105,8 +105,8 @@ def init_db():
         ("role", "TEXT DEFAULT 'Specialist'"),
         ("status", "TEXT DEFAULT 'idle'"),
         ("is_enabled", "INTEGER DEFAULT 1"),
-        ("model_provider", "TEXT DEFAULT 'openrouter'"),
-        ("model_type", "TEXT DEFAULT 'external'"),
+        ("model_provider", "TEXT DEFAULT 'ollama'"),
+        ("model_type", "TEXT DEFAULT 'local'"),
         ("model_params", "TEXT DEFAULT '{}'"),
         ("current_task", "TEXT DEFAULT ''"),
         ("last_action", "TEXT DEFAULT ''"),
@@ -125,7 +125,7 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM subagents")
     if cursor.fetchone()[0] == 0:
         logger.info("Pre-populating default subagents.")
-        default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+        default_model = os.environ.get("LLM_MODEL", "qwen3:8b")
         default_agents = [
             (
                 "jarvis", "Jarvis (Main)",
@@ -210,7 +210,7 @@ def init_db():
              "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
              "agent", "jarvis", "web_search", 450, 940),
         ]
-        default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+        default_model = os.environ.get("LLM_MODEL", "qwen3:8b")
         for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
             cursor.execute("""
                 INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
@@ -634,8 +634,8 @@ def save_subagent(
     role: str = "Specialist",
     status: str = "idle",
     is_enabled: bool = True,
-    model_provider: str = "openrouter",
-    model_type: str = "external",
+    model_provider: str = "ollama",
+    model_type: str = "local",
     model_params: Optional[Dict[str, Any]] = None,
 ):
     """Saves or updates a subagent's configuration in the database."""
@@ -707,8 +707,8 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
                 "role": row[11] or "Specialist",
                 "status": row[12] or "idle",
                 "is_enabled": bool(row[13]),
-                "model_provider": row[14] or "openrouter",
-                "model_type": row[15] or "external",
+                "model_provider": row[14] or "ollama",
+                "model_type": row[15] or "local",
                 "model_params": _json_or_empty(row[16]),
                 "current_task": row[17] or "",
                 "last_action": row[18] or "",
@@ -750,8 +750,8 @@ def get_all_subagents() -> List[Dict[str, Any]]:
                 "role": r[11] or "Specialist",
                 "status": r[12] or "idle",
                 "is_enabled": bool(r[13]),
-                "model_provider": r[14] or "openrouter",
-                "model_type": r[15] or "external",
+                "model_provider": r[14] or "ollama",
+                "model_type": r[15] or "local",
                 "model_params": _json_or_empty(r[16]),
                 "current_task": r[17] or "",
                 "last_action": r[18] or "",

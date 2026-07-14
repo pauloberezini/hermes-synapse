@@ -19,6 +19,9 @@ export interface ChatMessage {
   chat_id?: string | number;
   cost_usd?: number;
   meta?: LLMRunMeta;
+  run_id?: string;
+  streaming?: boolean;
+  thinking?: string;
 }
 
 export interface DecisionLog {
@@ -54,6 +57,40 @@ export interface SystemConfig {
   memory_enabled?: boolean;
   memory_auto_save?: boolean;
   memory_max_items?: number;
+  provider?: 'ollama' | 'openrouter' | 'openai_compatible' | string;
+  api_base?: string;
+  ollama_base_url?: string;
+  openai_api_base?: string;
+  ollama_num_ctx?: number;
+  ollama_keep_alive?: string | number;
+  ollama_think?: boolean | 'low' | 'medium' | 'high' | string;
+}
+
+export interface OllamaModel {
+  name: string;
+  model?: string;
+  size?: number;
+  digest?: string;
+  modified_at?: string;
+  size_vram?: number;
+  context_length?: number;
+  expires_at?: string;
+  details?: {
+    family?: string;
+    parameter_size?: string;
+    quantization_level?: string;
+    format?: string;
+  };
+}
+
+export interface OllamaStatus {
+  available: boolean;
+  base_url: string;
+  version?: string;
+  models_count?: number;
+  running_count?: number;
+  error?: string;
+  code?: string;
 }
 
 export interface AgentModel {

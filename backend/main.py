@@ -3,7 +3,7 @@ import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from backend.agent import agent_instance, DECISION_LOGS
@@ -25,6 +25,19 @@ class ConfigUpdate(BaseModel):
     memory_enabled: bool | None = None
     memory_auto_save: bool | None = None
     memory_max_items: int | None = None
+    provider: str | None = None
+    api_base: str | None = None
+    ollama_base_url: str | None = None
+    openai_api_base: str | None = None
+    ollama_num_ctx: int | None = None
+    ollama_keep_alive: str | int | None = None
+    ollama_think: bool | str | None = None
+
+class OllamaModelRequest(BaseModel):
+    model: str
+
+class OllamaPullRequest(OllamaModelRequest):
+    insecure: bool = False
 
 class PriceAlertRequest(BaseModel):
     symbol: str
@@ -45,8 +58,8 @@ class SubagentUpdate(BaseModel):
     role: str = "Specialist"
     status: str = "idle"
     is_enabled: bool = True
-    model_provider: str = "openrouter"
-    model_type: str = "external"
+    model_provider: str = "ollama"
+    model_type: str = "local"
     model_params: dict = {}
 
 class SubagentPosition(BaseModel):
@@ -243,6 +256,8 @@ async def get_status():
         "status": "online",
         "agent": {
             "model": agent_instance.model,
+            "provider": agent_instance.provider,
+            "api_base": agent_instance.api_base,
             "max_history_len": agent_instance.max_history_len,
             "memory_enabled": agent_instance.memory_enabled,
         },
@@ -260,6 +275,13 @@ async def update_config(update: ConfigUpdate):
     if update.model is not None:
         agent_instance.model = update.model
     agent_instance.update_runtime_config(
+        provider=update.provider,
+        api_base=update.api_base,
+        ollama_base_url=update.ollama_base_url,
+        openai_api_base=update.openai_api_base,
+        ollama_num_ctx=update.ollama_num_ctx,
+        ollama_keep_alive=update.ollama_keep_alive,
+        ollama_think=update.ollama_think,
         fast_mode=update.fast_mode,
         max_history_len=update.max_history_len,
         max_tokens=update.max_tokens,
@@ -271,6 +293,8 @@ async def update_config(update: ConfigUpdate):
         memory_max_items=update.memory_max_items,
     )
     config = agent_instance.get_runtime_config()
+    _models_cache["data"] = None
+    _models_cache["timestamp"] = 0
     try:
         from backend.database import save_app_settings
         save_app_settings(config)
@@ -580,8 +604,30 @@ async def get_models_api():
     if _models_cache["data"] and (now - _models_cache["timestamp"] < 3600):
         return _models_cache["data"]
 
-    api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
+    api_base = agent_instance.api_base
     api_key = os.getenv("OPENROUTER_API_KEY", "")
+
+    from backend.ollama_client import OllamaClient, is_ollama_provider
+    if is_ollama_provider(api_base, agent_instance.provider):
+        try:
+            raw_models = await OllamaClient(api_base).list_models()
+            result = []
+            for item in raw_models:
+                model_id = item.get("name") or item.get("model")
+                if model_id:
+                    result.append({
+                        "id": model_id,
+                        "name": model_id,
+                        "provider": "ollama",
+                        "size": item.get("size"),
+                        "digest": item.get("digest"),
+                        "modified_at": item.get("modified_at"),
+                        "details": item.get("details") or {},
+                    })
+            return result
+        except Exception as exc:
+            logger.warning("Failed to list Ollama models: %s", exc)
+            return []
 
     url = f"{api_base}/models"
     headers = {}
@@ -593,46 +639,52 @@ async def get_models_api():
             resp = await client.get(url, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
+                result: list = []
+
+                # ── Format 1: OpenAI / OpenRouter ──────────────────────────
                 if isinstance(data, dict) and "data" in data:
-                    models = data["data"]
-                    result = []
-                    for m in models:
-                        m_id = m.get("id")
+                    raw_models = data["data"]
+                    for m in raw_models:
+                        m_id = m.get("id") or m.get("name")
                         m_name = m.get("name") or m_id
-                        result.append({"id": m_id, "name": m_name})
-                    
-                    rec_models = [
-                        "google/gemini-2.5-flash",
-                        "google/gemini-2.5-pro",
-                        "anthropic/claude-sonnet-4-5",
-                        "anthropic/claude-opus-4",
-                        "openai/gpt-4o",
-                        "openai/gpt-4o-mini",
-                        "deepseek/deepseek-r1",
-                        "deepseek/deepseek-v3-0324",
-                        "meta-llama/llama-3.3-70b-instruct"
-                    ]
-                    
-                    recommended = []
-                    others = []
-                    
-                    for item in result:
-                        if item["id"] in rec_models:
-                            recommended.append(item)
-                        else:
-                            others.append(item)
-                            
-                    recommended.sort(key=lambda x: rec_models.index(x["id"]))
-                    others.sort(key=lambda x: x["id"].lower())
-                    
-                    final_result = recommended + others
-                    _models_cache["data"] = final_result
+                        if m_id:
+                            result.append({"id": m_id, "name": m_name})
+
+                # ── Format 2: Ollama native /api/tags ──────────────────────
+                elif isinstance(data, dict) and "models" in data:
+                    raw_models = data["models"]
+                    for m in raw_models:
+                        m_name = m.get("name") or m.get("model")
+                        if m_name:
+                            result.append({"id": m_name, "name": m_name})
+
+                # ── Format 3: flat list ────────────────────────────────────
+                elif isinstance(data, list):
+                    for m in data:
+                        m_id = m.get("id") or m.get("name") or str(m)
+                        m_name = m.get("name") or m_id
+                        if m_id:
+                            result.append({"id": m_id, "name": m_name})
+
+                if result:
+                    # Sort local models alphabetically; no "recommended" bias.
+                    result.sort(key=lambda x: x["id"].lower())
+                    _models_cache["data"] = result
                     _models_cache["timestamp"] = now
-                    return final_result
+                    return result
     except Exception as e:
         logger.error(f"Error fetching models: {e}")
 
-    # Fallback list if request fails
+    # ── Fallback: local provider vs OpenRouter ─────────────────────────────
+    is_local = any(m in (api_base or "").lower()
+                   for m in ("localhost", "127.0.0.1", "0.0.0.0", "ollama",
+                             "host.docker.internal", "lmstudio", "vllm"))
+    if is_local:
+        # Return the currently configured model as the only available option.
+        current_model = os.getenv("LLM_MODEL", "hermes-brain")
+        return [{"id": current_model, "name": f"Local: {current_model}"}]
+
+    # OpenRouter fallback list
     return [
         {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash (default)"},
         {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
@@ -644,6 +696,95 @@ async def get_models_api():
         {"id": "deepseek/deepseek-v3-0324", "name": "DeepSeek: V3"},
         {"id": "meta-llama/llama-3.3-70b-instruct", "name": "Meta Llama 3.3 70B"},
     ]
+
+
+def _ollama_client():
+    from backend.ollama_client import OllamaClient
+    # Model management remains available even while the active chat provider is
+    # temporarily switched to OpenRouter/OpenAI-compatible.
+    return OllamaClient(agent_instance.ollama_base_url, timeout=agent_instance.request_timeout)
+
+
+@app.get("/api/ollama/status")
+async def get_ollama_status():
+    return await _ollama_client().status()
+
+
+@app.get("/api/ollama/models")
+async def get_ollama_models():
+    try:
+        return {"models": await _ollama_client().list_models()}
+    except Exception as exc:
+        from backend.ollama_client import OllamaError
+        if isinstance(exc, OllamaError):
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise
+
+
+@app.get("/api/ollama/running")
+async def get_ollama_running_models():
+    try:
+        return {"models": await _ollama_client().list_running()}
+    except Exception as exc:
+        from backend.ollama_client import OllamaError
+        if isinstance(exc, OllamaError):
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise
+
+
+@app.post("/api/ollama/models/show")
+async def show_ollama_model(request: OllamaModelRequest):
+    try:
+        return await _ollama_client().show_model(request.model)
+    except Exception as exc:
+        from backend.ollama_client import OllamaError
+        if isinstance(exc, OllamaError):
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise
+
+
+@app.post("/api/ollama/models/pull")
+async def pull_ollama_model(request: OllamaPullRequest):
+    import json
+
+    async def progress_stream():
+        try:
+            async for event in _ollama_client().pull_model(request.model, insecure=request.insecure):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+            _models_cache["data"] = None
+            _models_cache["timestamp"] = 0
+        except Exception as exc:
+            from backend.ollama_client import OllamaError
+            code = exc.code if isinstance(exc, OllamaError) else "pull_error"
+            yield json.dumps({"error": str(exc), "code": code}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(progress_stream(), media_type="application/x-ndjson")
+
+
+@app.delete("/api/ollama/models/{model:path}")
+async def delete_ollama_model(model: str):
+    try:
+        await _ollama_client().delete_model(model)
+        _models_cache["data"] = None
+        _models_cache["timestamp"] = 0
+        return {"status": "deleted", "model": model}
+    except Exception as exc:
+        from backend.ollama_client import OllamaError
+        if isinstance(exc, OllamaError):
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise
+
+
+@app.post("/api/ollama/models/unload")
+async def unload_ollama_model(request: OllamaModelRequest):
+    try:
+        await _ollama_client().unload_model(request.model)
+        return {"status": "unloaded", "model": request.model}
+    except Exception as exc:
+        from backend.ollama_client import OllamaError
+        if isinstance(exc, OllamaError):
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise
 
 # ─── MCP CONFIG API ───────────────────────────────────────────────────────────
 
@@ -950,10 +1091,7 @@ async def websocket_endpoint(websocket: WebSocket):
         history = get_chat_history("dashboard")
         await websocket.send_json({
             "type": "init",
-            "config": {
-                "system_prompt": agent_instance.system_prompt,
-                "model": agent_instance.model
-            },
+            "config": agent_instance.get_runtime_config(),
             "logs": DECISION_LOGS[:20],
             "history": history,
             "activity_logs": ACTIVITY_LOGS
@@ -980,8 +1118,33 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_task = asyncio.current_task()
                     if run_id and current_task:
                         ACTIVE_CHAT_RUNS[run_id] = current_task
+                    if run_id:
+                        await manager.broadcast({
+                            "type": "chat_stream_start",
+                            "chat_id": chat_id,
+                            "run_id": run_id,
+                            "model": agent_instance.model,
+                            "provider": agent_instance.provider,
+                        })
+
+                    async def emit_stream_chunk(chunk):
+                        if not run_id:
+                            return
+                        await manager.broadcast({
+                            "type": "chat_stream_chunk",
+                            "chat_id": chat_id,
+                            "run_id": run_id,
+                            "content": chunk.get("content") or "",
+                            "thinking": chunk.get("thinking") or "",
+                            "tool_calls": chunk.get("tool_calls") or [],
+                            "done": bool(chunk.get("done")),
+                        })
                     try:
-                        response_text = await agent_instance.respond(user_text, session_id=chat_id)
+                        response_text = await agent_instance.respond(
+                            user_text,
+                            session_id=chat_id,
+                            stream_callback=emit_stream_chunk,
+                        )
                     except asyncio.CancelledError:
                         await manager.broadcast({
                             "type": "chat_cancelled", "chat_id": chat_id,
@@ -1026,7 +1189,16 @@ async def websocket_endpoint(websocket: WebSocket):
                         "suppress_tts": suppress_tts,
                         "id": assistant_msg_id,
                         "meta": meta,
+                        "run_id": run_id,
                     })
+                    if run_id:
+                        await manager.broadcast({
+                            "type": "chat_stream_end",
+                            "chat_id": chat_id,
+                            "run_id": run_id,
+                            "message_id": assistant_msg_id,
+                            "meta": meta,
+                        })
                     
                     # Broadcast user message ID update
                     if user_msg_id:

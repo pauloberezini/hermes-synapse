@@ -5,7 +5,7 @@ import asyncio
 import hashlib
 import re
 import json
-from typing import List, Dict, Any, Optional
+from typing import Awaitable, Callable, List, Dict, Any, Optional
 import httpx
 from dotenv import load_dotenv
 
@@ -205,24 +205,41 @@ def _is_qwen_model(model: str) -> bool:
 
 
 def _local_model_system_hint(model: str, api_base: str) -> str:
-    if not (_is_local_llm_endpoint(api_base) or _is_qwen_model(model)):
+    """Add a compatibility hint ONLY for models that emit hidden reasoning blocks.
+
+    Qwen thinking models (qwen2.5, qwq, etc.) embed <think> blocks in their
+    output.  Hermes, Llama, Mistral and most other local models do NOT need
+    this hint — it can actually confuse them.
+    """
+    if not _is_qwen_model(model):
+        return ""
+    if not (_is_local_llm_endpoint(api_base)):
         return ""
     hint = (
         "\n\n[Local model compatibility]:\n"
-        "Return only the final visible answer. Do not emit hidden reasoning, analysis, "
-        "thinking traces, or <think> blocks. If you are a Qwen thinking model, use /no_think."
+        "Return only the final visible answer. Do not emit hidden reasoning, "
+        "analysis, thinking traces, or <think> blocks. Use /no_think."
     )
-    if _is_qwen_model(model):
-        hint += "\n/no_think"
+    hint += "\n/no_think"
     return hint
 
 
-def _provider_display_name(api_base: str, is_openmodel: bool = False) -> str:
+def _provider_display_name(api_base: str, is_openmodel: bool = False, provider: str = "") -> str:
     if is_openmodel:
         return "OpenModel"
+    from backend.ollama_client import is_ollama_provider
+    if is_ollama_provider(api_base, provider):
+        return "Ollama"
     if _is_local_llm_endpoint(api_base):
         return "локальной LLM"
     return "OpenRouter"
+
+
+def _provider_cost(api_base: str, provider: str, model: str, input_tokens: int, output_tokens: int) -> float:
+    from backend.ollama_client import is_ollama_provider
+    if is_ollama_provider(api_base, provider):
+        return 0.0
+    return calculate_cost(model, input_tokens, output_tokens)
 
 
 def _looks_like_tool_support_error(response_text: str) -> bool:
@@ -335,6 +352,12 @@ def _clean_model_output(text: str) -> str:
 
     original = text.strip()
     cleaned = original
+    markers = [
+        "final answer:",
+        "answer:",
+        "итог:",
+        "ответ:",
+    ]
     if "</think>" in cleaned:
         cleaned = re.sub(r"(?is)<think>.*?</think>", "", cleaned).strip()
     elif re.match(r"(?is)^\s*<think>", cleaned):
@@ -342,20 +365,19 @@ def _clean_model_output(text: str) -> str:
         # unfinished thinking block. If there is visible text after the (never
         # closed) block, keep it; only return empty when the whole message is
         # reasoning, so the caller can run the visible-answer retry.
-        after = re.sub(r"(?is)^\s*<think>.*", "", cleaned).strip()
-        return after
+        body = re.sub(r"(?is)^\s*<think(?:\s[^>]*)?>", "", cleaned).strip()
+        lower_body = body.lower()
+        for marker in markers:
+            pos = lower_body.rfind(marker)
+            if pos >= 0:
+                return body[pos + len(marker):].strip()
+        return ""
     else:
         cleaned = re.sub(r"(?is)<think>.*", "", cleaned).strip()
 
     # Marker stripping keeps only the tail after an explicit "answer:" style
     # marker. Guard against destroying a real answer: only trim when a non-empty
     # tail remains, otherwise keep the cleaned text as-is.
-    markers = [
-        "final answer:",
-        "answer:",
-        "итог:",
-        "ответ:",
-    ]
     lower = cleaned.lower()
     for marker in markers:
         pos = lower.rfind(marker)
@@ -513,7 +535,7 @@ _AGENT_SEARCH_TRIGGERS = [
     "найди", "поищи", "search", "find", "новости", "news", "курс", "цена",
 ]
 
-async def classify_complexity(user_message: str, api_key: str, api_base: str) -> str:
+async def classify_complexity(user_message: str, api_key: str, api_base: str, provider: str = "") -> str:
     """
     Uses a cheap fast LLM call to classify query complexity.
     Returns: 'direct' | 'agent' | 'orchestrate'
@@ -532,33 +554,33 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str) ->
     
     # Try LLM classifier with the fast/cheap planner model
     from backend.subagents import get_agent_model
-    classifier_model = get_agent_model("planner", os.getenv("LLM_MODEL", "google/gemini-2.5-pro"))
+    classifier_model = get_agent_model("planner", os.getenv("LLM_MODEL", "qwen3:8b"))
     
     try:
-        import httpx
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": classifier_model,
-            "messages": _sanitize_messages_for_provider([
+        from backend.llm_client import call_llm_normalized
+
+        result = await call_llm_normalized(
+            api_base=api_base,
+            api_key=api_key,
+            model=classifier_model,
+            messages=[
                 {"role": "system", "content": _COMPLEXITY_SYSTEM + _local_model_system_hint(classifier_model, api_base)},
-                {"role": "user",   "content": user_message}
-            ]),
-            "temperature": 0.0,
-            "max_tokens": 5
-        }
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                f"{api_base}/chat/completions",
-                json=payload,
-                headers=headers
-            )
-        if resp.status_code == 200:
-            level = _clean_model_output(_extract_message_text(_extract_choice_message(resp.json()).get("content"))).strip().lower()
-            if level in ("direct", "agent", "orchestrate"):
-                return level
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.0,
+            max_tokens=8,
+            timeout=8.0,
+            max_retries=0,
+            provider_options={
+                "provider": provider,
+                "num_ctx": _env_int("OLLAMA_NUM_CTX", 8192),
+                "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "5m"),
+                "think": False,
+            },
+        )
+        level = _clean_model_output(result.content or "").strip().lower()
+        if level in ("direct", "agent", "orchestrate"):
+            return level
     except Exception as e:
         logger.warning(f"Complexity classifier LLM call failed ({e}), falling back to keyword routing")
     
@@ -641,15 +663,24 @@ If Sir asks what you can do, or requests info about a specific skill, describe i
 
 class JarvisAgent:
     def __init__(self):
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
-        self.model = os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
+        self.provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+        self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+        self.openai_api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1").rstrip("/")
+        if self.provider == "ollama":
+            self.api_base = self.ollama_base_url
+        else:
+            self.api_base = self.openai_api_base
+        self.model = os.getenv("LLM_MODEL", "qwen3:8b")
         self.system_prompt = DEFAULT_SYSTEM_PROMPT
-        self.fast_mode = _env_bool("LLM_FAST_MODE", "ollama" in self.api_base.lower())
+        self.fast_mode = _env_bool("LLM_FAST_MODE", False)
         self.max_history_len = _env_int("LLM_MAX_HISTORY_MESSAGES", 6 if self.fast_mode else 20)
-        self.max_tokens = _env_int("LLM_MAX_TOKENS", 256 if self.fast_mode else 1024)
-        self.tool_max_tokens = _env_int("LLM_TOOL_MAX_TOKENS", 512 if self.fast_mode else 1024)
-        self.temperature = _env_float("LLM_TEMPERATURE", 0.2 if self.fast_mode else 0.7)
+        self.max_tokens = _env_int("LLM_MAX_TOKENS", 1024 if self.fast_mode else 2048)
+        self.tool_max_tokens = _env_int("LLM_TOOL_MAX_TOKENS", 1024 if self.fast_mode else 2048)
+        self.temperature = _env_float("LLM_TEMPERATURE", 0.3 if self.fast_mode else 0.7)
+        self.ollama_num_ctx = _env_int("OLLAMA_NUM_CTX", 8192)
+        self.ollama_keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "5m")
+        self.ollama_think: Any = os.getenv("OLLAMA_THINK", "false")
         # Hard ceilings to prevent runaway agent loops / cost (audit P0, P1-4).
         self.max_tool_iterations = _env_int("LLM_MAX_TOOL_ITERATIONS", 8)
         self.request_timeout = _env_float("LLM_REQUEST_TIMEOUT", 60.0)
@@ -674,6 +705,13 @@ class JarvisAgent:
             if settings.get("model"):
                 self.model = settings["model"]
             self.update_runtime_config(
+                provider=settings.get("provider"),
+                api_base=settings.get("api_base"),
+                ollama_base_url=settings.get("ollama_base_url"),
+                openai_api_base=settings.get("openai_api_base"),
+                ollama_num_ctx=settings.get("ollama_num_ctx"),
+                ollama_keep_alive=settings.get("ollama_keep_alive"),
+                ollama_think=settings.get("ollama_think"),
                 fast_mode=settings.get("fast_mode"),
                 max_history_len=settings.get("max_history_len"),
                 max_tokens=settings.get("max_tokens"),
@@ -702,6 +740,13 @@ class JarvisAgent:
         return {
             "system_prompt": self.system_prompt,
             "model": self.model,
+            "provider": self.provider,
+            "api_base": self.api_base,
+            "ollama_base_url": self.ollama_base_url,
+            "openai_api_base": self.openai_api_base,
+            "ollama_num_ctx": self.ollama_num_ctx,
+            "ollama_keep_alive": self.ollama_keep_alive,
+            "ollama_think": self.ollama_think,
             "fast_mode": self.fast_mode,
             "max_history_len": self.max_history_len,
             "max_tokens": self.max_tokens,
@@ -714,6 +759,35 @@ class JarvisAgent:
         }
 
     def update_runtime_config(self, **kwargs):
+        for key, attribute in (
+            ("ollama_base_url", "ollama_base_url"),
+            ("openai_api_base", "openai_api_base"),
+        ):
+            if kwargs.get(key) is not None:
+                value = str(kwargs[key]).strip().rstrip("/")
+                if value.startswith(("http://", "https://")):
+                    setattr(self, attribute, value)
+        previous_provider = self.provider
+        if kwargs.get("provider") is not None:
+            provider = str(kwargs["provider"]).strip().lower()
+            if provider in {"ollama", "openrouter", "openai_compatible"}:
+                self.provider = provider
+        if self.provider != previous_provider and kwargs.get("api_base") is None:
+            self.api_base = self.ollama_base_url if self.provider == "ollama" else self.openai_api_base
+        if kwargs.get("api_base") is not None:
+            value = str(kwargs["api_base"]).strip().rstrip("/")
+            if value.startswith(("http://", "https://")):
+                self.api_base = value
+                if self.provider == "ollama":
+                    self.ollama_base_url = value
+                else:
+                    self.openai_api_base = value
+        if kwargs.get("ollama_num_ctx") is not None:
+            self.ollama_num_ctx = max(512, min(262144, int(kwargs["ollama_num_ctx"])))
+        if kwargs.get("ollama_keep_alive") is not None:
+            self.ollama_keep_alive = str(kwargs["ollama_keep_alive"]).strip() or "5m"
+        if kwargs.get("ollama_think") is not None:
+            self.ollama_think = kwargs["ollama_think"]
         if kwargs.get("fast_mode") is not None:
             self.fast_mode = bool(kwargs["fast_mode"])
         if kwargs.get("max_history_len") is not None:
@@ -732,6 +806,19 @@ class JarvisAgent:
             self.memory_auto_save = bool(kwargs["memory_auto_save"])
         if kwargs.get("memory_max_items") is not None:
             self.memory_max_items = max(0, min(20, int(kwargs["memory_max_items"])))
+        try:
+            from backend.subagents import configure_llm_runtime
+            configure_llm_runtime(
+                self.api_base,
+                {
+                    "provider": self.provider,
+                    "num_ctx": self.ollama_num_ctx,
+                    "keep_alive": self.ollama_keep_alive,
+                    "think": self.ollama_think,
+                },
+            )
+        except Exception as exc:
+            logger.debug("Could not publish LLM runtime settings: %s", exc)
         logger.info("Runtime config updated: %s", self.get_runtime_config())
 
     def get_history(self, session_id: str) -> List[Dict[str, str]]:
@@ -742,10 +829,27 @@ class JarvisAgent:
         from backend import database as db
         db.clear_chat_history(session_id)
 
-    async def respond(self, user_message: str, session_id: str = "default") -> str:
-        """Sends chat request to OpenRouter LLM model with memory context and system prompt."""
-        if not self.api_key:
+    async def respond(
+        self,
+        user_message: str,
+        session_id: str = "default",
+        stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> str:
+        """Run one agent turn and optionally emit native provider stream chunks."""
+        from backend.ollama_client import is_ollama_provider
+        if not self.api_key and not is_ollama_provider(self.api_base, self.provider):
             return "Ошибка: OPENROUTER_API_KEY не задан в конфигурации .env, Сэр."
+
+        from backend.subagents import configure_llm_runtime
+        configure_llm_runtime(
+            self.api_base,
+            {
+                "provider": self.provider,
+                "num_ctx": self.ollama_num_ctx,
+                "keep_alive": self.ollama_keep_alive,
+                "think": self.ollama_think,
+            },
+        )
 
         # IMMEDIATE persistence of user message to prevent session loss on UI refresh
         from backend import database as db
@@ -800,7 +904,7 @@ class JarvisAgent:
                 # Calculate cost (estimate)
                 prompt_est = len(user_message) // 4
                 completion_est = len(response_text) // 4
-                cost_usd = calculate_cost(self.model, prompt_est, completion_est)
+                cost_usd = _provider_cost(self.api_base, self.provider, self.model, prompt_est, completion_est)
                 self.last_costs[session_id] = cost_usd
                 
                 assistant_msg_id = db.save_message(session_id, "assistant", response_text, cost_usd=cost_usd)
@@ -811,7 +915,12 @@ class JarvisAgent:
                 return response_text
             else:
                 try:
-                    response_text = await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id)
+                    response_text = await self._respond_as_subagent(
+                        user_message,
+                        subagent,
+                        current_user_msg_id=current_user_msg_id,
+                        stream_callback=stream_callback,
+                    )
                     update_agent_runtime_state(
                         session_id,
                         status="idle",
@@ -881,7 +990,7 @@ class JarvisAgent:
                     return response_text
 
         # ── Complexity routing (Fugu-style) ───────────────────────────────────────
-        complexity = await classify_complexity(user_message, self.api_key, self.api_base)
+        complexity = await classify_complexity(user_message, self.api_key, self.api_base, self.provider)
         logger.info(f"Complexity routing decision: '{complexity}' for query: '{user_message[:60]}'")
         log_activity(
             activity_type="active",
@@ -955,7 +1064,7 @@ class JarvisAgent:
             # Calculate cost based on estimated tokens
             prompt_est = len(user_message) // 4
             completion_est = len(response_text) // 4
-            cost_usd = calculate_cost(self.model, prompt_est, completion_est)
+            cost_usd = _provider_cost(self.api_base, self.provider, self.model, prompt_est, completion_est)
             self.last_costs[session_id] = cost_usd
             
             # Save the clean message exchange in the DB
@@ -1099,6 +1208,13 @@ class JarvisAgent:
                         # the following model request automatically.
                         max_retries=0 if tool_executed else None,
                         client=client,
+                        stream_callback=stream_callback,
+                        provider_options={
+                            "provider": self.provider,
+                            "num_ctx": self.ollama_num_ctx,
+                            "keep_alive": self.ollama_keep_alive,
+                            "think": self.ollama_think,
+                        },
                     )
                     total_prompt_tokens += normalized.usage.input_tokens or 0
                     total_completion_tokens += normalized.usage.output_tokens or 0
@@ -1131,6 +1247,13 @@ class JarvisAgent:
                                 temperature=min(self.temperature, 0.3),
                                 max_tokens=self.max_tokens, timeout=self.request_timeout,
                                 max_retries=0, client=client,
+                                stream_callback=stream_callback,
+                                provider_options={
+                                    "provider": self.provider,
+                                    "num_ctx": self.ollama_num_ctx,
+                                    "keep_alive": self.ollama_keep_alive,
+                                    "think": self.ollama_think,
+                                },
                             )
                             total_prompt_tokens += retry.usage.input_tokens or 0
                             total_completion_tokens += retry.usage.output_tokens or 0
@@ -1152,7 +1275,7 @@ class JarvisAgent:
                             response_text = _empty_model_response_fallback("Vexa")
                         
                         # Calculate cost
-                        cost_usd = calculate_cost(self.model, total_prompt_tokens, total_completion_tokens)
+                        cost_usd = _provider_cost(self.api_base, self.provider, self.model, total_prompt_tokens, total_completion_tokens)
                         self.last_costs[session_id] = cost_usd
                         
                         from backend.activity_logger import log_activity
@@ -1302,7 +1425,7 @@ class JarvisAgent:
                 **self.last_run_metadata.get(session_id, {}),
                 "status": response_status if error_msg is None or response_status != "success" else "success",
                 "model": self.model,
-                "provider": _provider_display_name(self.api_base, "openmodel.ai" in self.api_base),
+                "provider": _provider_display_name(self.api_base, "openmodel.ai" in self.api_base, self.provider),
                 "finish_reason": last_finish_reason,
                 "request_id": last_request_id,
                 "latency_ms": latency_ms,
@@ -1317,7 +1440,14 @@ class JarvisAgent:
 
         return response_text
 
-    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None) -> str:
+    async def _respond_as_subagent(
+        self,
+        user_message: str,
+        subagent: Dict[str, Any],
+        parent_skills: Optional[str] = None,
+        current_user_msg_id: Optional[int] = None,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
         session_id = subagent["id"]
         subagent_name = subagent["name"]
@@ -1372,13 +1502,6 @@ class JarvisAgent:
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": user_content})
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/pauloberezini/hermes",
-            "X-Title": f"Vexa - {session_id}"
-        }
 
         # Subagents are limited to safe information-gathering tools only
         from backend.tools import TOOLS_SCHEMA, execute_tool
@@ -1484,117 +1607,91 @@ class JarvisAgent:
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
-        retried_without_tools = False
+        tool_iterations = 0
+        response_status = "success"
 
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
+            from backend.llm_client import (
+                STATUS_EMPTY,
+                STATUS_PARSE_ERROR,
+                STATUS_PROVIDER_ERROR,
+                STATUS_REFUSAL,
+                STATUS_TIMEOUT,
+                call_llm_normalized,
+            )
+            async with httpx.AsyncClient(timeout=self.request_timeout) as client:
                 while True:
-                    payload = {
-                        "model": subagent_model,
-                        "messages": _sanitize_messages_for_provider(messages),
-                        "temperature": subagent.get("temperature", 0.7),
-                        "max_tokens": self.tool_max_tokens if selected_subagent_tools else self.max_tokens,
-                    }
-                    if selected_subagent_tools:
-                        payload["tools"] = selected_subagent_tools
-                    
-                    is_openmodel = "openmodel.ai" in self.api_base
-                    url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
-                    actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
-                    
-                    response = await client.post(
-                        url,
-                        json=actual_payload,
-                        headers=headers
-                    )
-                    
-                    if response.status_code != 200:
-                        if (
-                            selected_subagent_tools
-                            and not retried_without_tools
-                            and _is_local_llm_endpoint(self.api_base)
-                            and _looks_like_tool_support_error(response.text)
-                        ):
-                            logger.warning(
-                                "Local LLM rejected subagent tool-calling for session %s. Retrying once without tools. Error: %s",
-                                session_id,
-                                response.text[:500],
-                            )
-                            retried_without_tools = True
-                            selected_subagent_tools = []
-                            messages.append({
-                                "role": "user",
-                                "content": (
-                                    "The local model endpoint rejected tool-calling. "
-                                    "Answer directly without tools and clearly say if live data cannot be verified."
-                                )
-                            })
-                            continue
-                        error_msg = f"HTTP Error {response.status_code}: {response.text}"
-                        provider_name = _provider_display_name(self.api_base, is_openmodel)
-                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
+                    if tool_iterations >= self.max_tool_iterations:
+                        error_msg = f"max_tool_iterations ({self.max_tool_iterations}) reached"
+                        response_status = "provider_error"
+                        response_text = "Задача остановлена: превышено безопасное число вызовов инструментов."
                         break
-                        
-                    raw_data = response.json()
-                    data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
-                    usage = data.get("usage", {})
-                    total_prompt_tokens += usage.get("prompt_tokens", 0)
-                    total_completion_tokens += usage.get("completion_tokens", 0)
-                    
-                    choice_msg = _extract_choice_message(data)
-                    
-                    tool_calls = _normalize_tool_calls(choice_msg.get("tool_calls"))
-                    if not tool_calls:
-                        raw_response_text = _extract_message_text(choice_msg.get("content"))
-                        response_text = _clean_model_output(raw_response_text)
 
-                        if _should_retry_empty_clean_response(response_text):
+                    normalized = await call_llm_normalized(
+                        api_base=self.api_base,
+                        api_key=self.api_key,
+                        model=subagent_model,
+                        messages=messages,
+                        temperature=subagent.get("temperature", 0.7),
+                        max_tokens=self.tool_max_tokens if selected_subagent_tools else self.max_tokens,
+                        tools=selected_subagent_tools or None,
+                        timeout=self.request_timeout,
+                        max_retries=0 if tool_executed else None,
+                        client=client,
+                        stream_callback=stream_callback,
+                        provider_options={
+                            "provider": self.provider,
+                            "num_ctx": self.ollama_num_ctx,
+                            "keep_alive": self.ollama_keep_alive,
+                            "think": self.ollama_think,
+                        },
+                    )
+
+                    total_prompt_tokens += normalized.usage.input_tokens or 0
+                    total_completion_tokens += normalized.usage.output_tokens or 0
+                    response_status = normalized.status
+                    if normalized.status in (STATUS_TIMEOUT, STATUS_PROVIDER_ERROR, STATUS_PARSE_ERROR):
+                        error_msg = normalized.error_message or normalized.status
+                        response_text = (
+                            "Локальная модель не ответила вовремя."
+                            if normalized.status == STATUS_TIMEOUT
+                            else f"Не удалось получить ответ от {_provider_display_name(self.api_base, provider=self.provider)}: {error_msg}"
+                        )
+                        break
+
+                    tool_calls = normalized.tool_calls
+                    if not tool_calls:
+                        response_text = normalized.content or ""
+
+                        if normalized.status == STATUS_EMPTY and not tool_executed:
                             logger.info("Sub-agent '%s' final response was empty after cleanup. Retrying for visible final answer...", subagent_name)
-                            try:
-                                retry_payload = {
-                                    "model": subagent_model,
-                                    "messages": _sanitize_messages_for_provider(messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}]),
-                                    "temperature": min(subagent.get("temperature", 0.7), 0.3),
-                                    "max_tokens": self.max_tokens,
-                                }
-                                retry_url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
-                                retry_actual_payload = translate_to_anthropic_payload(retry_payload) if is_openmodel else retry_payload
-                                response_retry = await client.post(
-                                    retry_url,
-                                    json=retry_actual_payload,
-                                    headers=headers
-                                )
-                                if response_retry.status_code == 200:
-                                    raw_retry_data = response_retry.json()
-                                    retry_data = translate_to_openai_response(raw_retry_data) if is_openmodel else raw_retry_data
-                                    retry_usage = retry_data.get("usage", {})
-                                    total_prompt_tokens += retry_usage.get("prompt_tokens", 0)
-                                    total_completion_tokens += retry_usage.get("completion_tokens", 0)
-                                    retry_choice_msg = _extract_choice_message(retry_data)
-                                    response_text = _clean_model_output(_extract_message_text(retry_choice_msg.get("content")))
-                                else:
-                                    logger.warning(
-                                        "Final answer retry failed for sub-agent '%s' session %s with status %s",
-                                        subagent_name,
-                                        session_id,
-                                        response_retry.status_code
-                                    )
-                            except Exception as retry_err:
-                                logger.warning(
-                                    "Final answer retry raised for sub-agent '%s' session %s: %s",
-                                    subagent_name,
-                                    session_id,
-                                    retry_err
-                                )
-                        
-                        # Fallback for empty text content after tools
+                            retry = await call_llm_normalized(
+                                api_base=self.api_base,
+                                api_key=self.api_key,
+                                model=subagent_model,
+                                messages=messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
+                                temperature=min(subagent.get("temperature", 0.7), 0.3),
+                                max_tokens=self.max_tokens,
+                                timeout=self.request_timeout,
+                                max_retries=0,
+                                client=client,
+                                stream_callback=stream_callback,
+                                provider_options={"provider": self.provider, "num_ctx": self.ollama_num_ctx, "keep_alive": self.ollama_keep_alive, "think": self.ollama_think},
+                            )
+                            total_prompt_tokens += retry.usage.input_tokens or 0
+                            total_completion_tokens += retry.usage.output_tokens or 0
+                            response_status = retry.status
+                            response_text = retry.content or ""
+
+                        if normalized.status == STATUS_REFUSAL and not response_text:
+                            response_text = "Модель отклонила запрос."
                         if not response_text.strip() and tool_executed:
                             response_text = "Действия успешно выполнены, Сэр."
                         if not response_text.strip():
                             logger.warning("Sub-agent '%s' returned an empty final response for session %s", subagent_name, session_id)
                             response_text = _empty_model_response_fallback(subagent_name)
                         
-                        cost_usd = calculate_cost(subagent_model, total_prompt_tokens, total_completion_tokens)
+                        cost_usd = _provider_cost(self.api_base, self.provider, subagent_model, total_prompt_tokens, total_completion_tokens)
                         self.last_costs[session_id] = cost_usd
                         
                         log_activity(
@@ -1615,8 +1712,8 @@ class JarvisAgent:
                         
                     logger.info(f"Subagent {subagent_name} selected tools: {[tc.get('function', {}).get('name') for tc in tool_calls]}")
                     tool_executed = True
-                    
-                    messages.append(_sanitize_message_for_provider({**choice_msg, "tool_calls": tool_calls}))
+                    tool_iterations += 1
+                    messages.append({"role": "assistant", "content": normalized.content or "", "thinking": normalized.reasoning or "", "tool_calls": tool_calls})
                     
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
@@ -1643,6 +1740,17 @@ class JarvisAgent:
             error_msg = str(e)
             logger.exception("Error during LLM subagent chat completion call")
             response_text = "Прошу прощения, Сэр. Произошел сбой при обработке запроса субагента."
+
+        self.last_run_metadata[session_id] = {
+            "status": response_status,
+            "model": subagent_model,
+            "provider": _provider_display_name(self.api_base, provider=self.provider),
+            "latency_ms": latency_ms,
+            "input_tokens": total_prompt_tokens,
+            "output_tokens": total_completion_tokens,
+            "tool_iterations": tool_iterations,
+            "error": error_msg,
+        }
 
         # Add call record to global decision logs
         log_entry = {

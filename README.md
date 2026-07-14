@@ -42,6 +42,15 @@ graph TD
         DB[(🗄️ SQLite: history & settings)] <--> Orch
         Qdrant[(🔍 Qdrant: RAG Memory)] <--> SubAgent
     end
+
+    subgraph Inference [Local inference]
+        Ollama[🦙 Ollama native API]
+        Models[(Local model store)]
+        Ollama <--> Models
+    end
+
+    Orch <--> Ollama
+    SubAgent <--> Ollama
     
     subgraph ExternalServices [Integrations & Tools]
         Google[📅 Google Calendar]
@@ -80,13 +89,21 @@ Copy the template configuration file:
 ```bash
 cp .env.example .env
 ```
-Open `.env` and fill in your keys (at minimum, `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` are required).
+The default setup is local-first and does not require an LLM API key. Optional
+Telegram, search, calendar, and cloud-provider keys can be added later.
 
 ### 3. Launch the Stack
 ```bash
-docker compose up -d --build
+docker-compose up -d --build
 ```
-This starts the backend (FastAPI), frontend dashboard (Nginx/React), and vector database (Qdrant).
+This starts the backend (FastAPI), frontend dashboard (Nginx/React), Ollama,
+and the Qdrant vector database. Pull the default model once:
+
+```bash
+docker-compose exec ollama ollama pull hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
+```
+
+You can also pull and delete models from **System Core Parameters → Ollama Models**.
 
 ### 4. Access the Dashboard
 Open your browser and navigate to:
@@ -102,24 +119,43 @@ http://localhost:9119
 
 Hermes starts gracefully even if optional integrations are not configured.
 
-### 🤖 LLM Models (OpenRouter & Local / Custom Providers)
-By default, Hermes uses OpenRouter. However, it supports **any OpenAI-compatible API** (such as **Ollama**, **vLLM**, **LM Studio**, **LocalAI**, etc.).
+### 🤖 Ollama and model providers
 
-To use a local or custom provider:
-1. Open your `.env` file.
-2. Set `LLM_API_BASE` to your provider's local endpoint (e.g., `http://localhost:11434/v1` for Ollama or `http://localhost:8000/v1` for vLLM).
-3. Set `LLM_MODEL` to your local model name (e.g., `llama3`, `mistral`, or `deepseek-coder`).
-4. Set `OPENROUTER_API_KEY` to any non-empty placeholder value (e.g., `local` or `dummy`), as the backend requires a non-empty key parameter to initialize.
+Ollama is the default provider and uses its **native API**, including streamed
+chat responses, tool calls, thinking output, usage counters, model inspection,
+pull progress, unload, and deletion. No placeholder API key or `/v1` compatibility
+endpoint is required.
+
+For a host installation, use:
+
+```dotenv
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+# Optional for a protected remote Ollama server:
+OLLAMA_API_KEY=
+LLM_MODEL=hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
+OLLAMA_NUM_CTX=262144
+OLLAMA_KEEP_ALIVE=-1
+OLLAMA_THINK=true
+OLLAMA_FLASH_ATTENTION=1
+OLLAMA_KV_CACHE_TYPE=q8_0
+```
+
+Docker Compose automatically changes the internal URL to `http://ollama:11434`.
+OpenRouter and other OpenAI-compatible providers remain available from the
+dashboard provider selector or through `LLM_PROVIDER=openrouter` /
+`LLM_PROVIDER=openai_compatible` and `LLM_API_BASE`.
 
 You can also override models per specialized agent role using the following env variables:
 * `AGENT_MODEL_RESEARCH` (Research Agent)
 * `AGENT_MODEL_CODE` (Code Engineer)
-* `AGENT_MODEL_ANALYST` (Data Analyst)
 * `AGENT_MODEL_PLANNER` (Planner Agent)
 
 #### 🎨 Model Selection in the Web UI
 When creating or editing sub-agents on the visual canvas dashboard:
-* The model dropdown automatically fetches and displays all active models from your configured `LLM_API_BASE` `/models` endpoint (so local models will appear automatically).
+* For Ollama, the model dropdown discovers installed models through `/api/tags`.
+* The Ollama panel shows connectivity, server version, installed/running models, and pull progress.
+* Chat text is rendered incrementally as Ollama emits NDJSON chunks; cancellation preserves the partial response.
 * If a model is not listed, or you prefer to specify a custom model name manually, select **"Custom model..."** from the dropdown menu and type the exact model identifier directly in the input field.
 
 ### 💬 Telegram Integration
@@ -139,7 +175,7 @@ Recommended defaults:
 
 The first transcription downloads the selected Whisper model. Rebuild the backend image after changing dependencies:
 ```bash
-docker compose up -d --build backend
+docker-compose up -d --build backend
 ```
 
 ### 📅 Google Calendar (OAuth2 Manual Flow)

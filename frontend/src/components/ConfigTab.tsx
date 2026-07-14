@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Shield, Activity, Database, Zap } from 'lucide-react';
+import { Cpu, Shield, Activity, Database, Server, Zap } from 'lucide-react';
 import { styles } from '../styles';
 import type { SystemConfig } from '../types';
+import { OllamaManager } from './OllamaManager';
 
 interface ConfigTabProps {
   editedModel: string;
@@ -57,6 +58,8 @@ export function ConfigTab({
     return typeof value === 'boolean' ? value : fallback;
   };
 
+  const activeProvider = runtimeConfig.provider || 'ollama';
+
   const gridStyle: React.CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
@@ -90,6 +93,48 @@ export function ConfigTab({
       </div>
 
       <form onSubmit={handleSaveConfig} style={styles.configForm} className="glass-panel">
+        <div className="provider-config-grid">
+          <label style={styles.formGroup}>
+            <span style={styles.formLabel}><Server size={16} />LLM provider</span>
+            <select
+              className="form-input"
+              value={activeProvider}
+              onChange={event => {
+                const provider = event.target.value;
+                updateRuntime({
+                  provider,
+                  api_base: provider === 'ollama'
+                    ? (runtimeConfig.ollama_base_url || 'http://127.0.0.1:11434')
+                    : (runtimeConfig.openai_api_base || 'https://openrouter.ai/api/v1'),
+                });
+              }}
+              style={styles.formSelect}
+            >
+              <option value="ollama">Ollama — native local API</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai_compatible">OpenAI-compatible endpoint</option>
+            </select>
+          </label>
+          <label style={styles.formGroup}>
+            <span style={styles.formLabel}>Provider endpoint</span>
+            <input
+              className="form-input"
+              value={runtimeConfig.api_base || (activeProvider === 'ollama' ? 'http://127.0.0.1:11434' : 'https://openrouter.ai/api/v1')}
+              onChange={event => updateRuntime({
+                api_base: event.target.value,
+                ...(activeProvider === 'ollama'
+                  ? { ollama_base_url: event.target.value }
+                  : { openai_api_base: event.target.value }),
+              })}
+              placeholder="http://127.0.0.1:11434"
+            />
+          </label>
+        </div>
+
+        {activeProvider === 'ollama' && (
+          <OllamaManager selectedModel={editedModel} onSelectModel={setEditedModel} />
+        )}
+
         <div style={styles.formGroup}>
           <label style={styles.formLabel}>
             <Cpu size={16} style={{ color: '#00f0ff' }} />
@@ -117,15 +162,20 @@ export function ConfigTab({
                   <option value="__custom__">Custom model…</option>
                 </>
               ) : (
-                <>
-                  <option value="google/gemini-2.5-flash">google/gemini-2.5-flash</option>
-                  <option value="google/gemini-2.5-pro">google/gemini-2.5-pro (Recommended)</option>
-                  <option value="deepseek/deepseek-v4-flash">deepseek/deepseek-v4-flash</option>
-                  <option value="meta-llama/llama-3.3-70b-instruct">meta-llama/llama-3.3-70b-instruct</option>
-                  <option value="deepseek/deepseek-chat">deepseek/deepseek-chat</option>
-                  <option value="anthropic/claude-3.5-sonnet">anthropic/claude-3.5-sonnet</option>
-                  <option value="__custom__">Custom model…</option>
-                </>
+                activeProvider === 'ollama' ? (
+                  <>
+                    {editedModel && <option value={editedModel}>{editedModel}</option>}
+                    <option value="__custom__">Enter installed model name…</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="google/gemini-2.5-flash">google/gemini-2.5-flash</option>
+                    <option value="google/gemini-2.5-pro">google/gemini-2.5-pro</option>
+                    <option value="anthropic/claude-sonnet-4-5">anthropic/claude-sonnet-4-5</option>
+                    <option value="deepseek/deepseek-chat">deepseek/deepseek-chat</option>
+                    <option value="__custom__">Custom model…</option>
+                  </>
+                )
               )}
             </select>
             {showCustom && (
@@ -141,7 +191,7 @@ export function ConfigTab({
               />
             )}
           </div>
-          <span style={styles.formHelp}>Model is selected from those available on OpenRouter. Models with function calling support are recommended.</span>
+          <span style={styles.formHelp}>{activeProvider === 'ollama' ? 'Installed Ollama models are discovered through the native /api/tags endpoint.' : 'Models with function calling support are recommended.'}</span>
         </div>
 
         <div style={styles.formGroup}>
@@ -215,6 +265,24 @@ export function ConfigTab({
           </div>
 
           <div style={{ ...gridStyle, marginTop: '14px' }}>
+            {activeProvider === 'ollama' && (
+              <>
+                <label style={styles.formGroup}>
+                  <span style={styles.formLabel}>Ollama context window</span>
+                  <input type="number" min={512} max={262144} step={512} value={numberValue('ollama_num_ctx', 8192)} onChange={event => updateRuntime({ ollama_num_ctx: Number(event.target.value) })} style={compactInputStyle} className="form-input" />
+                </label>
+                <label style={styles.formGroup}>
+                  <span style={styles.formLabel}>Model keep-alive</span>
+                  <input value={String(runtimeConfig.ollama_keep_alive ?? '5m')} onChange={event => updateRuntime({ ollama_keep_alive: event.target.value })} style={compactInputStyle} className="form-input" placeholder="5m, 1h or -1" />
+                </label>
+                <label style={styles.formGroup}>
+                  <span style={styles.formLabel}>Thinking output</span>
+                  <select value={String(runtimeConfig.ollama_think ?? 'false')} onChange={event => updateRuntime({ ollama_think: event.target.value })} style={compactInputStyle} className="form-input">
+                    <option value="false">Disabled</option><option value="true">Enabled</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                  </select>
+                </label>
+              </>
+            )}
             <label style={styles.formGroup}>
               <span style={styles.formLabel}><Database size={16} style={{ color: '#00f0ff' }} />Memory facts per request</span>
               <input
@@ -282,7 +350,7 @@ export function ConfigTab({
             </label>
           </div>
           <span style={styles.formHelp}>
-            Recommended for your local 35B model: Fast mode on, Long-term memory on, Auto RAG off, 3-5 memory facts per request.
+            For local models, start with an 8K context window, long-term memory enabled, and automatic RAG disabled; increase context only when the model and available RAM allow it.
           </span>
         </div>
 

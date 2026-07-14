@@ -150,6 +150,38 @@ async def test_call_success():
 
 
 @pytest.mark.asyncio
+async def test_call_ollama_uses_native_provider_and_stream_callback():
+    from backend.ollama_client import OllamaChatResult
+
+    callback = AsyncMock()
+    result = OllamaChatResult(
+        model="qwen3:8b",
+        content="Native answer",
+        thinking="plan",
+        done_reason="stop",
+        prompt_tokens=7,
+        completion_tokens=3,
+    )
+    with patch("backend.ollama_client.OllamaClient.chat", new=AsyncMock(return_value=result)) as chat:
+        response = await call_llm_normalized(
+            api_base="http://ollama:11434",
+            api_key="",
+            model="qwen3:8b",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[{"type": "function", "function": {"name": "clock", "parameters": {"type": "object"}}}],
+            stream_callback=callback,
+            provider_options={"num_ctx": 16384, "keep_alive": "10m", "think": True},
+            max_retries=0,
+        )
+    assert response.status == lc.STATUS_SUCCESS
+    assert response.provider == "ollama"
+    assert response.usage.input_tokens == 7
+    assert chat.await_args.kwargs["tools"]
+    assert chat.await_args.kwargs["num_ctx"] == 16384
+    assert chat.await_args.kwargs["stream_callback"] is callback
+
+
+@pytest.mark.asyncio
 async def test_call_timeout_retries_then_fails():
     with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=httpx.TimeoutException("t"))), \
          patch("backend.llm_client._backoff_delay", return_value=0):

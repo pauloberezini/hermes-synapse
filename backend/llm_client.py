@@ -32,7 +32,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
@@ -231,6 +231,15 @@ def _provider_name(api_base: str, is_openmodel: bool) -> str:
     return "provider"
 
 
+def _is_local_provider(api_base: str) -> bool:
+    """Detect local/Ollama-style providers that may lack native function calling."""
+    base = (api_base or "").lower()
+    return any(m in base for m in (
+        "localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal",
+        "ollama", "lmstudio", "lm-studio", "localai", "vllm",
+    ))
+
+
 def _extract_request_id(response: httpx.Response, data: Dict[str, Any]) -> Optional[str]:
     for header in ("x-request-id", "x-request-id", "request-id", "openai-request-id"):
         value = response.headers.get(header)
@@ -309,9 +318,17 @@ def normalize_openai_response(
 
     raw_text = _extract_message_text(message.get("content"))
     cleaned = _clean_model_output(raw_text)
-    # Non-destructive fallback: if cleanup nukes everything but the model DID
-    # return visible text, keep the raw visible text rather than "".
-    if not cleaned.strip() and raw_text.strip():
+    has_think_markup = bool(re.search(r"(?is)<think(?:\s[^>]*)?>", raw_text))
+    # Some OpenAI-compatible reasoning models put hidden reasoning directly in
+    # content. Treat a reasoning-only block as semantic empty so the caller can
+    # request a visible answer instead of leaking it to the user.
+    if has_think_markup and not resp.reasoning:
+        match = re.search(r"(?is)<think(?:\s[^>]*)?>(.*?)(?:</think>|$)", raw_text)
+        if match and match.group(1).strip():
+            resp.reasoning = match.group(1).strip()
+    # Preserve unusual provider text when cleanup removed it for a reason other
+    # than explicit reasoning markup.
+    if not cleaned.strip() and raw_text.strip() and not has_think_markup:
         cleaned = raw_text.strip()
     resp.content = cleaned
 
@@ -418,6 +435,8 @@ async def call_llm_normalized(
     max_retries: Optional[int] = None,
     extra_headers: Optional[Dict[str, str]] = None,
     client: Optional[httpx.AsyncClient] = None,
+    stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    provider_options: Optional[Dict[str, Any]] = None,
 ) -> NormalizedLLMResponse:
     """Call the provider once (with transient-retry) and return a normalized response.
 
@@ -431,8 +450,86 @@ async def call_llm_normalized(
         translate_to_openai_response,
     )
 
+    from backend.ollama_client import OllamaClient, OllamaError, is_ollama_provider
+
+    if is_ollama_provider(api_base, str((provider_options or {}).get("provider") or "")):
+        timeout = timeout if timeout is not None else get_request_timeout()
+        max_retries = max_retries if max_retries is not None else get_max_retries()
+        last: Optional[NormalizedLLMResponse] = None
+        for attempt in range(max_retries + 1):
+            start = time.time()
+            try:
+                ollama = OllamaClient(api_base, timeout=timeout, client=client)
+                result = await ollama.chat(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    stream_callback=stream_callback,
+                    num_ctx=(provider_options or {}).get("num_ctx"),
+                    keep_alive=(provider_options or {}).get("keep_alive"),
+                    think=(provider_options or {}).get("think"),
+                )
+                latency = int((time.time() - start) * 1000)
+                body = {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": result.content,
+                            "reasoning": result.thinking or None,
+                            "tool_calls": result.tool_calls,
+                        },
+                        "finish_reason": result.done_reason or "stop",
+                    }],
+                    "usage": {
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": (
+                            (result.prompt_tokens or 0) + (result.completion_tokens or 0)
+                            if result.prompt_tokens is not None or result.completion_tokens is not None
+                            else None
+                        ),
+                    },
+                }
+                normalized = normalize_openai_response(
+                    body,
+                    provider="ollama",
+                    model=result.model or model,
+                    latency_ms=latency,
+                    retry_count=attempt,
+                )
+                normalized.raw_response = None
+                normalized.raw_response_available = True
+                return normalized
+            except OllamaError as exc:
+                latency = int((time.time() - start) * 1000)
+                status = STATUS_TIMEOUT if exc.code == "timeout" else STATUS_PROVIDER_ERROR
+                last = NormalizedLLMResponse(
+                    status=status,
+                    provider="ollama",
+                    model=model,
+                    latency_ms=latency,
+                    retry_count=attempt,
+                    finish_reason=f"http_{exc.status_code}",
+                    error_message=str(exc),
+                )
+                if exc.status_code not in _RETRYABLE_HTTP and exc.code not in ("connection_error", "interrupted_stream"):
+                    return last
+                if attempt < max_retries:
+                    await asyncio.sleep(_backoff_delay(attempt))
+                    continue
+                return last
+        return last or NormalizedLLMResponse(
+            status=STATUS_PROVIDER_ERROR,
+            provider="ollama",
+            model=model,
+            error_message="No response from Ollama.",
+        )
+
     is_openmodel = "openmodel.ai" in (api_base or "")
     provider = _provider_name(api_base, is_openmodel)
+    is_local = _is_local_provider(api_base)
     url = f"{api_base}/messages" if is_openmodel else f"{api_base}/chat/completions"
     timeout = timeout if timeout is not None else get_request_timeout()
     max_retries = max_retries if max_retries is not None else get_max_retries()
@@ -453,7 +550,13 @@ async def call_llm_normalized(
     }
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
-    if tools:
+
+    # ── Tool handling for local providers ──────────────────────────────────
+    # Local models (Ollama, LM Studio, etc.) often lack reliable native
+    # function-calling.  Sending `tools` to them can produce malformed JSON
+    # or silent failures.  For local providers, tools are handled via
+    # keyword-based routing in agent.py; we strip them from the payload.
+    if tools and not is_local:
         payload["tools"] = tools
 
     actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload

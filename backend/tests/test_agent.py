@@ -26,6 +26,7 @@ def setup_test_db(tmp_path):
 def agent():
     # Instantiate agent for testing
     agent_inst = JarvisAgent()
+    agent_inst.provider = "openrouter"
     agent_inst.api_key = "test_key"
     agent_inst.api_base = "https://openrouter.ai/api/v1"
     return agent_inst
@@ -33,12 +34,25 @@ def agent():
 def test_agent_initial_state(agent):
     import os
     assert agent.system_prompt == DEFAULT_SYSTEM_PROMPT
-    assert agent.model == os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
+    assert agent.model == os.getenv("LLM_MODEL", "qwen3:8b")
 
 def test_update_system_prompt(agent):
     new_prompt = "New prompt content"
     agent.update_system_prompt(new_prompt)
     assert agent.system_prompt == new_prompt
+
+
+def test_provider_switch_restores_provider_specific_endpoint(agent):
+    agent.provider = "openrouter"
+    agent.api_base = "https://openrouter.example/v1"
+    agent.openai_api_base = "https://openrouter.example/v1"
+    agent.ollama_base_url = "http://ollama:11434"
+
+    agent.update_runtime_config(provider="ollama")
+    assert agent.api_base == "http://ollama:11434"
+
+    agent.update_runtime_config(provider="openrouter")
+    assert agent.api_base == "https://openrouter.example/v1"
 
 def test_clear_history(agent):
     session_id = "user_123"
@@ -162,7 +176,7 @@ async def test_respond_http_error(mock_post, agent):
     mock_post.return_value = mock_response
 
     response = await agent.respond("Привет", session_id="test_session")
-    assert "трудности при связи с сервером OpenRouter" in response
+    assert "Провайдер модели временно недоступен" in response
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.post")
@@ -237,9 +251,10 @@ def test_local_provider_message_sanitization_and_qwen_reasoning_cleanup():
     assert sanitized["tool_calls"][0]["function"]["arguments"] == '{"location": "Minsk", "days_ahead": 0}'
 
 @pytest.mark.asyncio
+@patch("backend.agent.asyncio.to_thread", new_callable=AsyncMock)
 @patch("backend.tools.execute_tool")
 @patch("httpx.AsyncClient.post")
-async def test_respond_sanitizes_qwen_tool_messages_between_local_calls(mock_post, mock_execute_tool, agent):
+async def test_respond_sanitizes_qwen_tool_messages_between_local_calls(mock_post, mock_execute_tool, mock_to_thread, agent):
     agent.api_base = "http://localhost:11434/v1"
     agent.model = "qwen3:6b"
 
@@ -284,6 +299,7 @@ async def test_respond_sanitizes_qwen_tool_messages_between_local_calls(mock_pos
 
     mock_post.side_effect = [tool_response, final_response]
     mock_execute_tool.return_value = '{"status": "mock", "temperature": "+20°C"}'
+    mock_to_thread.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
 
     response = await agent.respond("Какая погода в Минске?", session_id="local_qwen_tool")
 
@@ -439,9 +455,10 @@ def test_translate_to_openai_response():
     assert openai_resp["usage"]["completion_tokens"] == 25
 
 @pytest.mark.asyncio
+@patch("backend.agent.asyncio.to_thread", new_callable=AsyncMock)
 @patch("backend.tools.execute_tool")
 @patch("httpx.AsyncClient.post")
-async def test_respond_caps_tool_loop_iterations(mock_post, mock_execute_tool, agent):
+async def test_respond_caps_tool_loop_iterations(mock_post, mock_execute_tool, mock_to_thread, agent):
     """A model that keeps requesting tools must be stopped at the iteration cap
     instead of looping forever (audit P0 runaway-loop guard)."""
     agent.max_tool_iterations = 3
@@ -468,6 +485,7 @@ async def test_respond_caps_tool_loop_iterations(mock_post, mock_execute_tool, a
 
     mock_post.side_effect = _tool_call_response
     mock_execute_tool.return_value = '{"status": "ok"}'
+    mock_to_thread.return_value = '{"status": "ok"}'
 
     response = await agent.respond("погода?", session_id="loop_cap")
 

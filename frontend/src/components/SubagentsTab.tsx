@@ -18,7 +18,8 @@ import { renderMarkdown } from '../utils';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const AVAILABLE_MODELS = [
-  { value: 'google/gemini-2.5-flash',              label: 'Gemini 2.5 Flash — fast, default ✓' },
+  { value: 'qwen3:8b',                               label: 'Qwen 3 8B — Ollama default ✓' },
+  { value: 'google/gemini-2.5-flash',              label: 'Gemini 2.5 Flash — cloud, fast' },
   { value: 'google/gemini-2.5-pro',                label: 'Gemini 2.5 Pro — best quality' },
   { value: 'anthropic/claude-sonnet-4-5',          label: 'Claude Sonnet 4.5 — balanced' },
   { value: 'anthropic/claude-opus-4',              label: 'Claude Opus 4 — strongest' },

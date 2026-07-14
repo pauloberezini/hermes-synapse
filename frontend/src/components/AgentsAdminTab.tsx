@@ -15,13 +15,13 @@ const emptyAgent: AgentModel = {
   id: '',
   name: '',
   system_prompt: '',
-  model: 'google/gemini-2.5-flash',
+  model: 'qwen3:8b',
   agent_type: 'agent',
   role: 'Specialist',
   status: 'idle',
   is_enabled: true,
-  model_provider: 'openrouter',
-  model_type: 'external',
+  model_provider: 'ollama',
+  model_type: 'local',
   skills: '',
   temperature: 0.7,
   model_params: {},
@@ -37,7 +37,7 @@ export function AgentsAdminTab({ agents, models, fetchAgents, t }: AgentsAdminTa
 
   useEffect(() => {
     setParamsText(JSON.stringify(draft.model_params || {}, null, 2));
-  }, [draft.id]);
+  }, [draft.id, draft.model_params]);
 
   const startCreate = () => {
     setDraft({ ...emptyAgent, id: `agent_${Date.now().toString().slice(-5)}` });

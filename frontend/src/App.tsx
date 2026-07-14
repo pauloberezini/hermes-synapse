@@ -85,12 +85,19 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [config, setConfig] = useState<SystemConfig>({
     system_prompt: '',
-    model: 'google/gemini-2.5-pro',
-    fast_mode: true,
+    model: 'qwen3:8b',
+    provider: 'ollama',
+    api_base: 'http://127.0.0.1:11434',
+    ollama_base_url: 'http://127.0.0.1:11434',
+    openai_api_base: 'https://openrouter.ai/api/v1',
+    ollama_num_ctx: 8192,
+    ollama_keep_alive: '5m',
+    ollama_think: false,
+    fast_mode: false,
     max_history_len: 6,
-    max_tokens: 256,
-    tool_max_tokens: 512,
-    temperature: 0.2,
+    max_tokens: 2048,
+    tool_max_tokens: 2048,
+    temperature: 0.7,
     auto_rag: false,
     memory_enabled: true,
     memory_auto_save: true,
@@ -151,7 +158,7 @@ export default function App() {
   const [newAgentId, setNewAgentId] = useState('');
   const [newAgentName, setNewAgentName] = useState('');
   const [newAgentPrompt, setNewAgentPrompt] = useState('');
-  const [newAgentModel, setNewAgentModel] = useState('google/gemini-2.5-flash');
+  const [newAgentModel, setNewAgentModel] = useState('qwen3:8b');
   const [newAgentSkills, setNewAgentSkills] = useState('');
   const [newAgentTemperature, setNewAgentTemperature] = useState(0.7);
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
@@ -163,7 +170,7 @@ export default function App() {
   const [editingAgentId, setEditingAgentId] = useState('');
   const [editAgentName, setEditAgentName] = useState('');
   const [editAgentPrompt, setEditAgentPrompt] = useState('');
-  const [editAgentModel, setEditAgentModel] = useState('google/gemini-2.5-flash');
+  const [editAgentModel, setEditAgentModel] = useState('qwen3:8b');
   const [editAgentSkills, setEditAgentSkills] = useState('');
   const [editAgentTemperature, setEditAgentTemperature] = useState(0.7);
   const [isUpdatingAgent, setIsUpdatingAgent] = useState(false);
@@ -595,17 +602,56 @@ export default function App() {
             if (data.activity_logs) {
               setActivityLogs(data.activity_logs);
             }
+          } else if (data.type === 'chat_stream_start') {
+            const msgChatId = data.chat_id || 'dashboard';
+            if (msgChatId === currentChatIdRef.current) {
+              setMessages(prev => prev.some(message => message.run_id === data.run_id)
+                ? prev
+                : [...prev, {
+                    role: 'assistant',
+                    content: '',
+                    thinking: '',
+                    chat_id: msgChatId,
+                    run_id: data.run_id,
+                    streaming: true,
+                    meta: { model: data.model, provider: data.provider, status: 'streaming' },
+                  }]);
+            }
+          } else if (data.type === 'chat_stream_chunk') {
+            const msgChatId = data.chat_id || 'dashboard';
+            if (msgChatId === currentChatIdRef.current) {
+              setMessages(prev => prev.map(message => message.run_id === data.run_id
+                ? {
+                    ...message,
+                    content: `${message.content || ''}${data.content || ''}`,
+                    thinking: `${message.thinking || ''}${data.thinking || ''}`,
+                    streaming: true,
+                  }
+                : message));
+            }
+          } else if (data.type === 'chat_stream_end') {
+            const msgChatId = data.chat_id || 'dashboard';
+            if (msgChatId === currentChatIdRef.current) {
+              setMessages(prev => prev.map(message => message.run_id === data.run_id
+                ? { ...message, streaming: false, id: data.message_id || message.id, meta: data.meta || message.meta }
+                : message));
+            }
           } else if (data.type === 'chat_message') {
             const msgChatId = data.chat_id || 'dashboard';
             if (msgChatId === currentChatIdRef.current) {
-              setMessages((prev) => [...prev, {
+              const incoming: ChatMessage = {
                 id: data.id,
                 role: data.role,
                 content: data.content,
                 chat_id: msgChatId,
                 cost_usd: data.cost_usd,
-                meta: data.meta
-              }]);
+                meta: data.meta,
+                run_id: data.run_id,
+                streaming: false,
+              };
+              setMessages(prev => data.role === 'assistant' && data.run_id && prev.some(message => message.run_id === data.run_id)
+                ? prev.map(message => message.run_id === data.run_id ? { ...message, ...incoming } : message)
+                : [...prev, incoming]);
             }
             if (data.role === 'assistant') {
               activeRunIdRef.current = null;
@@ -635,6 +681,19 @@ export default function App() {
               }
             }
           } else if (data.type === 'chat_cancelled') {
+            const cancelledRunId = String(data.run_id || activeRunIdRef.current || '');
+            const cancelledChatId = data.chat_id || currentChatIdRef.current;
+            if (cancelledChatId === currentChatIdRef.current) {
+              setMessages(prev => prev.map(message =>
+                message.run_id === cancelledRunId
+                  ? {
+                      ...message,
+                      streaming: false,
+                      meta: { ...(message.meta || {}), status: 'cancelled' },
+                    }
+                  : message
+              ));
+            }
             activeRunIdRef.current = null;
             setIsGenerating(false);
           } else if (data.type === 'user_message_id_update') {
@@ -1010,6 +1069,8 @@ export default function App() {
       const savedChatId = localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
       selectChat(savedChatId);
     }
+    // These fetch helpers and selectChat are intentionally initialized once per auth session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
   // Fetch system stats and timers when the "tools" tab is active
@@ -1229,6 +1290,13 @@ export default function App() {
         body: JSON.stringify({
           system_prompt: editedPrompt,
           model: editedModel,
+          provider: editedRuntimeConfig.provider,
+          api_base: editedRuntimeConfig.api_base,
+          ollama_base_url: editedRuntimeConfig.ollama_base_url,
+          openai_api_base: editedRuntimeConfig.openai_api_base,
+          ollama_num_ctx: editedRuntimeConfig.ollama_num_ctx,
+          ollama_keep_alive: editedRuntimeConfig.ollama_keep_alive,
+          ollama_think: editedRuntimeConfig.ollama_think,
           fast_mode: editedRuntimeConfig.fast_mode,
           max_history_len: editedRuntimeConfig.max_history_len,
           max_tokens: editedRuntimeConfig.max_tokens,
@@ -1244,6 +1312,8 @@ export default function App() {
         const data = await response.json();
         setConfig(data.config);
         setEditedRuntimeConfig(data.config);
+        setEditedModel(data.config.model);
+        fetchModels();
         alert('System configuration updated, Sir.');
       } else {
         alert('Error updating configuration.');
@@ -1381,7 +1451,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-container scanlines">
+    <div className={`app-container scanlines${activeTab === 'office' ? ' is-office-mode' : ''}`}>
       {/* Mobile Menu Toggle Button */}
       <button 
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1626,7 +1696,7 @@ export default function App() {
       </aside>
 
       {/* 2. Main Workspace */}
-      <main style={styles.mainContent}>
+      <main style={styles.mainContent} className={activeTab === 'office' ? 'office-main' : undefined}>
         {activeTab === 'chat' && (
           <ChatTab
             currentChatId={currentChatId}
@@ -1659,13 +1729,21 @@ export default function App() {
             t={t}
             onStopGeneration={handleStopGeneration}
             onRetryLast={handleRetryLast}
-            hasLastUserMessage={!!lastUserMessageRef.current[currentChatId]}
+            hasLastUserMessage={messages.some(message => message.role === 'user')}
             onChangeModel={() => setActiveTab('config')}
           />
         )}
 
         {activeTab === 'office' && (
-          <OfficeTab t={t} selectChat={selectChat} />
+          <OfficeTab
+            t={t}
+            isConnected={isConnected}
+            language={language}
+            selectChat={(agentId) => {
+              selectChat(agentId);
+              setActiveTab('chat');
+            }}
+          />
         )}
 
         {activeTab === 'agents' && (
@@ -1801,7 +1879,7 @@ export default function App() {
         )}
 
         {activeTab === 'network' && (
-          <NetworkTab subagents={subagents} setSubagents={setSubagents} fetchSubagents={fetchSubagents} />
+          <NetworkTab subagents={subagents} setSubagents={setSubagents} fetchSubagents={fetchSubagents} models={models} />
         )}
 
         {activeTab === 'mcp' && (

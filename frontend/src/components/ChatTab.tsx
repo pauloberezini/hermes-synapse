@@ -102,6 +102,7 @@ export function ChatTab({
 
   const messageContent = (msg: ChatMessage) => {
     if ((msg.content || '').trim()) return msg.content;
+    if (msg.streaming) return '';
     return msg.role === 'assistant'
       ? tr('chatEmptyResponse', 'The model returned no text. You can retry or refine the request.')
       : '';
@@ -562,7 +563,15 @@ export function ChatTab({
                         )}
                       </div>
                     </div>
-                    <div style={styles.msgText}>{renderMarkdown(messageContent(msg))}</div>
+                    {msg.thinking && (
+                      <details className="chat-thinking" open={msg.streaming && !msg.content}>
+                        <summary>{tr('chatThinking', 'Model thinking')}</summary>
+                        <div>{msg.thinking}</div>
+                      </details>
+                    )}
+                    <div style={styles.msgText} className={msg.streaming ? 'chat-streaming-text' : undefined}>
+                      {messageContent(msg) ? renderMarkdown(messageContent(msg)) : msg.streaming ? <span className="chat-stream-placeholder">Generating</span> : null}
+                    </div>
 
                     {msg.role === 'assistant' && msg.meta && (
                       <div style={{ marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 }}>
@@ -643,7 +652,7 @@ export function ChatTab({
               </div>
             )}
             
-            {isGenerating && (
+            {isGenerating && !messages.some(message => message.streaming) && (
               <div className="hud-container">
                 <div className="hud-scanner">
                   <div className="hud-ring-outer" />

@@ -13,6 +13,36 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger("hermes.subagents")
 
+_LLM_RUNTIME: Dict[str, Any] = {}
+
+
+def configure_llm_runtime(api_base: str, provider_options: Optional[Dict[str, Any]] = None) -> None:
+    """Share the active dashboard provider configuration with orchestration helpers.
+
+    Hermes has a single runtime LLM configuration, so keeping this tiny process-local
+    snapshot avoids forcing every specialized agent constructor to duplicate provider
+    arguments while still honoring settings changed from the web UI.
+    """
+    _LLM_RUNTIME["api_base"] = api_base.rstrip("/")
+    _LLM_RUNTIME["provider_options"] = dict(provider_options or {})
+
+
+def _active_llm_runtime() -> tuple[str, Dict[str, Any]]:
+    provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+    default_base = (
+        os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        if provider == "ollama"
+        else os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
+    )
+    options = {
+        "provider": provider,
+        "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "8192")),
+        "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "5m"),
+        "think": os.getenv("OLLAMA_THINK", "false"),
+    }
+    options.update(_LLM_RUNTIME.get("provider_options") or {})
+    return _LLM_RUNTIME.get("api_base") or default_base, options
+
 # ─── Per-agent model helper ──────────────────────────────────────────────────
 
 def get_agent_model(agent_role: str, fallback_model: str) -> str:
@@ -43,7 +73,7 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
     backoff, secret masking and consistent response handling. Preserves the
     historical ``-> str`` contract and ``Exception`` on hard failure.
     """
-    api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
+    api_base, provider_options = _active_llm_runtime()
     from backend.agent import _local_model_system_hint
     from backend.llm_client import (
         STATUS_PARSE_ERROR,
@@ -68,6 +98,7 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
         model=model,
         messages=messages,
         temperature=0.2,
+        provider_options=provider_options,
     )
 
     if result.status in (STATUS_TIMEOUT, STATUS_PROVIDER_ERROR, STATUS_PARSE_ERROR):

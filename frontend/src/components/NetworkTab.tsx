@@ -23,12 +23,14 @@ interface NetworkTabProps {
   subagents: any[];
   setSubagents: (s: any[]) => void;
   fetchSubagents: () => void;
+  models: { id: string; name: string }[];
 }
 
 export function NetworkTab({ 
   subagents, 
   setSubagents, 
-  fetchSubagents 
+  fetchSubagents,
+  models,
 }: NetworkTabProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodes, setSelectedNodes] = useState<Array<{ id: string; isSkill: boolean }>>([]);
@@ -1120,13 +1122,10 @@ export function NetworkTab({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>AI MODEL</label>
-              <select value={inspectModel} onChange={e => setInspectModel(e.target.value)} className="form-input">
-                <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
-                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
-                <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-              </select>
+              <input value={inspectModel} onChange={e => setInspectModel(e.target.value)} className="form-input" list="network-model-options" placeholder="qwen3:8b" />
+              <datalist id="network-model-options">
+                {models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
+              </datalist>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
