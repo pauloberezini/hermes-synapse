@@ -1,0 +1,66 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    container_name: hermes-backend-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-flash}
+      - QDRANT_HOST=qdrant
+      - OBSIDIAN_HOST=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Mount backend source for hot-reload
+      - ./backend:/app/backend
+      - ./.env:/app/.env
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - qdrant
+    networks:
+      - hermes-dev-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: hermes-frontend-dev
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    depends_on:
+      - backend
+    networks:
+      - hermes-dev-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: hermes-qdrant-dev
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_dev_data:/qdrant/storage
+    # NOTE: qdrant/qdrant is distroless — no shell tools for healthcheck.
+    # Backend rag.py handles connection errors gracefully on startup.
+    networks:
+      - hermes-dev-net
+
+networks:
+  hermes-dev-net:
+    driver: bridge
+
+volumes:
+  qdrant_dev_data:

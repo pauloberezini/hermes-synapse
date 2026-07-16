@@ -80,11 +80,18 @@ class AgentState:
 async def run_orchestration(query: str, api_key: str, model: str, chat_id: str = "default", parent_skills: Optional[str] = None) -> Dict[str, Any]:
     state = AgentState(query, chat_id)
     
+    import re
+    file_context = ""
+    match = re.search(r"(<file_context>.*?</file_context>)", query, re.DOTALL)
+    if match:
+        file_context = match.group(1)
+    
     # Resolve orchestrator ID
-    from backend.database import get_all_subagents, get_subagent
-    orch_meta = get_subagent(chat_id)
+    from backend.database import get_all_subagents, get_subagent, get_session_agent_id
+    target_orch_id = get_session_agent_id(chat_id) or chat_id
+    orch_meta = get_subagent(target_orch_id)
     if orch_meta:
-        orch_id = chat_id
+        orch_id = target_orch_id
     else:
         orch_id = "jarvis"
         orch_meta = get_subagent("jarvis")
@@ -116,7 +123,7 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
         # Custom sub-orchestrator acting as standalone agent
         state.add_trace("Orchestrator", "Start", f"Orchestrator '{orch_id}' has no connected agents. Executing as standalone agent.")
         from backend.agent import agent_instance
-        res = await agent_instance._respond_as_subagent(query, orch_meta or {"id": orch_id, "name": "Orchestrator", "system_prompt": "You are a virtual assistant.", "model": model, "skills": active_skills}, parent_skills=parent_skills)
+        res = await agent_instance._respond_as_subagent(query, orch_meta or {"id": orch_id, "name": "Orchestrator", "system_prompt": "You are a virtual assistant.", "model": model, "skills": active_skills}, parent_skills=parent_skills, chat_id=chat_id)
         return {
             "response": res,
             "traces": [{"timestamp": time.strftime("%H:%M:%S"), "agent": "Orchestrator", "action": "Finish", "message": "Executed via tools", "status": "success"}],
@@ -141,10 +148,17 @@ You must output the result EXCLUSIVELY in JSON format of the following structure
 }
 
 Rules:
+- If the query requires fetching real-time information (e.g., today's football matches, betting odds, current weather, currency rates, today's news), you MUST schedule the first step with the "research" agent (or another agent with internet search capability) to fetch data from the Internet. Do not try to solve such tasks with agents that have no network access (like the "code" agent).
+- When writing `instructions` for the search/research step, you MUST convert any relative dates ("today", "tomorrow", "evening matches", "current round") into specific calendar dates based on system time (e.g., "matches on June 21, 2026", "schedule for 21.06.2026"). This is critical for search engine accuracy!
+- When searching for sports and betting data, schedule a search step strictly to search for raw information: match schedules, pairs of playing teams, start times, and numerical bookmaker odds. It is categorically forbidden to search for pre-made predictions, tips, or external articles recommending bets ("bets of the day", "value bets by...").
+- Expected value and value bet calculation must be performed strictly at the "code" step or by a specialized analyst agent. If using code, instruct the "code" agent to write a Python script that takes real odds and competitor pairs from search results, calculates the mathematical expected value EV = P * Odds - 1 for outcomes, and prints value bets (EV > 0).
+- Special Note: The "code" agent runs in an offline sandbox. Do not expect it to make network calls.
+- Agents must not be too lazy to do calculations: if exact bookmaker odds are not found in the search results, they MUST perform mathematical modeling (e.g., calculate win/draw/loss probabilities using a Poisson distribution based on average goals scored/conceded by the teams in the league/season, or estimate probabilities based on recent head-to-head statistics) and run the calculation instead of simply returning an error.
+- It is categorically forbidden to invent demo, fictitious, or test matches (e.g., Spartak vs Zenit, if they are not in today's schedule). All calculations and conclusions must rely solely on real matches and real teams found in search results.
 - If the request is simple and does not require sub-agents, return an empty list of steps: {"steps": []}.
 - Limit the number of steps to the minimum (maximum 3 steps).
 - Do not write any explanations, preambles, or conclusions. Only clean JSON.
-- Specify only exact identifiers from the list above in "agent"!
+- Specify only exact identifiers from the list of available sub-agents above in "agent"!
 """
 
     # Resolve per-role models
@@ -263,6 +277,8 @@ Rules:
                 context_str = "\n\nData from previous steps:\n" + "\n---\n".join(context_parts)
 
             contextual_instructions = instructions + context_str
+            if file_context:
+                contextual_instructions = file_context + "\n\n" + contextual_instructions
             state.add_trace("Router", "Route", f"Step {state.current_step_idx+1}/{len(state.steps)}: Delegating to agent '{child_agent['name']}' ({agent_type})")
             
             # Check node execution type

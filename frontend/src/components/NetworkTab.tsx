@@ -1109,7 +1109,7 @@ export function NetworkTab({
                 <option value="">None (Root Node)</option>
                 <option value="jarvis">Vexa Main</option>
                 {subagents
-                  .filter(n => n.id !== selectedNodeId && (n.agent_type === 'orchestrator' || n.agent_type === 'sub-orchestrator'))
+                  .filter(n => n.id !== selectedNodeId && n.id !== 'jarvis' && (n.agent_type === 'orchestrator' || n.agent_type === 'sub-orchestrator'))
                   .map(n => <option key={n.id} value={n.id}>{n.name}</option>)
                 }
               </select>
@@ -1230,7 +1230,7 @@ export function NetworkTab({
                 <select value={addParent} onChange={e => setAddParent(e.target.value)} className="form-input">
                   <option value="jarvis">Vexa Main</option>
                   {subagents
-                    .filter(n => n.agent_type === 'orchestrator' || n.agent_type === 'sub-orchestrator')
+                    .filter(n => n.id !== 'jarvis' && (n.agent_type === 'orchestrator' || n.agent_type === 'sub-orchestrator'))
                     .map(n => <option key={n.id} value={n.id}>{n.name}</option>)
                   }
                 </select>
@@ -1244,9 +1244,17 @@ export function NetworkTab({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>AI Model</label>
                 <select value={addModel} onChange={e => setAddModel(e.target.value)} className="form-input">
-                  <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                  <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                  <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
+                  {models && models.length > 0 ? (
+                    models.map(m => (
+                      <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                      <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+                      <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
+                    </>
+                  )}
                 </select>
               </div>
 

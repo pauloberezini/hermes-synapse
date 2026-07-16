@@ -308,6 +308,10 @@ async def health_ready():
         content={"status": "ready" if ready else "degraded", "checks": checks},
     )
 
+class SettingsUpdate(BaseModel):
+    language: str | None = None  # e.g. 'ru', 'en', 'he'
+
+
 @app.get("/api/status")
 async def get_status():
     return {
@@ -366,10 +370,28 @@ async def update_config(update: ConfigUpdate):
     })
     return {"status": "success", "config": config}
 
+@app.get("/api/settings")
+async def get_settings():
+    from backend.database import get_setting
+    return {"language": get_setting("language") or "ru"}
+
+@app.post("/api/settings")
+async def update_settings(update: SettingsUpdate):
+    from backend.database import set_setting, get_setting
+    if update.language is not None:
+        set_setting("language", update.language)
+    await manager.broadcast({"type": "settings_update", "language": get_setting("language") or "ru"})
+    return {"status": "success", "language": get_setting("language") or "ru"}
+
 @app.get("/api/logs")
 async def get_logs():
     from backend.database import get_decision_logs
     return get_decision_logs(100)
+
+@app.get("/api/metrics")
+async def get_metrics():
+    from backend.database import db_get_aggregated_metrics
+    return db_get_aggregated_metrics()
 
 class DocumentCreate(BaseModel):
     title: str
@@ -1052,13 +1074,47 @@ async def get_history_sessions():
         
         cursor.execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
         sessions = [r[0] for r in cursor.fetchall()]
+        
+        # Fetch all custom titles and agent_ids from session_metadata
+        cursor.execute("SELECT session_id, title, agent_id FROM session_metadata")
+        metadata_map = {r[0]: {"title": r[1], "agent_id": r[2]} for r in cursor.fetchall()}
         conn.close()
         
         # Filter out subagents, and keep only "dashboard" and custom sessions
         user_sessions = [s for s in sessions if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
-        return ["dashboard"] + user_sessions
+        
+        sessions_response = []
+        for s in ["dashboard"] + user_sessions:
+            meta = metadata_map.get(s, {})
+            title = meta.get("title")
+            agent_id = meta.get("agent_id")
+            if not title:
+                if s == "dashboard":
+                    title = "Main Terminal"
+                else:
+                    title = s
+            sessions_response.append({
+                "id": s,
+                "title": title,
+                "agent_id": agent_id
+            })
+        return sessions_response
     except Exception as e:
-        return ["dashboard"]
+        return [{"id": "dashboard", "title": "Main Terminal", "agent_id": None}]
+
+class SessionAgentPayload(BaseModel):
+    agent_id: str
+
+@app.post("/api/history/{session_id}/agent")
+async def set_session_agent(session_id: str, payload: SessionAgentPayload):
+    """Updates the target agent/orchestrator ID for a session in the DB."""
+    from backend.database import save_session_metadata, get_session_title
+    try:
+        title = get_session_title(session_id) or session_id
+        save_session_metadata(session_id, title, agent_id=payload.agent_id)
+        return {"status": "success", "message": f"Session {session_id} target agent set to {payload.agent_id}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/history/{chat_id}")
 async def get_history_api(chat_id: str, limit: int = 40):
@@ -1067,8 +1123,9 @@ async def get_history_api(chat_id: str, limit: int = 40):
 
 @app.delete("/api/history/{chat_id}")
 async def delete_history_api(chat_id: str):
-    from backend.database import clear_chat_history
+    from backend.database import clear_chat_history, delete_session_title
     clear_chat_history(chat_id)
+    delete_session_title(chat_id)
     # Also clear from agent's in-memory last costs or messages if needed
     if chat_id in agent_instance.last_costs:
         agent_instance.last_costs[chat_id] = 0.0
@@ -1083,6 +1140,7 @@ async def archive_history_session(session_id: str):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("UPDATE messages SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
+        cursor.execute("UPDATE session_metadata SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
         conn.commit()
         conn.close()
         return {"status": "success", "message": f"Session {session_id} archived"}
@@ -1092,7 +1150,7 @@ async def archive_history_session(session_id: str):
 @app.post("/api/history/{session_id}/fork")
 async def fork_history_session(session_id: str):
     """Forks a session by duplicating its messages to a new session_id."""
-    from backend.database import DB_PATH
+    from backend.database import DB_PATH, get_session_title, save_session_title
     import sqlite3
     import time
     new_session_id = f"{session_id}_fork_{int(time.time())}"
@@ -1105,7 +1163,27 @@ async def fork_history_session(session_id: str):
         """, (new_session_id, session_id))
         conn.commit()
         conn.close()
+        
+        # Fork custom title metadata
+        old_title = get_session_title(session_id)
+        if not old_title:
+            old_title = session_id
+        save_session_title(new_session_id, f"Fork of {old_title}")
+        
         return {"status": "success", "new_session_id": new_session_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class RenameSessionPayload(BaseModel):
+    title: str
+
+@app.post("/api/history/{session_id}/rename")
+async def rename_history_session(session_id: str, payload: RenameSessionPayload):
+    """Updates the custom title for a session in the DB."""
+    from backend.database import save_session_title
+    try:
+        save_session_title(session_id, payload.title)
+        return {"status": "success", "message": f"Session {session_id} renamed to {payload.title}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -1228,14 +1306,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 import json
                 msg = json.loads(data)
                 if msg.get("type") == "chat_message":
-                    user_text = msg.get("content")
+                    user_text = msg.get("content", "")
                     chat_id = msg.get("chat_id", "dashboard")
                     run_id = str(msg.get("run_id") or "")[:128]
                     # Broadcast user message to all dashboard connections
                     await manager.broadcast({
                         "type": "chat_message",
                         "role": "user",
-                        "content": user_text,
+                        "content": display_text,
                         "chat_id": chat_id
                     })
                     # Call agent

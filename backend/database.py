@@ -2,6 +2,8 @@ import os
 import sqlite3
 import logging
 import json
+from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("hermes.database")
@@ -22,13 +24,15 @@ def _json_or_empty(raw: Any) -> Dict[str, Any]:
 
 def init_db():
     """Initializes the database and creates the tables if they don't exist."""
-    # Ensure data directory exists
+    _get_backend().init_schema()
+
+
+def _init_sqlite_schema():
+    logger.info(f"Initializing SQLite database (path={DB_PATH})")
     os.makedirs(DB_DIR, exist_ok=True)
-    
-    logger.info(f"Initializing SQLite database at: {DB_PATH}")
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cursor = conn.cursor()
-    
+
     # Create chat messages table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
@@ -40,20 +44,19 @@ def init_db():
             cost_usd REAL DEFAULT 0.0
         )
     """)
-    
+
     # Create index for fast session lookups
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_session_id ON messages (session_id)
     """)
-    
+
     # Run migration to add cost_usd if table existed before
     try:
         cursor.execute("ALTER TABLE messages ADD COLUMN cost_usd REAL DEFAULT 0.0")
         logger.info("Migrated messages table to include cost_usd column.")
     except sqlite3.OperationalError:
-        # Column already exists
         pass
-        
+
     # Create decision logs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS decision_logs (
@@ -70,7 +73,51 @@ def init_db():
             traces TEXT NOT NULL
         )
     """)
-    
+
+    # Migration: add agent_id, completion_tokens_estimate, cost_usd to decision_logs
+    cursor.execute("PRAGMA table_info(decision_logs)")
+    existing_dec_cols = [row[1] for row in cursor.fetchall()]
+    if "agent_id" not in existing_dec_cols:
+        try:
+            cursor.execute("ALTER TABLE decision_logs ADD COLUMN agent_id TEXT DEFAULT 'jarvis'")
+            logger.info("Migrated decision_logs table to include agent_id column.")
+        except sqlite3.OperationalError:
+            pass
+    if "completion_tokens_estimate" not in existing_dec_cols:
+        try:
+            cursor.execute("ALTER TABLE decision_logs ADD COLUMN completion_tokens_estimate INTEGER DEFAULT 0")
+            logger.info("Migrated decision_logs table to include completion_tokens_estimate column.")
+        except sqlite3.OperationalError:
+            pass
+    if "cost_usd" not in existing_dec_cols:
+        try:
+            cursor.execute("ALTER TABLE decision_logs ADD COLUMN cost_usd REAL DEFAULT 0.0")
+            logger.info("Migrated decision_logs table to include cost_usd column.")
+        except sqlite3.OperationalError:
+            pass
+
+    # Create Graph RAG tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS graph_nodes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT,
+            description TEXT,
+            doc_id TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS graph_edges (
+            source TEXT NOT NULL,
+            target TEXT NOT NULL,
+            description TEXT,
+            weight REAL DEFAULT 1.0,
+            doc_id TEXT,
+            PRIMARY KEY (source, target, doc_id)
+        )
+    """)
+
+
     # Create activity logs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS activity_logs (
@@ -118,7 +165,6 @@ def init_db():
             cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
             logger.info(f"Added column {col} to subagents table.")
         except sqlite3.OperationalError:
-            # Column already exists
             pass
 
     # Pre-populate default subagents if table is empty
@@ -372,21 +418,329 @@ def init_db():
     
     conn.commit()
     conn.close()
-    logger.info("Database initialized successfully.")
+    logger.info("SQLite Database initialized successfully.")
+
+
+def _init_postgres_schema():
+    logger.info("Initializing PostgreSQL database schema")
+    backend = _get_backend()
+    with backend.connect() as conn:
+        cursor = conn.cursor()
+
+        # Create chat messages table (PostgreSQL uses SERIAL)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                cost_usd REAL DEFAULT 0.0
+            )
+        """)
+
+        # Create index for fast session lookups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_id ON messages (session_id)
+        """)
+
+        # Create decision logs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS decision_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                success INTEGER NOT NULL,
+                error TEXT,
+                prompt_tokens_estimate INTEGER NOT NULL,
+                user_message TEXT NOT NULL,
+                assistant_response TEXT NOT NULL,
+                traces TEXT NOT NULL
+            )
+        """)
+
+        # PostgreSQL Migration helper: verify and add decision_logs columns
+        for col, definition in [
+            ("agent_id", "TEXT DEFAULT 'jarvis'"),
+            ("completion_tokens_estimate", "INTEGER DEFAULT 0"),
+            ("cost_usd", "REAL DEFAULT 0.0"),
+        ]:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='decision_logs' AND column_name=%s",
+                (col,)
+            )
+            if not cursor.fetchone():
+                cursor.execute(f"ALTER TABLE decision_logs ADD COLUMN {col} {definition}")
+                logger.info(f"PostgreSQL Migration: added column {col} to decision_logs table.")
+
+        # Create Graph RAG tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT,
+                description TEXT,
+                doc_id TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                description TEXT,
+                weight REAL DEFAULT 1.0,
+                doc_id TEXT,
+                PRIMARY KEY (source, target, doc_id)
+            )
+        """)
+
+
+        # Create activity logs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                message TEXT NOT NULL,
+                token_cost REAL DEFAULT 0.0
+            )
+        """)
+
+        # Create subagents table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subagents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                system_prompt TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                agent_type TEXT DEFAULT 'agent',
+                parent_id TEXT,
+                skills TEXT DEFAULT '',
+                x INTEGER DEFAULT 100,
+                y INTEGER DEFAULT 100,
+                temperature REAL DEFAULT 0.7
+            )
+        """)
+
+        # PostgreSQL Migration helper: verify and add subagents columns
+        for col, definition in [
+            ("agent_type", "TEXT DEFAULT 'agent'"),
+            ("parent_id", "TEXT"),
+            ("skills", "TEXT DEFAULT ''"),
+            ("x", "INTEGER DEFAULT 100"),
+            ("y", "INTEGER DEFAULT 100"),
+            ("temperature", "REAL DEFAULT 0.7"),
+        ]:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='subagents' AND column_name=%s",
+                (col,)
+            )
+            if not cursor.fetchone():
+                cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
+                logger.info(f"PostgreSQL Migration: added column {col} to subagents table.")
+
+        # Seed subagents if table is empty
+        cursor.execute("SELECT COUNT(*) FROM subagents")
+        if cursor.fetchone()[0] == 0:
+            logger.info("Pre-populating default subagents in PostgreSQL.")
+            default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+            default_agents = _get_default_agents(default_model)
+            cursor.executemany("""
+                INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, [t + (0.7,) for t in default_agents])
+            logger.info("Successfully seeded default agents in PostgreSQL.")
+        else:
+            _migrate_existing_subagents_postgres(cursor)
+
+        # Create subagent memory table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subagent_memory (
+                subagent_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (subagent_id, key)
+            )
+        """)
+
+        # Global app settings (KV store)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        cursor.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'ru') ON CONFLICT (key) DO NOTHING")
+
+        # Create session metadata table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_metadata (
+                session_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                agent_id TEXT
+            )
+        """)
+
+        # PostgreSQL Migration helper: verify and add agent_id to session_metadata
+        cursor.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name='session_metadata' AND column_name='agent_id'"
+        )
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
+            logger.info("PostgreSQL Migration: added column agent_id to session_metadata table.")
+
+        conn.commit()
+    logger.info("PostgreSQL Database initialized successfully.")
+
+
+def _get_default_agents(default_model: str) -> list:
+    return [
+        (
+            "jarvis", "Jarvis (Main)",
+            "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+            default_model, "orchestrator", None, "", 100, 350
+        ),
+        (
+            "research", "Search Agent",
+            "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
+            default_model, "agent", "jarvis", "web_search", 450, 100
+        ),
+        (
+            "code", "Code Engineer",
+            "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
+            default_model, "agent", "jarvis", "python_sandbox", 450, 220
+        ),
+        (
+            "analyst", "Data Analyst",
+            "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
+            default_model, "agent", "jarvis", "python_sandbox", 450, 340
+        ),
+        (
+            "scheduler", "Scheduler",
+            "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
+            default_model, "agent", "jarvis", "timers_alarms", 450, 460
+        ),
+        (
+            "monitor", "Market Monitor",
+            "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
+            default_model, "agent", "jarvis", "market_monitor", 450, 580
+        ),
+        (
+            "planner", "Daily Planner",
+            "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
+            default_model, "agent", "jarvis", "google_calendar,todoist_sync", 450, 700
+        ),
+        (
+            "sysops", "Sys Ops",
+            "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
+            default_model, "agent", "jarvis", "shell_execution", 450, 820
+        ),
+        (
+            "football", "Football Analyst",
+            "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
+            default_model, "agent", "jarvis", "web_search", 450, 940
+        ),
+    ]
+
+
+def _migrate_existing_subagents_sqlite(cursor):
+    upserts = _get_default_agents_migrations()
+    default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+    for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
+        cursor.execute("""
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                system_prompt = excluded.system_prompt,
+                agent_type = excluded.agent_type,
+                parent_id = excluded.parent_id,
+                skills = excluded.skills
+            WHERE subagents.system_prompt IN (
+                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
+                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
+                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
+                'You are a research agent. Search for information on the internet using web_search.',
+                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
+                'You are a Code Engineer. Write and execute Python scripts.',
+                'Вы — Аналитик-Визуализатор. Создавайте графики.',
+                'You are an Analyst-Visualizer. Create charts.'
+            )
+        """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
+
+
+def _migrate_existing_subagents_postgres(cursor):
+    upserts = _get_default_agents_migrations()
+    default_model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+    for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
+        cursor.execute("""
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                system_prompt = excluded.system_prompt,
+                agent_type = excluded.agent_type,
+                parent_id = excluded.parent_id,
+                skills = excluded.skills
+            WHERE subagents.system_prompt IN (
+                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
+                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
+                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
+                'You are a research agent. Search for information on the internet using web_search.',
+                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
+                'You are a Code Engineer. Write and execute Python scripts.',
+                'Вы — Аналитик-Визуализатор. Создавайте графики.',
+                'You are an Analyst-Visualizer. Create charts.'
+            )
+        """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
+
+
+def _get_default_agents_migrations() -> list:
+    return [
+        ("jarvis", "Jarvis (Main)",
+         "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+         "orchestrator", None, "", 100, 350),
+        ("research", "Search Agent",
+         "You are a Research Agent. Use web_search to find accurate, up-to-date information. Always cite sources and summarize findings clearly. You can also check weather and fetch RSS news digests.",
+         "agent", "jarvis", "web_search", 450, 100),
+        ("code", "Code Engineer",
+         "You are a Code Engineer. Write clean, well-commented Python code and execute it using the python_sandbox tool. Always show the output and explain what the code does.",
+         "agent", "jarvis", "python_sandbox", 450, 220),
+        ("analyst", "Data Analyst",
+         "You are a Data Analyst. Analyze datasets, compute statistics, and create visualizations using Python (matplotlib, pandas). Always interpret the results and provide actionable insights.",
+         "agent", "jarvis", "python_sandbox", 450, 340),
+         ("scheduler", "Scheduler",
+         "You are a Scheduler Agent. Help the user set timers, reminders, and alarms. Confirm every timer or alarm you set and remind the user of the exact trigger time.",
+         "agent", "jarvis", "timers_alarms", 450, 460),
+        ("monitor", "Market Monitor",
+         "You are a Market Monitor Agent. Track stock prices, crypto rates, and market trends. Use the market_monitor skill to fetch real-time data and set price alerts when requested.",
+         "agent", "jarvis", "market_monitor", 450, 580),
+        ("planner", "Daily Planner",
+         "You are a Daily Planner Agent. Manage the user's calendar and to-do list. Use google_calendar to create and review events, and todoist_sync to manage tasks. Help prioritize and schedule the day effectively.",
+         "agent", "jarvis", "google_calendar,todoist_sync", 450, 700),
+        ("sysops", "Sys Ops",
+         "You are a Sys Ops Agent. Monitor system health (CPU, RAM, disk) and execute shell commands when needed. Always report system status clearly and warn about critical thresholds.",
+         "agent", "jarvis", "shell_execution", 450, 820),
+        ("football", "Football Analyst",
+         "You are a Football Analyst Agent. You have deep knowledge of football (soccer): tactics, player performance, match statistics, league standings, and transfer news. Use web_search to fetch the latest match results, lineups, and news. Provide detailed tactical breakdowns, score predictions, and injury updates. Support all major leagues: Premier League, La Liga, Serie A, Bundesliga, Champions League, and others.",
+         "agent", "jarvis", "web_search", 450, 940),
+    ]
+
 
 def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0) -> Optional[int]:
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
+        return _lastrowid(
             "INSERT INTO messages (session_id, role, content, cost_usd) VALUES (?, ?, ?, ?)",
-            (session_id, role, content, cost_usd)
+            (session_id, role, content, cost_usd),
         )
-        new_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return new_id
     except Exception as e:
         logger.error(f"Error saving message: {e}")
         return None
@@ -394,21 +748,13 @@ def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0
 def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Retrieves the last N messages for a given chat session, in chronological order."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Select last limit messages and reverse to chronological order
-        cursor.execute("""
+        rows = _execute("""
             SELECT id, role, content, cost_usd FROM (
-                SELECT id, role, content, cost_usd FROM messages 
-                WHERE session_id = ? 
+                SELECT id, role, content, cost_usd FROM messages
+                WHERE session_id = ?
                 ORDER BY id DESC LIMIT ?
             ) ORDER BY id ASC
         """, (session_id, limit))
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
         return [{"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3]} for r in rows]
     except Exception as e:
         logger.error(f"Error retrieving chat history: {e}")
@@ -417,11 +763,7 @@ def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
 def clear_chat_history(session_id: str):
     """Deletes all messages in the database for a session."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-        conn.commit()
-        conn.close()
+        _rowcount("DELETE FROM messages WHERE session_id = ?", (session_id,))
         logger.info(f"Cleared database history for session: {session_id}")
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
@@ -569,13 +911,12 @@ def get_app_settings() -> Dict[str, Any]:
 def save_decision_log(log: Dict[str, Any]):
     """Saves a single agent decision log to the database."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        _execute("""
             INSERT INTO decision_logs (
-                timestamp, session_id, model, latency_ms, success, 
-                error, prompt_tokens_estimate, user_message, assistant_response, traces
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                timestamp, session_id, model, latency_ms, success,
+                error, prompt_tokens_estimate, user_message, assistant_response, traces,
+                agent_id, completion_tokens_estimate, cost_usd
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             log["timestamp"],
             log["session_id"],
@@ -586,34 +927,30 @@ def save_decision_log(log: Dict[str, Any]):
             log["prompt_tokens_estimate"],
             log["user_message"],
             log["assistant_response"],
-            json.dumps(log.get("traces", []))
+            json.dumps(log.get("traces", [])),
+            log.get("agent_id", "jarvis"),
+            log.get("completion_tokens_estimate", 0),
+            log.get("cost_usd", 0.0),
         ))
-        conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Error saving decision log to database: {e}")
 
 def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
     """Retrieves the last N decision logs from the database, sorted by new first."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT timestamp, session_id, model, latency_ms, success, 
-                   error, prompt_tokens_estimate, user_message, assistant_response, traces 
-            FROM decision_logs 
+        rows = _execute("""
+            SELECT timestamp, session_id, model, latency_ms, success,
+                   error, prompt_tokens_estimate, user_message, assistant_response, traces,
+                   agent_id, completion_tokens_estimate, cost_usd
+            FROM decision_logs
             ORDER BY id DESC LIMIT ?
         """, (limit,))
-        rows = cursor.fetchall()
-        conn.close()
-        
         logs = []
         for r in rows:
             try:
                 traces = json.loads(r[9])
             except Exception:
                 traces = []
-                
             logs.append({
                 "timestamp": r[0],
                 "session_id": r[1],
@@ -624,7 +961,10 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
                 "prompt_tokens_estimate": r[6],
                 "user_message": r[7],
                 "assistant_response": r[8],
-                "traces": traces
+                "traces": traces,
+                "agent_id": r[10] if len(r) > 10 else "jarvis",
+                "completion_tokens_estimate": r[11] if len(r) > 11 else 0,
+                "cost_usd": r[12] if len(r) > 12 else 0.0,
             })
         return logs
     except Exception as e:
@@ -634,9 +974,7 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
 def save_activity_log(log: Dict[str, Any]):
     """Saves a single activity log to the database."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        _execute("""
             INSERT INTO activity_logs (timestamp, type, source, message, token_cost)
             VALUES (?, ?, ?, ?, ?)
         """, (
@@ -644,37 +982,24 @@ def save_activity_log(log: Dict[str, Any]):
             log["type"],
             log["source"],
             log["message"],
-            log["token_cost"]
+            log["token_cost"],
         ))
-        conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Error saving activity log to database: {e}")
 
 def get_activity_logs(limit: int = 200) -> List[Dict[str, Any]]:
     """Retrieves the last N activity logs from the database, sorted chronologically."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        rows = _execute("""
             SELECT timestamp, type, source, message, token_cost FROM (
                 SELECT timestamp, type, source, message, token_cost, id FROM activity_logs
                 ORDER BY id DESC LIMIT ?
             ) ORDER BY id DESC
         """, (limit,))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        logs = []
-        for r in rows:
-            logs.append({
-                "timestamp": r[0],
-                "type": r[1],
-                "source": r[2],
-                "message": r[3],
-                "token_cost": r[4]
-            })
-        return logs
+        return [
+            {"timestamp": r[0], "type": r[1], "source": r[2], "message": r[3], "token_cost": r[4]}
+            for r in rows
+        ]
     except Exception as e:
         logger.error(f"Error retrieving activity logs: {e}")
         return []
@@ -682,11 +1007,7 @@ def get_activity_logs(limit: int = 200) -> List[Dict[str, Any]]:
 def clear_activity_logs():
     """Deletes all activity logs in the database."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM activity_logs")
-        conn.commit()
-        conn.close()
+        _rowcount("DELETE FROM activity_logs")
         logger.info("Cleared activity logs database.")
     except Exception as e:
         logger.error(f"Error clearing activity logs: {e}")
@@ -762,9 +1083,8 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
                    model_params, current_task, last_action, last_error, progress, updated_at
             FROM subagents WHERE id = ?
         """, (id,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
+        if rows:
+            row = rows[0]
             return {
                 "id": row[0],
                 "name": row[1],
@@ -805,8 +1125,6 @@ def get_all_subagents() -> List[Dict[str, Any]]:
                    model_params, current_task, last_action, last_error, progress, updated_at
             FROM subagents ORDER BY id ASC
         """)
-        rows = cursor.fetchall()
-        conn.close()
         return [
             {
                 "id": r[0],
@@ -841,12 +1159,7 @@ def get_all_subagents() -> List[Dict[str, Any]]:
 def delete_subagent(id: str) -> bool:
     """Deletes a subagent from the database. Returns True if deleted, False otherwise."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM subagents WHERE id = ?", (id,))
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        deleted = _rowcount("DELETE FROM subagents WHERE id = ?", (id,)) > 0
         if deleted:
             logger.info(f"Subagent deleted: {id}")
         return deleted
@@ -970,14 +1283,10 @@ def get_agent_office_state() -> Dict[str, Any]:
 def db_save_subagent_memory(subagent_id: str, key: str, value: str):
     """Saves or updates a memory fact (key-value pair) for a specific subagent."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        _execute("""
             INSERT OR REPLACE INTO subagent_memory (subagent_id, key, value, updated_at)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         """, (subagent_id, key, value))
-        conn.commit()
-        conn.close()
         logger.info(f"Subagent memory saved: {subagent_id} -> {key}")
     except Exception as e:
         logger.error(f"Error saving subagent memory: {e}")
@@ -985,14 +1294,16 @@ def db_save_subagent_memory(subagent_id: str, key: str, value: str):
 def db_get_subagent_memory(subagent_id: str, key: Optional[str] = None) -> Dict[str, str]:
     """Retrieves saved facts for a specific subagent. Returns a dict of key -> value."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
         if key:
-            cursor.execute("SELECT key, value FROM subagent_memory WHERE subagent_id = ? AND key = ?", (subagent_id, key))
+            rows = _execute(
+                "SELECT key, value FROM subagent_memory WHERE subagent_id = ? AND key = ?",
+                (subagent_id, key),
+            )
         else:
-            cursor.execute("SELECT key, value FROM subagent_memory WHERE subagent_id = ?", (subagent_id,))
-        rows = cursor.fetchall()
-        conn.close()
+            rows = _execute(
+                "SELECT key, value FROM subagent_memory WHERE subagent_id = ?",
+                (subagent_id,),
+            )
         return {r[0]: r[1] for r in rows}
     except Exception as e:
         logger.error(f"Error getting subagent memory: {e}")
@@ -1001,16 +1312,260 @@ def db_get_subagent_memory(subagent_id: str, key: Optional[str] = None) -> Dict[
 def db_delete_subagent_memory(subagent_id: str, key: str) -> bool:
     """Deletes a memory fact for a specific subagent."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM subagent_memory WHERE subagent_id = ? AND key = ?", (subagent_id, key))
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return deleted
+        return _rowcount(
+            "DELETE FROM subagent_memory WHERE subagent_id = ? AND key = ?",
+            (subagent_id, key),
+        ) > 0
     except Exception as e:
         logger.error(f"Error deleting subagent memory: {e}")
         return False
 
+# ─── APP SETTINGS HELPERS ────────────────────────────────────────────────────
+
+def get_setting(key: str) -> Optional[str]:
+    """Returns a global app setting value by key, or None if not found."""
+    try:
+        rows = _execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+        return rows[0][0] if rows else None
+    except Exception as e:
+        logger.error(f"Error getting setting {key}: {e}")
+        return None
+
+def set_setting(key: str, value: str) -> bool:
+    """Saves or updates a global app setting."""
+    try:
+        _execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error setting {key}: {e}")
+        return False
+
+# ─── SESSION METADATA HELPERS ──────────────────────────────────────────────────
+
+def save_session_metadata(session_id: str, title: str, agent_id: Optional[str] = None):
+    """Saves or updates custom metadata (title and target agent) for a chat session."""
+    try:
+        # Check if row exists to preserve existing values if updating selectively
+        rows = _execute(
+            "SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,)
+        )
+        final_agent_id = agent_id
+        if rows and agent_id is None:
+            final_agent_id = rows[0][0]
+
+        _execute("""
+            INSERT INTO session_metadata (session_id, title, agent_id, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(session_id) DO UPDATE SET
+                title = excluded.title,
+                agent_id = excluded.agent_id,
+                updated_at = CURRENT_TIMESTAMP
+        """, (session_id, title, final_agent_id))
+        logger.info(f"Saved custom metadata for session {session_id}: title={title}, agent_id={final_agent_id}")
+    except Exception as e:
+        logger.error(f"Error saving session metadata for {session_id}: {e}")
+
+def save_session_title(session_id: str, title: str):
+    """Saves or updates a custom title for a chat session."""
+    save_session_metadata(session_id, title, agent_id=None)
+
+def get_session_agent_id(session_id: str) -> Optional[str]:
+    """Retrieves the mapped agent/orchestrator ID for a session."""
+    try:
+        rows = _execute(
+            "SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,)
+        )
+        return rows[0][0] if rows else None
+    except Exception as e:
+        logger.error(f"Error retrieving session agent ID for {session_id}: {e}")
+        return None
+
+def get_session_title(session_id: str) -> Optional[str]:
+    """Retrieves the custom title of a session, if exists."""
+    try:
+        rows = _execute(
+            "SELECT title FROM session_metadata WHERE session_id = ?", (session_id,)
+        )
+        return rows[0][0] if rows else None
+    except Exception as e:
+        logger.error(f"Error retrieving session title for {session_id}: {e}")
+        return None
+
+def delete_session_title(session_id: str) -> bool:
+    """Deletes custom title metadata for a session."""
+    try:
+        return _rowcount(
+            "DELETE FROM session_metadata WHERE session_id = ?", (session_id,)
+        ) > 0
+    except Exception as e:
+        logger.error(f"Error deleting session title for {session_id}: {e}")
+        return False
+
+# ─── GRAPH DATABASE HELPERS ──────────────────────────────────────────────────
+
+def db_save_graph_node(node_id: str, name: str, node_type: str, description: str, doc_id: str):
+    """Saves or updates a graph node in the database."""
+    try:
+        _execute("""
+            INSERT INTO graph_nodes (id, name, type, description, doc_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                type = excluded.type,
+                description = excluded.description,
+                doc_id = excluded.doc_id
+        """, (node_id, name, node_type, description, doc_id))
+    except Exception as e:
+        logger.error(f"Error saving graph node: {e}")
+
+def db_save_graph_edge(source: str, target: str, description: str, weight: float, doc_id: str):
+    """Saves or updates a graph edge in the database."""
+    try:
+        _execute("""
+            INSERT INTO graph_edges (source, target, description, weight, doc_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(source, target, doc_id) DO UPDATE SET
+                description = excluded.description,
+                weight = excluded.weight
+        """, (source, target, description, weight, doc_id))
+    except Exception as e:
+        logger.error(f"Error saving graph edge: {e}")
+
+def db_get_graph_nodes(doc_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves graph nodes, optionally filtered by doc_id."""
+    try:
+        if doc_id:
+            rows = _execute("SELECT id, name, type, description, doc_id FROM graph_nodes WHERE doc_id = ?", (doc_id,))
+        else:
+            rows = _execute("SELECT id, name, type, description, doc_id FROM graph_nodes")
+        return [
+            {"id": r[0], "name": r[1], "type": r[2], "description": r[3], "doc_id": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error getting graph nodes: {e}")
+        return []
+
+def db_get_graph_edges(doc_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves graph edges, optionally filtered by doc_id."""
+    try:
+        if doc_id:
+            rows = _execute("SELECT source, target, description, weight, doc_id FROM graph_edges WHERE doc_id = ?", (doc_id,))
+        else:
+            rows = _execute("SELECT source, target, description, weight, doc_id FROM graph_edges")
+        return [
+            {"source": r[0], "target": r[1], "description": r[2], "weight": r[3], "doc_id": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error getting graph edges: {e}")
+        return []
+
+def db_clear_graph(doc_id: Optional[str] = None):
+    """Deletes nodes and edges from the graph."""
+    try:
+        if doc_id:
+            _rowcount("DELETE FROM graph_nodes WHERE doc_id = ?", (doc_id,))
+            _rowcount("DELETE FROM graph_edges WHERE doc_id = ?", (doc_id,))
+        else:
+            _rowcount("DELETE FROM graph_nodes")
+            _rowcount("DELETE FROM graph_edges")
+    except Exception as e:
+        logger.error(f"Error clearing graph: {e}")
+
+# ─── AGGREGATED METRICS HELPER ───────────────────────────────────────────────
+
+def db_get_aggregated_metrics() -> Dict[str, Any]:
+    """Computes aggregated success rates and latency metrics by agent and by model."""
+    try:
+        # 1. Summary
+        summary_row = _execute("""
+            SELECT COUNT(*), AVG(latency_ms), SUM(success), 
+                   SUM(prompt_tokens_estimate + completion_tokens_estimate),
+                   SUM(cost_usd)
+            FROM decision_logs
+        """)
+        
+        total_calls = summary_row[0][0] if summary_row and summary_row[0][0] is not None else 0
+        avg_latency = float(summary_row[0][1]) if summary_row and summary_row[0][1] is not None else 0.0
+        sum_success = summary_row[0][2] if summary_row and summary_row[0][2] is not None else 0
+        total_tokens = summary_row[0][3] if summary_row and summary_row[0][3] is not None else 0
+        total_cost = float(summary_row[0][4]) if summary_row and summary_row[0][4] is not None else 0.0
+        
+        success_rate = (sum_success / total_calls * 100.0) if total_calls > 0 else 100.0
+        
+        summary = {
+            "total_calls": total_calls,
+            "avg_latency_ms": round(avg_latency, 1),
+            "success_rate": round(success_rate, 1),
+            "total_tokens": total_tokens,
+            "total_cost_usd": round(total_cost, 6)
+        }
+
+        # 2. By Agent
+        agent_rows = _execute("""
+            SELECT agent_id, COUNT(*), SUM(success), AVG(latency_ms),
+                   SUM(prompt_tokens_estimate + completion_tokens_estimate),
+                   SUM(cost_usd)
+            FROM decision_logs
+            GROUP BY agent_id
+        """)
+        by_agent = []
+        for r in agent_rows:
+            agent_calls = r[1]
+            agent_success = r[2] or 0
+            agent_tokens = r[4] or 0
+            agent_cost = float(r[5]) if r[5] is not None else 0.0
+            
+            by_agent.append({
+                "agent_id": r[0],
+                "total_calls": agent_calls,
+                "success_rate": round((agent_success / agent_calls * 100.0), 1) if agent_calls > 0 else 100.0,
+                "avg_latency_ms": round(float(r[3]), 1) if r[3] is not None else 0.0,
+                "total_tokens": agent_tokens,
+                "total_cost_usd": round(agent_cost, 6)
+            })
+
+        # 3. By Model
+        model_rows = _execute("""
+            SELECT model, COUNT(*), SUM(success), AVG(latency_ms),
+                   SUM(prompt_tokens_estimate + completion_tokens_estimate),
+                   SUM(cost_usd)
+            FROM decision_logs
+            GROUP BY model
+        """)
+        by_model = []
+        for r in model_rows:
+            model_calls = r[1]
+            model_success = r[2] or 0
+            model_tokens = r[4] or 0
+            model_cost = float(r[5]) if r[5] is not None else 0.0
+            
+            by_model.append({
+                "model": r[0],
+                "total_calls": model_calls,
+                "success_rate": round((model_success / model_calls * 100.0), 1) if model_calls > 0 else 100.0,
+                "avg_latency_ms": round(float(r[3]), 1) if r[3] is not None else 0.0,
+                "total_tokens": model_tokens,
+                "total_cost_usd": round(model_cost, 6)
+            })
+
+        return {
+            "summary": summary,
+            "by_agent": by_agent,
+            "by_model": by_model
+        }
+    except Exception as e:
+        logger.error(f"Error computing aggregated metrics: {e}")
+        return {
+            "summary": {"total_calls": 0, "avg_latency_ms": 0.0, "success_rate": 100.0, "total_tokens": 0, "total_cost_usd": 0.0},
+            "by_agent": [],
+            "by_model": []
+        }
+
 # Auto-initialize database schema on import to prevent missing tables
 init_db()
+

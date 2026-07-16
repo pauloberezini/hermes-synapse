@@ -1,14 +1,15 @@
-# 🏛️ Hermes: Light Hierarchical AI Agent Network with Visual Canvas
+<div align="center">
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python: 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Docker: Supported](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
+# 🏛️ Hermes
 
 **Hermes** is a low-code, self-hosted framework for building managed networks of AI agents. Powered by Jarvis, it combines a beautiful React visual canvas (drag-and-drop node graph) with an autonomous planning backend.
 
-Unlike deterministic workflow builders (like n8n), Hermes resolves complex user requests on the fly using a dynamic LLM planning loop. Unlike chaotic multi-agent groups (like AutoGen), Hermes uses a strict Directed Acyclic Graph (DAG) hierarchy to keep agents coordinated and prevent infinite feedback loops.
+**Build networks of AI agents that plan dynamically, coordinate via DAG, and never spin out of control.**
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](https://opensource.org/licenses/MIT)
+[![Python: 3.11+](https://img.shields.io/badge/Python-3.11+-3b82f6.svg)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Supported-2563eb.svg)](https://www.docker.com/)
+[![GitHub Stars](https://img.shields.io/github/stars/pauloberezini/hermes-synapse?style=social)](https://github.com/pauloberezini/hermes-synapse/stargazers)
 
 ## 📸 Dashboard Preview
 
@@ -66,27 +67,44 @@ graph TD
     style ExternalServices fill:#111622,stroke:#10b981,stroke-width:1.5px,color:#fff
 ```
 
-### 🔐 Security & Permission Intersection
-To execute actions safely, Hermes implements **Permission Intersection** down the execution tree:
-`AllowedTools = ChildTools ∩ ParentTools`
+</div>
 
-If a parent sub-orchestrator restricts tools to `web_search`, its child sub-agents can never invoke dangerous actions like `execute_command`, even if those agents have the command line skill configured.
+---
+
+## ✨ Why Hermes?
+
+Most multi-agent frameworks are either **too rigid** (n8n: hardwired workflows) or **too chaotic** (AutoGen: agents talking in circles forever).
+
+**Hermes sits in the middle:** a visual drag-and-drop canvas where you wire up AI agents in a strict **Directed Acyclic Graph (DAG)**. No infinite loops. No hardcoded pipelines. Just agents that actually coordinate.
+
+| | Hermes | n8n / Make | Flowise / LangFlow | AutoGen / CrewAI |
+|---|---|---|---|---|
+| **Execution** | 🧠 Non-deterministic (AI plans dynamically) | 🔧 Deterministic (hardcoded steps) | 🔗 Visual LLM chains | 💬 Conversational loops |
+| **UI** | 🎨 SVG canvas + isolated agent chats | Node editor | Visual chain designer | CLI / API only |
+| **Hierarchy** | ✅ Strict DAG (cycle-safe) | ↪ Linear / conditional | Data-flow graphs | ⚠️ Free loops (cycle risk) |
+| **Security** | 🔐 Permission Intersection | Hardcoded auth | Sandbox container | Local exec by default |
+| **Self-hosted** | ✅ Docker, SQLite, local LLMs | ✅ | ✅ | ✅ |
+
+---
+
+## 📸 Demo
+
+[![Hermes Synapse Demo](https://img.youtube.com/vi/3GFh-1Gglno/maxresdefault.jpg)](https://youtu.be/3GFh-1Gglno)
+
+*👆 Click to watch — canvas node wiring, Telegram integration, and live DAG planning in 3 minutes.*
 
 ---
 
 ## 🚀 Quick Start
 
-Ensure you have **Docker** and **Docker Compose** installed.
+> **Requirements:** Docker + Docker Compose. That's it.
 
-### 1. Clone the repository
 ```bash
-git clone https://github.com/your-username/hermes.git
-cd hermes
-```
+# 1. Clone
+git clone https://github.com/pauloberezini/hermes-synapse
+cd hermes-synapse
 
-### 2. Configure Environment Variables
-Copy the template configuration file:
-```bash
+# 2. Configure (only OPENROUTER_API_KEY is required — everything else is optional)
 cp .env.example .env
 ```
 The default setup is local-first and does not require an LLM API key. Optional
@@ -105,19 +123,30 @@ docker-compose exec ollama ollama pull hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_
 
 You can also pull and delete models from **System Core Parameters → Ollama Models**.
 
-### 4. Access the Dashboard
-Open your browser and navigate to:
-```
-http://localhost:9119
+# 4. Open dashboard
+open http://localhost:9119
 ```
 
-*Sir, your dashboard is online.*
+**Want to use a local model (Ollama)?** Set in `.env`:
+```bash
+LLM_API_BASE=http://host.docker.internal:11434/v1
+LLM_MODEL=llama3
+OPENROUTER_API_KEY=local  # any non-empty placeholder
+```
 
 ---
 
-## ⚙️ Configuration & Integrations
+## 🏛️ Architecture
 
-Hermes starts gracefully even if optional integrations are not configured.
+```
+User ──→ Web Dashboard (React Canvas)
+           │
+           ▼
+     🤖 Root Orchestrator (Jarvis)       ← DAG entry point
+          / \
+   Sub-Orch  Sub-Agent                   ← Hierarchical delegation
+        |         |
+   Sub-Agents   Skills                   ← Tools: web_search, python_sandbox, ...
 
 ### 🤖 Ollama and model providers
 
@@ -197,46 +226,133 @@ If you wish to allow Hermes to manage your calendars:
 
 ---
 
-## 🤖 Default Agents
+## 🤖 Built-in Agents (seeded on first launch)
 
-On first launch, Hermes seeds the following 9 agents into the database automatically. All agents work out of the box — skills that require API keys will gracefully degrade to mock data until the key is provided.
+| Agent | Skills | Required Keys |
+|---|---|---|
+| 🏛️ **Jarvis (Main)** — root orchestrator | — | `OPENROUTER_API_KEY` |
+| 🔍 **Search Agent** | Web search, weather, RSS | `SERPER_API_KEY` |
+| 💻 **Code Engineer** | Python sandbox (self-correcting) | — |
+| 📊 **Data Analyst** | pandas + matplotlib charts | — |
+| ⏰ **Scheduler** | Timers, reminders, alarms | — |
+| 📈 **Market Monitor** | Stocks + crypto (yfinance) | — |
+| 📅 **Daily Planner** | Google Calendar + Todoist | `TODOIST_API_TOKEN` + Google OAuth |
+| 🖥️ **Sys Ops** | System stats + shell exec | — |
+| ⚽ **Football Analyst** | Match results, tactics, standings | `SERPER_API_KEY` |
 
-| Agent | Description | Required Keys |
-|-------|-------------|---------------|
-| 🏛️ **Jarvis (Main)** | Root orchestrator — routes tasks to sub-agents | `OPENROUTER_API_KEY` |
-| 🔍 **Search Agent** | Web search, weather, RSS news digest | `SERPER_API_KEY`, `OPENWEATHERMAP_API_KEY` |
-| 💻 **Code Engineer** | Writes and executes Python code in a sandbox | `OPENROUTER_API_KEY` |
-| 📊 **Data Analyst** | Data analysis, statistics, charts (matplotlib, pandas) | `OPENROUTER_API_KEY` |
-| ⏰ **Scheduler** | Timers, reminders, and alarms | `OPENROUTER_API_KEY` |
-| 📈 **Market Monitor** | Real-time stock & crypto prices, price alerts | `OPENROUTER_API_KEY` *(powered by yfinance, no extra key)* |
-| 📅 **Daily Planner** | Google Calendar events + Todoist task management | `TODOIST_API_TOKEN`, Google OAuth |
-| 🖥️ **Sys Ops** | System stats (CPU / RAM / Disk), shell command execution | `OPENROUTER_API_KEY` |
-| ⚽ **Football Analyst** | Match results, standings, tactics, transfer news | `SERPER_API_KEY` |
+> All agents start without error even if their API keys are missing — they return a clear message explaining what needs to be configured.
 
-### 🔑 API Keys Quick Reference
+---
 
-| Key | Where to Get It | Required For |
-|-----|-----------------|--------------|
-| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | **All agents** (LLM inference) |
-| `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) on Telegram | Telegram interface |
-| `TELEGRAM_CHAT_ID` | [@userinfobot](https://t.me/userinfobot) on Telegram | Telegram interface |
-| `SERPER_API_KEY` | [serper.dev](https://serper.dev) — 2,500 free queries/month | Search Agent, Football Analyst |
-| `OPENWEATHERMAP_API_KEY` | [openweathermap.org/api](https://home.openweathermap.org/api_keys) — free tier | Search Agent (weather) |
-| `TODOIST_API_TOKEN` | Todoist → Settings → Integrations → [Developer](https://app.todoist.com/app/settings/integrations/developer) | Daily Planner (tasks) |
-| `OBSIDIAN_API_KEY` | Obsidian → Settings → [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) | Obsidian RAG skill |
-| Google OAuth credentials | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → OAuth 2.0 Desktop Client | Daily Planner (Calendar) |
+## ⚙️ Configuration
 
-> **Tip:** Only `OPENROUTER_API_KEY` is strictly required. Every other key is optional — agents with missing keys will still start and return a clear message explaining what needs to be configured.
+### LLM Providers
+
+Hermes supports **any OpenAI-compatible API**:
+
+```bash
+# OpenRouter (default) — access 200+ models
+LLM_API_BASE=https://openrouter.ai/api/v1
+OPENROUTER_API_KEY=your_key
+
+# Ollama (local)
+LLM_API_BASE=http://host.docker.internal:11434/v1
+LLM_MODEL=llama3.1
+
+# vLLM / LM Studio / LocalAI — same pattern
+LLM_API_BASE=http://localhost:8000/v1
+```
+
+### Per-Agent Model Overrides
+
+```bash
+AGENT_MODEL_CODE=deepseek/deepseek-r1       # Heavy reasoning for code
+AGENT_MODEL_RESEARCH=google/gemini-2.5-flash # Fast for search
+AGENT_MODEL_ANALYST=openai/gpt-4o           # Visual for charts
+```
+
+### Database Backends
+
+```bash
+# Default: SQLite (zero config, WAL mode enabled automatically)
+# DATABASE_URL=   ← leave empty
+
+# PostgreSQL (production / SaaS mode):
+DATABASE_URL=postgresql://user:password@localhost:5432/hermes
+```
+
+### Optional Integrations
+
+| Integration | Env Var | Notes |
+|---|---|---|
+| Telegram Bot | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Create via [@BotFather](https://t.me/BotFather) |
+| Web Search | `SERPER_API_KEY` | [serper.dev](https://serper.dev) — 2,500 free/month |
+| Weather | `OPENWEATHERMAP_API_KEY` | Free tier: 1,000 calls/day |
+| Todoist | `TODOIST_API_TOKEN` | Todoist Settings → Integrations |
+| Google Calendar | OAuth2 JSON file | See `.env.example` for setup |
+| Obsidian RAG | `OBSIDIAN_API_KEY` | [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) |
+
+---
+
+## 🔐 Security: Permission Intersection
+
+Hermes enforces a security constraint down the execution tree:
+
+```
+AllowedTools(agent) = agent.skills ∩ parent.skills
+```
+
+If a parent sub-orchestrator only has `web_search`, its child agents **cannot** call `execute_command`, even if they have `shell_execution` configured. This prevents privilege escalation through agent chains.
 
 ---
 
 ## 📂 Project Structure
 
+```
+hermes-synapse/
+├── backend/              # FastAPI server
+│   ├── main.py           # API routes
+│   ├── agent.py          # Core LLM orchestration loop
+│   ├── orchestrator.py   # DAG planner
+│   ├── database.py       # SQLite/PostgreSQL backend abstraction
+│   ├── rag.py            # Qdrant vector memory
+│   ├── tools.py          # All skill tool implementations
+│   └── subagents.py      # Specialized agent classes
+├── frontend/             # React + Vite dashboard
+├── docker-compose.yml    # Production stack
+├── docker-compose.dev.yml # Development stack (hot-reload)
+└── .env.example          # Configuration template
+```
 
-* `/backend`: FastAPI server, agents, tools registry, DB migrations, Telegram listeners.
-* `/frontend`: React + Vite client web dashboard.
-* `docker-compose.yml`: Multi-container configuration (Backend, Dashboard, Qdrant).
-* `ROADMAP.md`: Detailed developmental roadmap, specifications, and business plan.
+---
+
+## 🛣️ Roadmap
+
+- [x] Visual SVG canvas with drag-and-drop wiring
+- [x] DAG hierarchical orchestration with planning loop
+- [x] SQLite + PostgreSQL pluggable backend
+- [x] Qdrant RAG memory with fastembed (local embeddings)
+- [x] Python code sandbox with self-correction loop
+- [x] Telegram bot interface
+- [ ] **Plugin SDK** — `pip install hermes-sdk` → write your own skills
+- [ ] **Skills Marketplace** — community-contributed connectors
+- [ ] **Voice interface** — Whisper STT + TTS replies
+- [ ] **SaaS mode** — multi-tenant namespace isolation
+
+See full [ROADMAP.md](ROADMAP.md) for the detailed specification.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
+Quick setup for development:
+```bash
+git clone https://github.com/pauloberezini/hermes-synapse
+cd hermes-synapse
+docker compose -f docker-compose.dev.yml up  # hot-reload mode
+```
 
 ---
 
@@ -263,4 +379,14 @@ APIs. The architecture/threat audit is in
 
 ## 🛡️ License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+**If Hermes saved you from rewriting a multi-agent spaghetti pipeline, give us a ⭐**
+
+[⭐ Star on GitHub](https://github.com/pauloberezini/hermes-synapse) · [🐛 Report Bug](https://github.com/pauloberezini/hermes-synapse/issues) · [💡 Request Feature](https://github.com/pauloberezini/hermes-synapse/issues)
+
+</div>

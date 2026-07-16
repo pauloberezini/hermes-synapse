@@ -6,7 +6,10 @@ import { ChatTab } from './ChatTab';
 describe('ChatTab Component', () => {
   const defaultProps = {
     currentChatId: 'dashboard',
-    chatSessions: ['dashboard', 'chat_123'],
+    chatSessions: [
+      { id: 'dashboard', title: 'Main Terminal' },
+      { id: 'chat_123', title: 'chat_123' }
+    ],
     messages: [
       { role: 'assistant' as const, content: 'Hello, Sir.' },
       { role: 'user' as const, content: 'What is the weather today?' }
@@ -26,15 +29,20 @@ describe('ChatTab Component', () => {
     config: { system_prompt: 'System prompt', model: 'gpt-4' },
     isConnected: true,
     isUploading: false,
+    attachedFile: null,
+    setAttachedFile: vi.fn(),
+    handleChatFileAttach: vi.fn(),
     speakText: vi.fn(),
     handleClearChat: vi.fn(),
     handleSendMessage: vi.fn(),
-    handleFileUpload: vi.fn(),
     selectChat: vi.fn(),
     handleCreateNewSession: vi.fn(),
     fetchChatSessions: vi.fn(),
     getSessionLabel: (id: string) => id === 'dashboard' ? 'Main Terminal' : id,
-    mainChatEndRef: React.createRef<HTMLDivElement>()
+    mainChatEndRef: React.createRef<HTMLDivElement>(),
+    subagents: [],
+    handleSetSessionAgent: vi.fn(),
+    fetchWithAuth: vi.fn()
   };
 
   it('renders messages correctly', () => {

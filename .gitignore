@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 client_secret_*.json
+.agents/
 
 # Python
 __pycache__/

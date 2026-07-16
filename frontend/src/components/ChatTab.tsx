@@ -15,15 +15,18 @@ import {
   Archive,
   Copy,
   Cpu,
-  Lock
+  Lock,
+  Edit2,
+  FileText,
+  X as XIcon
 } from 'lucide-react';
-import type { ChatMessage, SystemConfig } from '../types';
+import type { ChatMessage, SystemConfig, ChatSession } from '../types';
 import { styles } from '../styles';
 import { renderMarkdown } from '../utils';
 
 interface ChatTabProps {
   currentChatId: string;
-  chatSessions: string[];
+  chatSessions: ChatSession[];
   messages: ChatMessage[];
   inputValue: string;
   setInputValue: (val: string) => void;
@@ -40,11 +43,14 @@ interface ChatTabProps {
   config: SystemConfig;
   isConnected: boolean;
   isUploading: boolean;
-  
+  // File attachment for chat context
+  attachedFile: { name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null;
+  setAttachedFile: (file: { name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null) => void;
+  handleChatFileAttach: (e: React.ChangeEvent<HTMLInputElement>) => void;
+
   speakText: (text: string, index: number) => void;
   handleClearChat: () => void;
   handleSendMessage: (e: React.FormEvent) => void;
-  handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   selectChat: (chatId: string) => void;
   handleCreateNewSession: () => void;
   fetchChatSessions: () => void;
@@ -76,10 +82,12 @@ export function ChatTab({
   config,
   isConnected,
   isUploading,
+  attachedFile,
+  setAttachedFile,
+  handleChatFileAttach,
   speakText,
   handleClearChat,
   handleSendMessage,
-  handleFileUpload,
   selectChat,
   handleCreateNewSession,
   fetchChatSessions,
@@ -161,6 +169,33 @@ export function ChatTab({
               {currentChatId === 'dashboard' ? 'Main Terminal' : getSessionLabel(currentChatId)}
             </span>
           </div>
+
+          {/* Active Session Orchestrator Selector */}
+          {currentChatId !== 'dashboard' && !subagents.some(a => a.id === currentChatId) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '8px', background: 'rgba(255, 255, 255, 0.02)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>ORCHESTRATOR:</span>
+              <select
+                value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
+                onChange={(e) => handleSetSessionAgent(currentChatId, e.target.value)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--accent-cyan)',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="jarvis" style={{ background: '#0b0f19', color: '#fff' }}>Jarvis (Main)</option>
+                {subagents.map(a => (
+                  <option key={a.id} value={a.id} style={{ background: '#0b0f19', color: '#fff' }}>
+                    {a.name} ({a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator' ? 'Orchestrator' : 'Agent'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* TTS speaking pulse indicator */}
           {isSpeaking && (
@@ -301,7 +336,7 @@ export function ChatTab({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
             {filteredSessions.map(s => {
               const isActive = currentChatId === s;
-              const label = getSessionLabel(s);
+              const label = session.title || getSessionLabel(s);
               const isDashboard = s === 'dashboard';
               
               return (
@@ -325,7 +360,11 @@ export function ChatTab({
                     position: 'relative',
                     boxShadow: isDashboard ? '0 0 10px rgba(0, 240, 255, 0.04)' : 'none'
                   }}
-                  onClick={() => selectChat(s)}
+                  onClick={() => {
+                    if (editingSessionId !== s) {
+                      selectChat(s);
+                    }
+                  }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
                     {isDashboard ? (
@@ -334,10 +373,41 @@ export function ChatTab({
                       <MessageSquare size={14} style={{ color: isActive ? 'var(--accent-cyan)' : 'var(--text-dim)', flexShrink: 0 }} />
                     )}
                     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: (isActive || isDashboard) ? 600 : 500, color: (isActive || isDashboard) ? '#fff' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {label}
-                        </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0, width: '100%' }}>
+                        {editingSessionId === s ? (
+                          <input
+                            value={editingSessionTitle}
+                            onChange={(e) => setEditingSessionTitle(e.target.value)}
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter') {
+                                await handleRenameSession(s, editingSessionTitle);
+                                setEditingSessionId(null);
+                              } else if (e.key === 'Escape') {
+                                setEditingSessionId(null);
+                              }
+                            }}
+                            onBlur={async () => {
+                              await handleRenameSession(s, editingSessionTitle);
+                              setEditingSessionId(null);
+                            }}
+                            autoFocus
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              fontSize: '0.8rem',
+                              background: 'rgba(0, 0, 0, 0.4)',
+                              border: '1px solid rgba(0, 240, 255, 0.5)',
+                              borderRadius: '4px',
+                              color: '#fff',
+                              padding: '2px 6px',
+                              width: '100%',
+                              outline: 'none',
+                            }}
+                          />
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', fontWeight: (isActive || isDashboard) ? 600 : 500, color: (isActive || isDashboard) ? '#fff' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {label}
+                          </span>
+                        )}
                         {isDashboard && (
                           <span title="Protected core session" style={{ display: 'flex', alignItems: 'center' }}>
                             <Lock size={10} style={{ color: 'rgba(0, 240, 255, 0.4)', flexShrink: 0 }} />
@@ -386,6 +456,19 @@ export function ChatTab({
                         minWidth: '120px',
                         boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
                       }}>
+                        {!isDashboard && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveMenu(null);
+                              setEditingSessionId(s);
+                              setEditingSessionTitle(label);
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: '#fff', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                          ><Edit2 size={12}/> Rename</button>
+                        )}
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();

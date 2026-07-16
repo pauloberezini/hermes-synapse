@@ -53,6 +53,11 @@ import { HermesMark } from './components/HermesMark';
 // Initialize global fetch interceptor
 initFetchInterceptor();
 
+// Static BCP-47 locale map — defined at module level so hooks don't need it as a dep
+const langToLocale: Record<string, string> = {
+  ru: 'ru-RU', en: 'en-US', he: 'he-IL', de: 'de-DE', es: 'es-ES', fr: 'fr-FR'
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'processes' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
@@ -60,6 +65,9 @@ export default function App() {
     return (saved as any) || 'chat';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('jarvis_sidebar_collapsed') === 'true';
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => localStorage.getItem('hermes_sidebar_collapsed') === '1');
   const [language, setLanguageState] = useState<Language>(() => (localStorage.getItem('hermes_language') as Language) || 'ru');
@@ -86,6 +94,8 @@ export default function App() {
   ]);
   const [logs, setLogs] = useState<DecisionLog[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [metrics, setMetrics] = useState<any>(null);
+  const [isMetricsLoading, setIsMetricsLoading] = useState(false);
   const [config, setConfig] = useState<SystemConfig>({
     system_prompt: '',
     model: 'qwen3:8b',
@@ -122,6 +132,8 @@ export default function App() {
 
   const [uploads, setUploads] = useState<{ name: string; size_bytes: number }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  // File attached to the current chat message (text context, not dataset upload)
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTTSEnabled, setIsTTSEnabled] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -132,7 +144,9 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
-  
+  const [appSettings, setAppSettings] = useState<AppSettings>({ language: 'ru' });
+  const appSettingsRef = useRef<AppSettings>({ language: 'ru' }); // always-current ref for WS/callbacks
+
   // Prompt edit states
   const [editedPrompt, setEditedPrompt] = useState('');
   const [editedModel, setEditedModel] = useState('');
@@ -169,6 +183,7 @@ export default function App() {
   // Connection channel session states
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
   const [newSessionNameInput, setNewSessionNameInput] = useState('');
+  const [newSessionAgentInput, setNewSessionAgentInput] = useState('jarvis');
 
   const [editingAgentId, setEditingAgentId] = useState('');
   const [editAgentName, setEditAgentName] = useState('');
@@ -196,6 +211,7 @@ export default function App() {
 
   // Keep ttsEnabledRef in sync with its state
   useEffect(() => { ttsEnabledRef.current = isTTSEnabled; }, [isTTSEnabled]);
+  useEffect(() => { appSettingsRef.current = appSettings; }, [appSettings]);
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
@@ -247,26 +263,24 @@ export default function App() {
 
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(clean);
-    utter.lang = 'ru-RU';
+    const locale = langToLocale[appSettingsRef.current.language] || 'ru-RU';
+    utter.lang = locale;
     utter.rate = 1.05;
     utter.pitch = 0.95;
 
-    // Prefer a Russian male voice
+    // Prefer a native voice for the selected language
     const voices = window.speechSynthesis.getVoices();
-    const ruVoices = voices.filter(v => v.lang.startsWith('ru'));
-    
-    // Try to find a male voice by checking common male names or tags
-    const maleVoice = ruVoices.find(v => 
-      v.name.toLowerCase().includes('yuri') || 
-      v.name.toLowerCase().includes('pavel') || 
+    const langVoices = voices.filter(v => v.lang.startsWith(appSettingsRef.current.language));
+    const maleVoice = langVoices.find(v =>
+      v.name.toLowerCase().includes('yuri') ||
+      v.name.toLowerCase().includes('pavel') ||
       v.name.toLowerCase().includes('male') ||
       v.name.toLowerCase().includes('boris')
     );
-    
     if (maleVoice) {
       utter.voice = maleVoice;
-    } else if (ruVoices.length > 0) {
-      utter.voice = ruVoices[ruVoices.length - 1];
+    } else if (langVoices.length > 0) {
+      utter.voice = langVoices[langVoices.length - 1];
     }
 
     if (msgIndex !== undefined) setPlayingMsgIndex(msgIndex);
@@ -497,6 +511,21 @@ export default function App() {
     };
   }, []);
 
+  const fetchWithAuth = useCallback((url: string, options: RequestInit = {}) => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    const headers = {
+      ...options.headers,
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    };
+    return fetch(url, { ...options, headers }).then(res => {
+      if (res.status === 401) {
+        localStorage.removeItem('jarvis_auth_token');
+        setIsAuthenticated(false);
+      }
+      return res;
+    });
+  }, []);
+
   const handleRequestOtp = async () => {
     setAuthStatus('sending');
     setAuthError('');
@@ -708,6 +737,10 @@ export default function App() {
                   : m
               ));
             }
+          } else if (data.type === 'session_title_update') {
+            setChatSessions((prev) =>
+              prev.map((s) => (s.id === data.chat_id ? { ...s, title: data.title } : s))
+            );
           } else if (data.type === 'logs_update') {
             setLogs(data.logs);
           } else if (data.type === 'activity_log') {
@@ -776,6 +809,26 @@ export default function App() {
       .catch(err => console.log('Error fetching documents:', err));
   };
 
+  const fetchMetrics = () => {
+    setIsMetricsLoading(true);
+    fetchWithAuth('http://localhost:8000/api/metrics')
+      .then(res => res.json())
+      .then(data => {
+        setMetrics(data);
+        setIsMetricsLoading(false);
+      })
+      .catch(err => {
+        console.log('Error fetching metrics:', err);
+        setIsMetricsLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'metrics') {
+      fetchMetrics();
+    }
+  }, [activeTab]);
+
   const fetchUploads = () => {
     fetch('/api/uploads')
       .then(res => res.json())
@@ -796,6 +849,8 @@ export default function App() {
 
   const getSessionLabel = (id: string) => {
     if (id === 'dashboard') return 'Main Terminal';
+    const found = chatSessions.find(s => s.id === id);
+    if (found && found.title) return found.title;
     if (id.startsWith('chat_')) {
       const parts = id.split('_');
       if (parts.length >= 3) {
@@ -812,7 +867,7 @@ export default function App() {
     return id;
   };
 
-  const handleCreateNewSessionConfirm = (name: string) => {
+  const handleCreateNewSessionConfirm = async (name: string, agentId: string = 'jarvis') => {
     let sessionId = '';
     const trimmed = name.trim();
     if (trimmed) {
@@ -822,16 +877,53 @@ export default function App() {
       sessionId = `chat_${Date.now()}`;
     }
     
-    selectChat(sessionId);
-    setChatSessions(prev => {
-      if (prev.includes(sessionId)) return prev;
-      return [...prev, sessionId];
-    });
+    try {
+      await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId })
+      });
+    } catch (e) {
+      console.error('Error setting session agent on creation:', e);
+    }
+
+    if (trimmed) {
+      try {
+        await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/rename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: trimmed })
+        });
+      } catch (e) {
+        console.error('Error renaming session on creation:', e);
+      }
+    }
+    
+    fetchChatSessions();
+    setTimeout(() => selectChat(sessionId), 100);
   };
 
   const handleCreateNewSession = () => {
     setNewSessionNameInput('');
+    setNewSessionAgentInput('jarvis');
     setShowNewSessionModal(true);
+  };
+
+  const handleSetSessionAgent = async (sessionId: string, agentId: string) => {
+    try {
+      const res = await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId })
+      });
+      if (res.ok) {
+        setChatSessions(prev =>
+          prev.map(s => s.id === sessionId ? { ...s, agent_id: agentId } : s)
+        );
+      }
+    } catch (e) {
+      console.error('Error updating session agent:', e);
+    }
   };
 
   const fetchSubagents = () => {
@@ -855,7 +947,11 @@ export default function App() {
             setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Hermes network is complete. Awaiting your instructions.' }]);
           } else {
             const agent = listToSearch.find((a: any) => a.id === chatId);
-            setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || chatId}" initialized, Sir. Ready for work.` }]);
+            if (chatId.startsWith('chat_')) {
+              setMessages([{ role: 'assistant', content: 'Conversation initialized, Sir. How can I assist you today?' }]);
+            } else {
+              setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || chatId}" initialized, Sir. Ready for work.` }]);
+            }
           }
         }
       })
@@ -873,7 +969,7 @@ export default function App() {
       const cleanId = newAgentId.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
       const res = await fetch('/api/subagents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: cleanId,
           name: newAgentName,
@@ -941,7 +1037,7 @@ export default function App() {
     try {
       const res = await fetch('/api/subagents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('jarvis_auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('jarvis_auth_token')}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingAgentId,
           name: editAgentName,
@@ -1062,11 +1158,18 @@ export default function App() {
       })
       .catch(() => console.log('REST logs fetch skipped/failed'));
       
+    fetchMetrics();
+      
     fetchDocuments();
     fetchUploads();
     fetchSubagents();
     fetchChatSessions();
     fetchModels();
+
+    fetchWithAuth('http://localhost:8000/api/settings')
+      .then(res => res.json())
+      .then(data => { if (data?.language) setAppSettings({ language: data.language }); })
+      .catch(() => {});
     
     if (isAuthenticated) {
       const savedChatId = localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
@@ -1238,6 +1341,69 @@ export default function App() {
     }, 50);
     return () => clearTimeout(timer);
   }, [messages, currentChatId, activeTab]);
+
+  // Handle attaching a file to the current chat message.
+  // – PDF: sent to backend /api/parse-pdf for server-side text extraction (limit 500 KB text).
+  // – Other text formats: read client-side via FileReader (limit 150 KB).
+  const handleChatFileAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ''; // reset so the same file can be reselected after removal
+
+    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
+      // ── PDF path: server-side extraction ─────────────────────────────────────
+      const MAX_PDF_MB = 25; // raw file size guard before sending to server
+      if (file.size > MAX_PDF_MB * 1024 * 1024) {
+        alert(`PDF "${file.name}" exceeds ${MAX_PDF_MB} MB. Please use a smaller file.`);
+        return;
+      }
+      setIsUploading(true);
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetchWithAuth('http://localhost:8000/api/parse-pdf', {
+          method: 'POST',
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+          alert(`PDF parse failed: ${err.detail}`);
+          return;
+        }
+        const data = await res.json();
+        setAttachedFile({
+          name: file.name,
+          content: data.text,
+          type: 'pdf',
+          pages: data.pages,
+          truncated: data.truncated,
+        });
+      } catch (err) {
+        console.error('PDF parse error:', err);
+        alert('Could not connect to backend to parse PDF.');
+      } finally {
+        setIsUploading(false);
+      }
+    } else {
+      // ── Text path: client-side FileReader ────────────────────────────────────
+      const MAX_TEXT_BYTES = 150 * 1024; // 150 KB
+      if (file.size > MAX_TEXT_BYTES) {
+        alert(`File "${file.name}" is too large for inline chat context (max 150 KB). Use the Memory tab to index it into the knowledge base instead.`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const content = evt.target?.result as string;
+        setAttachedFile({ name: file.name, content, type: 'text' });
+      };
+      reader.onerror = () => {
+        alert(`Failed to read file "${file.name}".`);
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+  };
 
   // Send message through WebSocket
   const handleSendMessage = (e: React.FormEvent) => {
@@ -1737,10 +1903,12 @@ export default function App() {
             config={config}
             isConnected={isConnected}
             isUploading={isUploading}
+            attachedFile={attachedFile}
+            setAttachedFile={setAttachedFile}
             speakText={speakText}
             handleClearChat={handleClearChat}
             handleSendMessage={handleSendMessage}
-            handleFileUpload={handleFileUpload}
+            handleChatFileAttach={handleChatFileAttach}
             selectChat={selectChat}
             handleCreateNewSession={handleCreateNewSession}
             fetchChatSessions={fetchChatSessions}
@@ -1796,6 +1964,14 @@ export default function App() {
             logs={logs}
             selectedLog={selectedLog}
             setSelectedLog={setSelectedLog}
+          />
+        )}
+
+        {activeTab === 'metrics' && (
+          <MetricsTab
+            metrics={metrics}
+            isLoading={isMetricsLoading}
+            onRefresh={fetchMetrics}
           />
         )}
 
@@ -1963,12 +2139,44 @@ export default function App() {
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  handleCreateNewSessionConfirm(newSessionNameInput);
+                  handleCreateNewSessionConfirm(newSessionNameInput, newSessionAgentInput);
                   setShowNewSessionModal(false);
                 }
               }}
               autoFocus
             />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                ORCHESTRATOR / AGENT
+              </label>
+              <select
+                value={newSessionAgentInput}
+                onChange={(e) => setNewSessionAgentInput(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                  color: '#fff',
+                  fontSize: '0.9rem',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="jarvis">👑 Jarvis (Main)</option>
+                {subagents.map(a => {
+                  const isOrch = a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator';
+                  const icon = isOrch ? '🧠' : '🤖';
+                  return (
+                    <option key={a.id} value={a.id}>
+                      {icon} {a.name}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
               <button 
@@ -1988,7 +2196,7 @@ export default function App() {
               </button>
               <button 
                 onClick={() => {
-                  handleCreateNewSessionConfirm(newSessionNameInput);
+                  handleCreateNewSessionConfirm(newSessionNameInput, newSessionAgentInput);
                   setShowNewSessionModal(false);
                 }}
                 style={{

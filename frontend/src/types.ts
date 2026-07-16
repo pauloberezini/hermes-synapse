@@ -35,6 +35,9 @@ export interface DecisionLog {
   user_message: string;
   assistant_response: string;
   traces?: { timestamp: string; agent: string; action: string; message: string; status: string }[];
+  agent_id?: string;
+  completion_tokens_estimate?: number;
+  cost_usd?: number;
 }
 
 export interface ActivityLog {
@@ -300,3 +303,14 @@ export interface RenderedListItem {
   indent: number;
   content: React.ReactNode[];
 }
+
+export interface AppSettings {
+  language: string; // BCP-47 short code: 'ru', 'en', 'he', 'de', 'es', 'fr'
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  agent_id?: string;
+}
+

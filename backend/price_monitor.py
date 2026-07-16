@@ -3,33 +3,20 @@ import json
 import asyncio
 import logging
 import time
-import httpx
 from typing import List, Dict, Any, Optional
+from backend.market_data import get_provider, CRYPTO_MAP
 
 logger = logging.getLogger("hermes.price_monitor")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ALERTS_PATH = os.path.join(BASE_DIR, "data", "price_alerts.json")
 
-# Crypto maps same as ResearchAgent
-CRYPTO_MAP = {
-    "btc": "bitcoin", "bitcoin": "bitcoin", "биткоин": "bitcoin",
-    "eth": "ethereum", "ethereum": "ethereum", "эфир": "ethereum", "эфириум": "ethereum",
-    "bnb": "binancecoin",
-    "sol": "solana", "solana": "solana", "солана": "solana",
-    "xrp": "ripple", "ripple": "ripple", "рипл": "ripple",
-    "ton": "the-open-network", "тон": "the-open-network"
-}
-
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-}
-
 class PriceMonitor:
     def __init__(self):
         self.alerts: List[Dict[str, Any]] = []
         self.load_alerts()
         self.monitor_task: Optional[asyncio.Task] = None
+        self.provider = get_provider()
 
     def load_alerts(self):
         if os.path.exists(ALERTS_PATH):
@@ -90,41 +77,13 @@ class PriceMonitor:
     def get_alerts(self) -> List[Dict[str, Any]]:
         return self.alerts
 
-    async def fetch_crypto_price(self, coin_id: str) -> Optional[float]:
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
-        try:
-            async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
-                r = await client.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    if coin_id in data:
-                        return float(data[coin_id]["usd"])
-        except Exception as e:
-            logger.warning(f"Error fetching crypto price for {coin_id}: {e}")
-        return None
-
-    async def fetch_stock_price(self, ticker: str) -> Optional[float]:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        try:
-            async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
-                r = await client.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
-                    price = meta.get("regularMarketPrice")
-                    if price is not None:
-                        return float(price)
-        except Exception as e:
-            logger.warning(f"Error fetching stock price for {ticker}: {e}")
-        return None
-
     async def get_market_price(self, symbol: str) -> Optional[float]:
         normalized = symbol.lower().strip()
-        if normalized in CRYPTO_MAP or normalized in CRYPTO_MAP.values():
+        is_crypto = normalized in CRYPTO_MAP or normalized in CRYPTO_MAP.values()
+        if is_crypto:
             coin_id = CRYPTO_MAP.get(normalized, normalized)
-            return await self.fetch_crypto_price(coin_id)
-        else:
-            return await self.fetch_stock_price(symbol.upper().strip())
+            return await self.provider.get_price(coin_id, is_crypto=True)
+        return await self.provider.get_price(symbol.upper().strip(), is_crypto=False)
 
     async def check_alerts_once(self):
         if not self.alerts:
@@ -148,12 +107,12 @@ class PriceMonitor:
 
         current_prices = {}
         for coin_id in unique_cryptos:
-            p = await self.fetch_crypto_price(coin_id)
+            p = await self.provider.get_price(coin_id, is_crypto=True)
             if p is not None:
                 current_prices[coin_id] = p
 
         for ticker in unique_stocks:
-            p = await self.fetch_stock_price(ticker)
+            p = await self.provider.get_price(ticker, is_crypto=False)
             if p is not None:
                 current_prices[ticker] = p
 

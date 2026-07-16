@@ -31,6 +31,12 @@ const AVAILABLE_MODELS = [
   { value: '__custom__',                           label: 'Custom model…' },
 ];
 
+const modelSupportsTools = (model: string) => {
+  if (!model) return true;
+  const m = String(model).toLowerCase();
+  return !m.includes('deepseek-r1') && !m.includes('/r1') && !m.includes('/o1') && !m.includes('o1-');
+};
+
 // Chip toggle for skills
 function SkillChips({ selected, onChange, skillMap }: {
   selected: string[];
@@ -341,9 +347,14 @@ export function SubagentsTab({
                   <Layers size={14} style={{ color: 'var(--accent-orange)', flexShrink: 0 }} />
                   <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                     <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</span>
-                    <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
-                      {agent.model.split('/').pop()}
-                      {agent.skills && <span style={{ color: 'rgba(0,240,255,0.5)', marginLeft: 4 }}>· {agent.skills.split(',').length} skill{agent.skills.split(',').length !== 1 ? 's' : ''}</span>}
+                    <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                      <span>{agent.model.split('/').pop()}</span>
+                      {agent.skills && <span style={{ color: 'rgba(0,240,255,0.5)' }}>· {agent.skills.split(',').length} skill{agent.skills.split(',').length !== 1 ? 's' : ''}</span>}
+                      {!modelSupportsTools(agent.model) && (
+                        <span style={{ color: '#f59e0b', padding: '0px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.55rem', fontWeight: 600, letterSpacing: '0.3px' }}>
+                          NO TOOLS
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -414,7 +425,14 @@ export function SubagentsTab({
                 )}
 
                 {formSection('AI Model',
-                  <ModelSelect value={newAgentModel} onChange={setNewAgentModel} models={models} />
+                  <>
+                    <ModelSelect value={newAgentModel} onChange={setNewAgentModel} models={models} />
+                    {!modelSupportsTools(newAgentModel) && (
+                      <span style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        ⚠️ This reasoning model does not support direct tool calling. Jarvis will run research/code tools on its behalf if scheduled in the query plan.
+                      </span>
+                    )}
+                  </>
                 )}
 
                 {formSection(
@@ -455,7 +473,14 @@ export function SubagentsTab({
                 )}
 
                 {formSection('AI Model',
-                  <ModelSelect value={editAgentModel} onChange={setEditAgentModel} models={models} />
+                  <>
+                    <ModelSelect value={editAgentModel} onChange={setEditAgentModel} models={models} />
+                    {!modelSupportsTools(editAgentModel) && (
+                      <span style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        ⚠️ This reasoning model does not support direct tool calling. Jarvis will run research/code tools on its behalf if scheduled in the query plan.
+                      </span>
+                    )}
+                  </>
                 )}
 
                 {formSection(

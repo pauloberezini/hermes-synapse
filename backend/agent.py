@@ -652,6 +652,7 @@ CRITICAL RULES FOR CREATING SUB-AGENTS:
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
   * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1` model.
   * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `google/gemini-2.5-flash` model.
+  * For sub-agents managing document indexing, processing research papers, knowledge curation, or RAG tasks (which require a large context window and robust tool calling) — choose the `google/gemini-2.5-flash` model.
   * For simple tasks, quick web search, RSS news reading, or basic Q&A — choose the `deepseek/deepseek-v4-flash` model.
   * For general intellectual and text tasks of high complexity (sophisticated assistant) — choose the `google/gemini-2.5-pro` model.
 
@@ -894,8 +895,9 @@ class JarvisAgent:
         self.last_saved_ids[session_id] = {"user": current_user_msg_id, "assistant": None}
 
         # Check if this session is a registered custom subagent
-        from backend.database import get_subagent
-        subagent = get_subagent(session_id)
+        from backend.database import get_subagent, get_session_agent_id
+        target_agent_id = get_session_agent_id(session_id) or session_id
+        subagent = get_subagent(target_agent_id)
         if subagent:
             if not subagent.get("is_enabled", True):
                 return f"Агент '{subagent.get('name', session_id)}' отключён. Задача не запускалась."
@@ -949,6 +951,35 @@ class JarvisAgent:
                     "user": current_user_msg_id,
                     "assistant": assistant_msg_id
                 }
+
+                # Log decision log for the orchestrator
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                log_entry = {
+                    "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
+                    "session_id": session_id,
+                    "model": self.model,
+                    "latency_ms": latency_ms,
+                    "success": not response_text.startswith("Apologies, Sir."),
+                    "error": None if not response_text.startswith("Apologies, Sir.") else response_text,
+                    "prompt_tokens_estimate": prompt_est,
+                    "user_message": user_message,
+                    "assistant_response": response_text,
+                    "traces": orch_result.get("traces", []),
+                    "agent_id": target_agent_id,
+                    "completion_tokens_estimate": completion_est,
+                    "cost_usd": cost_usd
+                }
+                
+                DECISION_LOGS.insert(0, log_entry)
+                if len(DECISION_LOGS) > 100:
+                    DECISION_LOGS.pop()
+                try:
+                    from backend.database import save_decision_log
+                    save_decision_log(log_entry)
+                except Exception as db_err:
+                    logger.error(f"Failed to save decision log to DB: {db_err}")
+                    
                 return response_text
             else:
                 try:
@@ -1459,6 +1490,9 @@ class JarvisAgent:
         # Add call record to global decision logs
         from datetime import datetime
         from zoneinfo import ZoneInfo
+        prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
+        completion_est = len(response_text) // 4
+        cost_usd = calculate_cost(self.model, prompt_est, completion_est)
         log_entry = {
             "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
             "session_id": session_id,
@@ -1511,7 +1545,7 @@ class JarvisAgent:
         stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
-        session_id = subagent["id"]
+        session_id = chat_id or subagent["id"]
         subagent_name = subagent["name"]
         system_prompt = subagent["system_prompt"]
         subagent_model = subagent["model"]
@@ -1524,6 +1558,8 @@ class JarvisAgent:
         )
 
         history = self.get_history(session_id)
+        from backend import database as db
+        db.save_message(session_id, "user", user_message)
         
         hits = []
         if self.auto_rag:
@@ -1827,6 +1863,9 @@ class JarvisAgent:
         }
 
         # Add call record to global decision logs
+        prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
+        completion_est = len(response_text) // 4
+        cost_usd = calculate_cost(subagent_model, prompt_est, completion_est)
         log_entry = {
             "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
             "session_id": session_id,
@@ -1834,10 +1873,13 @@ class JarvisAgent:
             "latency_ms": latency_ms,
             "success": error_msg is None,
             "error": error_msg,
-            "prompt_tokens_estimate": sum(len(m.get("content") or "") for m in messages) // 4,
+            "prompt_tokens_estimate": prompt_est,
             "user_message": user_message,
             "assistant_response": response_text,
-            "traces": []
+            "traces": [],
+            "agent_id": subagent["id"],
+            "completion_tokens_estimate": completion_est,
+            "cost_usd": cost_usd
         }
         
         DECISION_LOGS.insert(0, log_entry)

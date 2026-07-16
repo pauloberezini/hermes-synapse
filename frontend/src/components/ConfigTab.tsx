@@ -4,6 +4,15 @@ import { styles } from '../styles';
 import type { SystemConfig } from '../types';
 import { OllamaManager } from './OllamaManager';
 
+const LANGUAGES = [
+  { code: 'ru', label: '🇷🇺 Russian' },
+  { code: 'en', label: '🇺🇸 English' },
+  { code: 'he', label: '🇮🇱 Hebrew' },
+  { code: 'de', label: '🇩🇪 German' },
+  { code: 'es', label: '🇪🇸 Spanish' },
+  { code: 'fr', label: '🇫🇷 French' },
+];
+
 interface ConfigTabProps {
   editedModel: string;
   setEditedModel: (model: string) => void;
@@ -89,6 +98,30 @@ export function ConfigTab({
         <div>
           <h2 className="glow-text-cyan" style={styles.tabTitle}>SYSTEM CORE PARAMETERS</h2>
           <p style={styles.tabSubtitle}>Configuration of personality and utilized LLM models</p>
+        </div>
+      </div>
+
+      {/* ── Language Setting (instant save, no submit) ── */}
+      <div className="glass-panel" style={{ ...styles.configForm, marginBottom: '16px' }}>
+        <div style={styles.formGroup}>
+          <label style={styles.formLabel}>
+            <Globe size={16} style={{ color: '#00f0ff' }} />
+            <span>Response Language</span>
+          </label>
+          <select
+            id="language-select"
+            value={language}
+            onChange={(e) => onLanguageChange(e.target.value)}
+            style={styles.formSelect}
+            className="form-input"
+          >
+            {LANGUAGES.map(l => (
+              <option key={l.code} value={l.code}>{l.label}</option>
+            ))}
+          </select>
+          <span style={styles.formHelp}>
+            Agents will respond in this language. Also sets voice (TTS) and microphone (STT) locale. Takes effect immediately — no save required.
+          </span>
         </div>
       </div>
 
