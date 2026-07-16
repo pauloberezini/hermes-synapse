@@ -61,6 +61,8 @@ interface ChatTabProps {
   onRetryLast?: () => void;
   hasLastUserMessage?: boolean;
   onChangeModel?: () => void;
+  subagents?: Array<{ id: string; name: string; agent_type?: string }>;
+  handleSetSessionAgent?: (sessionId: string, agentId: string) => void;
 }
 
 export function ChatTab({
@@ -97,12 +99,16 @@ export function ChatTab({
   onStopGeneration,
   onRetryLast,
   hasLastUserMessage,
-  onChangeModel
+  onChangeModel,
+  subagents = [],
+  handleSetSessionAgent = () => undefined
 }: ChatTabProps) {
   const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
   const [expandedMeta, setExpandedMeta] = React.useState<number | null>(null);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [sessionFilter, setSessionFilter] = React.useState('');
+  const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
+  const [editingSessionTitle, setEditingSessionTitle] = React.useState('');
   const tr = React.useCallback((key: string, fallback: string) => {
     const value = t ? t(key) : key;
     return value === key ? fallback : value;
@@ -149,10 +155,23 @@ export function ChatTab({
   const filteredSessions = React.useMemo(() => {
     const q = sessionFilter.trim().toLowerCase();
     if (!q) return chatSessions;
-    return chatSessions.filter(s =>
-      s === 'dashboard' || getSessionLabel(s).toLowerCase().includes(q) || s.toLowerCase().includes(q)
+    return chatSessions.filter(session =>
+      session.id === 'dashboard' ||
+      (session.title || getSessionLabel(session.id)).toLowerCase().includes(q) ||
+      session.id.toLowerCase().includes(q)
     );
   }, [chatSessions, sessionFilter, getSessionLabel]);
+
+  const handleRenameSession = async (sessionId: string, title: string) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    const response = await fetch(`/api/history/${sessionId}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: nextTitle }),
+    });
+    if (response.ok) fetchChatSessions();
+  };
 
   return (
     <div style={styles.tabWrapper}>
@@ -334,14 +353,15 @@ export function ChatTab({
           />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
-            {filteredSessions.map(s => {
+            {filteredSessions.map(session => {
+              const s = session.id;
               const isActive = currentChatId === s;
               const label = session.title || getSessionLabel(s);
               const isDashboard = s === 'dashboard';
               
               return (
                 <div 
-                  key={s}
+                  key={session.id}
                   onMouseLeave={() => setActiveMenu(null)}
                   style={{
                     display: 'flex',
@@ -755,15 +775,41 @@ export function ChatTab({
             <div ref={mainChatEndRef} />
           </div>
 
+          {attachedFile && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 12px',
+              borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+              color: 'var(--text-muted)',
+              fontSize: '0.76rem',
+            }}>
+              <FileText size={15} color="var(--accent-cyan)" />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {attachedFile.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => setAttachedFile(null)}
+                aria-label={tr('chatRemoveAttachment', 'Remove attachment')}
+                title={tr('chatRemoveAttachment', 'Remove attachment')}
+                style={{ background: 'none', border: 0, color: 'var(--text-dim)', cursor: 'pointer', padding: '2px' }}
+              >
+                <XIcon size={15} />
+              </button>
+            </div>
+          )}
+
           {/* Chat Input */}
           <form onSubmit={handleSendMessage} style={styles.chatInputRow}>
             <label style={{ ...styles.uploadBtn, cursor: (!isConnected || isUploading) ? 'not-allowed' : 'pointer' }}>
               <input 
                 type="file" 
-                onChange={handleFileUpload} 
+                onChange={handleChatFileAttach}
                 style={{ display: 'none' }} 
                 disabled={!isConnected || isUploading}
-                accept=".csv,.xlsx,.xls"
+                accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.xls"
               />
               <Paperclip size={18} style={{ color: (!isConnected || isUploading) ? 'var(--text-dim)' : 'var(--accent-cyan)' }} />
             </label>

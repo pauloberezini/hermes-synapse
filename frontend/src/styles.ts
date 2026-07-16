@@ -950,23 +950,6 @@ export const styles: Record<string, any> = {
     cursor: 'pointer',
     transition: 'all 0.2s ease'
   },
-  flyoutMenu: {
-    position: 'absolute' as const,
-    left: '64px',
-    top: '0px',
-    width: '240px',
-    backgroundColor: 'rgba(6, 9, 19, 0.95)',
-    border: 'var(--glass-border)',
-    borderRadius: '12px',
-    padding: '10px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '6px',
-    zIndex: 1000,
-    boxShadow: '0 8px 32px 0 rgba(0, 240, 255, 0.15)',
-    backdropFilter: 'blur(16px)',
-    transition: 'opacity 0.2s ease, transform 0.2s ease',
-  },
   flyoutHeader: {
     padding: '6px 8px',
     fontSize: '0.75rem',
@@ -976,10 +959,6 @@ export const styles: Record<string, any> = {
     marginBottom: '4px',
     textTransform: 'uppercase' as const,
     letterSpacing: '1px'
-  },
-  navBtnCollapsed: {
-    justifyContent: 'center',
-    padding: '12px 0',
   },
   statusBoxCollapsed: {
     padding: '12px 4px',

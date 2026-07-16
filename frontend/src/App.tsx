@@ -23,7 +23,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 
-import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AgentModel, SystemStats } from './types';
+import type { AppSettings, ChatMessage, ChatSession, DecisionLog, ActivityLog, SystemConfig, AgentModel, SystemStats } from './types';
 import { styles } from './styles';
 import { translate, type Language } from './i18n';
 import { 
@@ -49,6 +49,7 @@ import { AgentsAdminTab } from './components/AgentsAdminTab';
 import { OfficeTab } from './components/OfficeTab';
 import { ProcessesTab } from './components/ProcessesTab';
 import { HermesMark } from './components/HermesMark';
+import { MetricsTab } from './components/MetricsTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -59,18 +60,17 @@ const langToLocale: Record<string, string> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'processes' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'processes' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'metrics'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
     if (saved === 'settings') return 'tools';
     return (saved as any) || 'chat';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return localStorage.getItem('jarvis_sidebar_collapsed') === 'true';
-  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => localStorage.getItem('hermes_sidebar_collapsed') === '1');
   const [language, setLanguageState] = useState<Language>(() => (localStorage.getItem('hermes_language') as Language) || 'ru');
+  const [appSettings, setAppSettings] = useState<AppSettings>({ language });
+  const appSettingsRef = useRef<AppSettings>({ language });
   const t = useCallback((key: string) => translate(language, key), [language]);
   const toggleSidebar = useCallback(() => {
     setIsSidebarCollapsed(prev => {
@@ -82,8 +82,16 @@ export default function App() {
   const setLanguage = useCallback((nextLanguage: Language) => {
     localStorage.setItem('hermes_language', nextLanguage);
     setLanguageState(nextLanguage);
+    setAppSettings({ language: nextLanguage });
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: nextLanguage }),
+    }).catch(() => undefined);
   }, []);
-  const [chatSessions, setChatSessions] = useState<string[]>(['dashboard']);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([
+    { id: 'dashboard', title: 'Main Terminal', agent_id: 'jarvis' },
+  ]);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
   const [otpCode, setOtpCode] = useState('');
@@ -144,9 +152,6 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
-  const [appSettings, setAppSettings] = useState<AppSettings>({ language: 'ru' });
-  const appSettingsRef = useRef<AppSettings>({ language: 'ru' }); // always-current ref for WS/callbacks
-
   // Prompt edit states
   const [editedPrompt, setEditedPrompt] = useState('');
   const [editedModel, setEditedModel] = useState('');
@@ -809,7 +814,7 @@ export default function App() {
       .catch(err => console.log('Error fetching documents:', err));
   };
 
-  const fetchMetrics = () => {
+  const fetchMetrics = useCallback(() => {
     setIsMetricsLoading(true);
     fetchWithAuth('http://localhost:8000/api/metrics')
       .then(res => res.json())
@@ -821,13 +826,13 @@ export default function App() {
         console.log('Error fetching metrics:', err);
         setIsMetricsLoading(false);
       });
-  };
+  }, [fetchWithAuth]);
 
   useEffect(() => {
     if (activeTab === 'metrics') {
       fetchMetrics();
     }
-  }, [activeTab]);
+  }, [activeTab, fetchMetrics]);
 
   const fetchUploads = () => {
     fetch('/api/uploads')
@@ -1066,33 +1071,6 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      if (res.ok) {
-        fetchUploads();
-        alert(`File ${file.name} successfully uploaded.`);
-      } else {
-        alert('Error uploading file.');
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Backend connection error during file upload.');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
   const handleCancelTimer = (id: string) => {
     fetch(`/api/timers/${id}`, {
       method: 'DELETE',
@@ -1168,7 +1146,14 @@ export default function App() {
 
     fetchWithAuth('http://localhost:8000/api/settings')
       .then(res => res.json())
-      .then(data => { if (data?.language) setAppSettings({ language: data.language }); })
+      .then(data => {
+        if (data?.language) {
+          const nextLanguage = data.language as Language;
+          setAppSettings({ language: nextLanguage });
+          setLanguageState(nextLanguage);
+          localStorage.setItem('hermes_language', nextLanguage);
+        }
+      })
       .catch(() => {});
     
     if (isAuthenticated) {
@@ -1919,6 +1904,8 @@ export default function App() {
             onRetryLast={handleRetryLast}
             hasLastUserMessage={messages.some(message => message.role === 'user')}
             onChangeModel={() => setActiveTab('config')}
+            subagents={subagents}
+            handleSetSessionAgent={handleSetSessionAgent}
           />
         )}
 
@@ -1956,6 +1943,8 @@ export default function App() {
             models={models}
             runtimeConfig={editedRuntimeConfig}
             setRuntimeConfig={setEditedRuntimeConfig}
+            language={language}
+            onLanguageChange={(nextLanguage) => setLanguage(nextLanguage as Language)}
           />
         )}
 

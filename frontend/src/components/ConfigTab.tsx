@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Shield, Activity, Database, Server, Zap } from 'lucide-react';
+import { Cpu, Shield, Activity, Database, Globe, Server, Zap } from 'lucide-react';
 import { styles } from '../styles';
 import type { SystemConfig } from '../types';
 import { OllamaManager } from './OllamaManager';
@@ -23,6 +23,8 @@ interface ConfigTabProps {
   models: { id: string; name: string }[];
   runtimeConfig: Partial<SystemConfig>;
   setRuntimeConfig: React.Dispatch<React.SetStateAction<Partial<SystemConfig>>>;
+  language: string;
+  onLanguageChange: (language: string) => void;
 }
 
 export function ConfigTab({
@@ -34,7 +36,9 @@ export function ConfigTab({
   handleSaveConfig,
   models,
   runtimeConfig,
-  setRuntimeConfig
+  setRuntimeConfig,
+  language,
+  onLanguageChange
 }: ConfigTabProps) {
   
   // Check if editedModel is part of the returned models list.

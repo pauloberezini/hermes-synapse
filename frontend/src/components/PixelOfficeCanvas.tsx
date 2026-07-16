@@ -88,7 +88,7 @@ function statusBubble(character: CanvasCharacter, language: 'en' | 'ru') {
 }
 
 export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom, onZoom, language }: PixelOfficeCanvasProps) {
-  const initialLayout = useMemo(loadStoredLayout, []);
+  const initialLayout = useMemo(() => loadStoredLayout(), []);
   const engineRef = useRef(new CanvasOfficeEngine(initialLayout));
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -108,6 +108,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
   const [furniture, setFurniture] = useState<FurnitureKind>('DESK_FRONT');
   const [selectedFurniture, setSelectedFurniture] = useState('');
   const [historyTick, setHistoryTick] = useState(0);
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
 
   useEffect(() => { engineRef.current.setAgents(agents); }, [agents]);
 
@@ -118,6 +119,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
     engineRef.current.setLayout(next);
     setLayoutState(cloneOfficeLayout(next));
     localStorage.setItem(OFFICE_LAYOUT_STORAGE_KEY, JSON.stringify(next));
+    setHistoryState({ canUndo: undoRef.current.length > 0, canRedo: redoRef.current.length > 0 });
     setHistoryTick(value => value + 1);
   }, []);
 
@@ -128,6 +130,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
     engineRef.current.setLayout(previous);
     setLayoutState(cloneOfficeLayout(previous));
     localStorage.setItem(OFFICE_LAYOUT_STORAGE_KEY, JSON.stringify(previous));
+    setHistoryState({ canUndo: undoRef.current.length > 0, canRedo: redoRef.current.length > 0 });
     setHistoryTick(value => value + 1);
   }, []);
 
@@ -138,6 +141,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
     engineRef.current.setLayout(next);
     setLayoutState(cloneOfficeLayout(next));
     localStorage.setItem(OFFICE_LAYOUT_STORAGE_KEY, JSON.stringify(next));
+    setHistoryState({ canUndo: undoRef.current.length > 0, canRedo: redoRef.current.length > 0 });
     setHistoryTick(value => value + 1);
   }, []);
 
@@ -400,8 +404,8 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
         {tool === 'floor' && <div className="pixel-floor-swatches">{FLOOR_ASSETS.map((src, index) => <button key={src} type="button" className={floor === index + 1 ? 'is-active' : ''} onClick={() => setFloor(index + 1)} title={`Floor ${index + 1}`} aria-label={`Floor ${index + 1}`}><img src={src} alt="" /></button>)}</div>}
         {tool === 'furniture' && <div className="pixel-furniture-palette">{FURNITURE_KINDS.map(kind => <button key={kind} type="button" className={furniture === kind ? 'is-active' : ''} onClick={() => setFurniture(kind)} title={FURNITURE_CATALOG[kind].label} aria-label={FURNITURE_CATALOG[kind].label}><img src={FURNITURE_CATALOG[kind].src} alt="" /></button>)}</div>}
         <div className="pixel-editor-history">
-          <button type="button" onClick={undo} disabled={!undoRef.current.length} title="Undo" aria-label="Undo"><Undo2 size={15} /></button>
-          <button type="button" onClick={redo} disabled={!redoRef.current.length} title="Redo" aria-label="Redo"><Redo2 size={15} /></button>
+          <button type="button" onClick={undo} disabled={!historyState.canUndo} title="Undo" aria-label="Undo"><Undo2 size={15} /></button>
+          <button type="button" onClick={redo} disabled={!historyState.canRedo} title="Redo" aria-label="Redo"><Redo2 size={15} /></button>
           <button type="button" onClick={deleteSelected} disabled={!selectedFurniture} title="Delete selected" aria-label="Delete selected"><Trash2 size={15} /></button>
           <button type="button" onClick={() => commitLayout(createDefaultCanvasLayout())} title="Reset layout" aria-label="Reset layout"><RotateCcw size={15} /></button>
           <button type="button" onClick={exportLayout} title="Export layout" aria-label="Export layout"><Download size={15} /></button>
