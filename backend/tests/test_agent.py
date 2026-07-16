@@ -54,6 +54,24 @@ def test_provider_switch_restores_provider_specific_endpoint(agent):
     agent.update_runtime_config(provider="openrouter")
     assert agent.api_base == "https://openrouter.example/v1"
 
+
+def test_locked_provider_endpoint_ignores_persisted_dashboard_url(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://hermes-ollama:11434")
+    monkeypatch.setenv("LLM_LOCK_PROVIDER_ENDPOINT", "true")
+    database.save_app_settings({
+        "provider": "ollama",
+        "api_base": "http://127.0.0.1:11434",
+        "ollama_base_url": "http://127.0.0.1:11434",
+    })
+
+    locked_agent = JarvisAgent()
+
+    assert locked_agent.provider == "ollama"
+    assert locked_agent.api_base == "http://hermes-ollama:11434"
+    assert locked_agent.ollama_base_url == "http://hermes-ollama:11434"
+    assert locked_agent.get_runtime_config()["provider_endpoint_locked"] is True
+
 def test_clear_history(agent):
     session_id = "user_123"
     database.save_message(session_id, "user", "Hi")
@@ -249,6 +267,56 @@ def test_local_provider_message_sanitization_and_qwen_reasoning_cleanup():
     assert "thinking" not in sanitized
     assert sanitized["content"] == ""
     assert sanitized["tool_calls"][0]["function"]["arguments"] == '{"location": "Minsk", "days_ahead": 0}'
+
+
+def test_visible_answer_retry_disables_thinking_and_has_safe_budget():
+    from backend.agent import _visible_answer_retry_budget, _visible_answer_retry_options
+
+    options = _visible_answer_retry_options({"provider": "ollama", "think": "true", "num_ctx": 131072})
+
+    assert options["think"] is False
+    assert options["num_ctx"] == 131072
+    assert _visible_answer_retry_budget(256) == 512
+    assert _visible_answer_retry_budget(2048) == 2048
+    assert _visible_answer_retry_budget(9000) == 4096
+
+
+@pytest.mark.asyncio
+async def test_ollama_reasoning_only_retry_forces_visible_answer(agent):
+    from backend.llm_client import LLMUsage, NormalizedLLMResponse, STATUS_EMPTY, STATUS_SUCCESS
+
+    agent.provider = "ollama"
+    agent.api_base = "http://ollama:11434"
+    agent.ollama_base_url = agent.api_base
+    agent.ollama_think = "true"
+    agent.max_tokens = 256
+    agent.auto_rag = False
+    first = NormalizedLLMResponse(
+        status=STATUS_EMPTY,
+        provider="ollama",
+        model=agent.model,
+        reasoning="internal trace",
+        finish_reason="length",
+        usage=LLMUsage(input_tokens=10, output_tokens=256),
+        error_message="Model returned reasoning only, no visible answer.",
+    )
+    recovered = NormalizedLLMResponse(
+        status=STATUS_SUCCESS,
+        provider="ollama",
+        model=agent.model,
+        content="Привет. Я Vexa.",
+        finish_reason="stop",
+        usage=LLMUsage(input_tokens=20, output_tokens=8),
+    )
+
+    with patch("backend.llm_client.call_llm_normalized", new=AsyncMock(side_effect=[first, recovered])) as call:
+        response = await agent.respond("Привет", session_id="ollama_reasoning_recovery")
+
+    assert response == "Привет. Я Vexa."
+    assert call.await_count == 2
+    assert call.await_args_list[0].kwargs["provider_options"]["think"] == "true"
+    assert call.await_args_list[1].kwargs["provider_options"]["think"] is False
+    assert call.await_args_list[1].kwargs["max_tokens"] == 512
 
 @pytest.mark.asyncio
 @patch("backend.agent.asyncio.to_thread", new_callable=AsyncMock)

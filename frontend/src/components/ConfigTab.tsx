@@ -313,9 +313,9 @@ export function ConfigTab({
               <span style={styles.formLabel}>Max answer tokens</span>
               <input
                 type="number"
-                min={32}
+                min={256}
                 max={4096}
-                value={numberValue('max_tokens', 256)}
+                value={numberValue('max_tokens', 2048)}
                 onChange={e => updateRuntime({ max_tokens: Number(e.target.value) })}
                 style={compactInputStyle}
                 className="form-input"
@@ -328,7 +328,7 @@ export function ConfigTab({
                 type="number"
                 min={64}
                 max={4096}
-                value={numberValue('tool_max_tokens', 512)}
+                value={numberValue('tool_max_tokens', 2048)}
                 onChange={e => updateRuntime({ tool_max_tokens: Number(e.target.value) })}
                 style={compactInputStyle}
                 className="form-input"
@@ -350,7 +350,7 @@ export function ConfigTab({
             </label>
           </div>
           <span style={styles.formHelp}>
-            For local models, start with an 8K context window, long-term memory enabled, and automatic RAG disabled; increase context only when the model and available RAM allow it.
+            For Qwen, use at least 1024 answer tokens when Thinking is enabled. Balanced operation uses Thinking disabled and a 2048-token answer budget; reasoning-only truncation is retried automatically without Thinking.
           </span>
         </div>
 

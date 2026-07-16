@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import os
 
-from backend.bot import admin_only
+from backend.bot import _split_telegram_text, admin_only
 
 @pytest.mark.asyncio
 async def test_admin_only_authorized():
@@ -45,5 +45,14 @@ async def test_admin_only_unauthorized():
         await dummy_handler(update, context)
         assert called is False
         update.message.reply_text.assert_called_once_with(
-            "Access denied, Sir. I only respond to my designated Creator."
+            "Доступ запрещён."
         )
+
+
+def test_split_telegram_text_preserves_content_and_limits_chunks():
+    text = ("Первая строка\n" * 500) + ("x" * 5000)
+    chunks = _split_telegram_text(text, limit=500)
+
+    assert chunks
+    assert all(0 < len(chunk) <= 500 for chunk in chunks)
+    assert "".join(chunks).replace("\n", "") == text.strip().replace("\n", "")

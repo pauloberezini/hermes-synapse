@@ -16,6 +16,7 @@ graph TD
     Stage4 --> Stage5["Stage 5: Voice & Speech (Whisper STT, TTS)"]
     Stage5 --> Stage6["Stage 6: Integrations & Utilities (Spotify, Search, Markets, RSS)"]
     Stage6 --> Stage7["Stage 7: Public Release & Promo (Packaging, Docs, HN/Reddit)"]
+    Stage7 --> Stage8["Stage 8: Governed Autonomy (Control Plane, Approvals, Evidence)"]
     
     style Stage1 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage2 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
@@ -24,6 +25,7 @@ graph TD
     style Stage5 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage6 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage7 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage8 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
 ```
 
 ### 🟢 Completed Milestones (Core System)
@@ -49,6 +51,20 @@ graph TD
 7. **Stage 7: Public Release & Promo**
    * Codebase cleaned and licensed under MIT on GitHub (`hermes-synapse`).
    * Marketing campaigns and posts launched on LinkedIn, Facebook, Medium, Reddit, X (Twitter), and Telegram.
+8. **Stage 8: Governed Autonomy**
+   * Durable Control Plane task records between model decisions and tool execution.
+   * Risk classification `R0-R4`, least-authority defaults, explicit `R3` approval and two-step `R4` confirmation.
+   * Command budgets, acceptance criteria, rollback instructions and idempotency for open actions.
+   * Emergency kill-switch that freezes open tasks and cancels active chat runs.
+   * Evidence Ledger with confidence labels, redacted metadata and hashed execution results.
+   * Web operator console for task queues, approvals, process contracts and audit events.
+
+### Governed execution invariant
+
+Agents never treat a tool call as permission to execute it. Every tool request enters the
+Control Plane first. Read-only and bounded low-risk actions can proceed under `L2`; state-changing
+actions enter `awaiting_approval`; dangerous or unknown tools default to `R4`. Tool arguments are
+not written to application logs, and secrets are redacted in the durable process record.
 
 ---
 

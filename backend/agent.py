@@ -74,7 +74,8 @@ TOOL_INTENT_KEYWORDS = {
         "календар", "встреч", "созвон", "расписание", "calendar", "meeting"
     ],
     "add_calendar_event": [
-        "добавь событие", "создай событие", "запиши в календар", "add event"
+        "добавь событие", "создай событие", "запиши в календар", "добавь в календар",
+        "создай встреч", "добавь встреч", "назначь встреч", "add event", "create meeting"
     ],
     "get_todoist_tasks": [
         "todoist", "задачи", "список дел", "что сделать", "tasks"
@@ -202,6 +203,12 @@ def _is_local_llm_endpoint(api_base: str) -> bool:
 
 def _is_qwen_model(model: str) -> bool:
     return "qwen" in (model or "").lower()
+
+
+def _thinking_enabled(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "low", "medium", "high"}
 
 
 def _local_model_system_hint(model: str, api_base: str) -> str:
@@ -337,11 +344,27 @@ def _should_retry_empty_clean_response(clean_text: str) -> bool:
     return not clean_text.strip()
 
 
-def _empty_model_response_fallback(agent_name: str = "Vexa") -> str:
+def _visible_answer_retry_budget(configured_max_tokens: int) -> int:
+    """Give a no-thinking recovery enough room without allowing an unbounded retry."""
+    return max(512, min(4096, int(configured_max_tokens or 0)))
+
+
+def _visible_answer_retry_options(provider_options: Dict[str, Any]) -> Dict[str, Any]:
+    """Force a visible-answer retry to bypass a model's reasoning channel."""
+    return {**provider_options, "think": False}
+
+
+def _empty_model_response_fallback(agent_name: str = "Vexa", finish_reason: Optional[str] = None) -> str:
+    if finish_reason == "length":
+        return (
+            f"{agent_name} не успела сформировать финальный ответ: модель израсходовала "
+            "лимит генерации на внутреннее рассуждение. Автоматическая попытка без reasoning "
+            "тоже не дала текста. Увеличьте лимит ответа или переключите режим на balanced."
+        )
     return (
-        f"Простите, Сэр. {agent_name} получила от модели пустой текстовый ответ. "
-        "Запрос обработан, но провайдер не вернул содержимое сообщения. "
-        "Попробуйте повторить запрос или чуть уточнить формулировку."
+        f"{agent_name} получила от модели пустой финальный ответ. "
+        "Автоматическая повторная генерация без reasoning не помогла. "
+        "Попробуйте повторить запрос или выбрать другой режим модели."
     )
 
 
@@ -619,6 +642,11 @@ CRITICAL RULES FOR TIMERS AND ALARMS:
 - When asked to set a timer or alarm, call the corresponding tool IMMEDIATELY.
 - NEVER ask clarifying questions (e.g., "Do you want a label for it?"). Just set the timer and confirm execution.
 
+CRITICAL RULES FOR CALENDAR AND TASK ACTIONS:
+- When the user asks to create or add a calendar event or meeting and date/time are present, call `add_calendar_event`.
+- When the user asks to create a Todoist task, call `add_todoist_task`.
+- These actions are not complete when a tool returns `awaiting_approval`; report the task ID and request owner approval.
+
 CRITICAL RULES FOR CREATING SUB-AGENTS:
 - If Sir asks to "create an agent," "make a sub-agent," or "write an assistant," you MUST call the `create_subagent` tool to persist it in the database. NEVER state that you created an agent if you have not physically called this tool!
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
@@ -664,6 +692,7 @@ If Sir asks what you can do, or requests info about a specific skill, describe i
 class JarvisAgent:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+        self.lock_provider_endpoint = _env_bool("LLM_LOCK_PROVIDER_ENDPOINT", False)
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
         self.openai_api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1").rstrip("/")
@@ -741,6 +770,7 @@ class JarvisAgent:
             "system_prompt": self.system_prompt,
             "model": self.model,
             "provider": self.provider,
+            "provider_endpoint_locked": self.lock_provider_endpoint,
             "api_base": self.api_base,
             "ollama_base_url": self.ollama_base_url,
             "openai_api_base": self.openai_api_base,
@@ -759,29 +789,30 @@ class JarvisAgent:
         }
 
     def update_runtime_config(self, **kwargs):
-        for key, attribute in (
-            ("ollama_base_url", "ollama_base_url"),
-            ("openai_api_base", "openai_api_base"),
-        ):
-            if kwargs.get(key) is not None:
-                value = str(kwargs[key]).strip().rstrip("/")
+        if not self.lock_provider_endpoint:
+            for key, attribute in (
+                ("ollama_base_url", "ollama_base_url"),
+                ("openai_api_base", "openai_api_base"),
+            ):
+                if kwargs.get(key) is not None:
+                    value = str(kwargs[key]).strip().rstrip("/")
+                    if value.startswith(("http://", "https://")):
+                        setattr(self, attribute, value)
+            previous_provider = self.provider
+            if kwargs.get("provider") is not None:
+                provider = str(kwargs["provider"]).strip().lower()
+                if provider in {"ollama", "openrouter", "openai_compatible"}:
+                    self.provider = provider
+            if self.provider != previous_provider and kwargs.get("api_base") is None:
+                self.api_base = self.ollama_base_url if self.provider == "ollama" else self.openai_api_base
+            if kwargs.get("api_base") is not None:
+                value = str(kwargs["api_base"]).strip().rstrip("/")
                 if value.startswith(("http://", "https://")):
-                    setattr(self, attribute, value)
-        previous_provider = self.provider
-        if kwargs.get("provider") is not None:
-            provider = str(kwargs["provider"]).strip().lower()
-            if provider in {"ollama", "openrouter", "openai_compatible"}:
-                self.provider = provider
-        if self.provider != previous_provider and kwargs.get("api_base") is None:
-            self.api_base = self.ollama_base_url if self.provider == "ollama" else self.openai_api_base
-        if kwargs.get("api_base") is not None:
-            value = str(kwargs["api_base"]).strip().rstrip("/")
-            if value.startswith(("http://", "https://")):
-                self.api_base = value
-                if self.provider == "ollama":
-                    self.ollama_base_url = value
-                else:
-                    self.openai_api_base = value
+                    self.api_base = value
+                    if self.provider == "ollama":
+                        self.ollama_base_url = value
+                    else:
+                        self.openai_api_base = value
         if kwargs.get("ollama_num_ctx") is not None:
             self.ollama_num_ctx = max(512, min(262144, int(kwargs["ollama_num_ctx"])))
         if kwargs.get("ollama_keep_alive") is not None:
@@ -806,6 +837,12 @@ class JarvisAgent:
             self.memory_auto_save = bool(kwargs["memory_auto_save"])
         if kwargs.get("memory_max_items") is not None:
             self.memory_max_items = max(0, min(20, int(kwargs["memory_max_items"])))
+        if self.provider == "ollama" and _is_qwen_model(self.model) and _thinking_enabled(self.ollama_think):
+            # Qwen can consume a small budget entirely in the reasoning channel.
+            # Keep the first attempt useful; a separate no-thinking recovery still
+            # handles unusually long reasoning runs.
+            self.max_tokens = max(1024, self.max_tokens)
+            self.tool_max_tokens = max(1024, self.tool_max_tokens)
         try:
             from backend.subagents import configure_llm_runtime
             configure_llm_runtime(
@@ -1134,7 +1171,7 @@ class JarvisAgent:
         _day_names_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
         current_time_str = _now_il.strftime("%Y-%m-%d %H:%M:%S")
         day_of_week = _day_names_ru[_now_il.weekday()]
-        from backend.tools import TOOLS_SCHEMA, execute_tool
+        from backend.tools import TOOLS_SCHEMA
         selected_tools = _select_tools_for_query(user_message, TOOLS_SCHEMA)
         if selected_tools:
             system_info = (
@@ -1142,7 +1179,9 @@ class JarvisAgent:
                 f"Текущая дата и время: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
                 f"День недели: {day_of_week}\n"
                 f"Если запрос требует актуальных данных или действия, используй доступный инструмент. "
-                f"Не выдумывай текущие события, цены, погоду, календарь или состояние сервисов."
+                f"Не выдумывай текущие события, цены, погоду, календарь или состояние сервисов.\n"
+                f"Если инструмент вернул status=awaiting_approval, действие НЕ выполнено. "
+                f"Сообщи ID задачи и попроси владельца подтвердить её в разделе «Процессы» или Telegram."
             )
         else:
             system_info = (
@@ -1161,6 +1200,7 @@ class JarvisAgent:
         latency_ms = 0
         error_msg = None
         tool_executed = False
+        approval_pending = False
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -1236,24 +1276,26 @@ class JarvisAgent:
                     if not tool_calls:
                         # Final text response reached
                         response_text = normalized.content or ""
+                        retry_error = None
 
                         # A semantic empty retry is safe only before any tool with
                         # possible side effects. It is separate from transport retry.
                         if normalized.status == STATUS_EMPTY and not tool_executed:
+                            retry_options = _visible_answer_retry_options({
+                                "provider": self.provider,
+                                "num_ctx": self.ollama_num_ctx,
+                                "keep_alive": self.ollama_keep_alive,
+                                "think": self.ollama_think,
+                            })
                             retry = await call_llm_normalized(
                                 api_base=self.api_base, api_key=self.api_key,
                                 model=self.model,
                                 messages=messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
                                 temperature=min(self.temperature, 0.3),
-                                max_tokens=self.max_tokens, timeout=self.request_timeout,
+                                max_tokens=_visible_answer_retry_budget(self.max_tokens), timeout=self.request_timeout,
                                 max_retries=0, client=client,
                                 stream_callback=stream_callback,
-                                provider_options={
-                                    "provider": self.provider,
-                                    "num_ctx": self.ollama_num_ctx,
-                                    "keep_alive": self.ollama_keep_alive,
-                                    "think": self.ollama_think,
-                                },
+                                provider_options=retry_options,
                             )
                             total_prompt_tokens += retry.usage.input_tokens or 0
                             total_completion_tokens += retry.usage.output_tokens or 0
@@ -1261,18 +1303,33 @@ class JarvisAgent:
                             last_request_id = retry.request_id or last_request_id
                             response_status = retry.status
                             response_text = retry.content or ""
+                            retry_error = retry.error_message
 
                         if normalized.status == STATUS_REFUSAL and not response_text:
                             response_text = "Провайдер отклонил запрос в соответствии с политикой безопасности."
 
                         if not response_text.strip():
+                            if approval_pending:
+                                response_status = "awaiting_approval"
+                                response_text = (
+                                    "Действие не выполнено: оно поставлено в очередь Control Plane "
+                                    "и ожидает подтверждения владельца в разделе «Процессы» или Telegram."
+                                )
+                                error_msg = None
+                                cost_usd = _provider_cost(self.api_base, self.provider, self.model, total_prompt_tokens, total_completion_tokens)
+                                self.last_costs[session_id] = cost_usd
+                                from backend import database as db
+                                assistant_msg_id = db.save_message(session_id, "assistant", response_text, cost_usd=cost_usd)
+                                self.last_saved_ids[session_id] = {"user": current_user_msg_id, "assistant": assistant_msg_id}
+                                break
                             logger.warning(
                                 "Model returned an empty final response for session %s "
                                 "(finish_reason=%s, request_id=%s)",
                                 session_id, last_finish_reason, last_request_id,
                             )
                             response_status = "empty"
-                            response_text = _empty_model_response_fallback("Vexa")
+                            error_msg = retry_error or normalized.error_message
+                            response_text = _empty_model_response_fallback("Vexa", last_finish_reason)
                         
                         # Calculate cost
                         cost_usd = _provider_cost(self.api_base, self.provider, self.model, total_prompt_tokens, total_completion_tokens)
@@ -1320,12 +1377,17 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source="Agent",
-                            message=f"🛠️ Выполнение: '{tool_name}' с аргументами {tool_args_str}"
+                            message=f"Выполнение через Control Plane: '{tool_name}'"
                         )
-                        result_str = await asyncio.to_thread(execute_tool, tool_name, tool_args, chat_id=session_id)
+                        from backend.control_plane import execute_governed_tool
+                        result_str = await asyncio.to_thread(
+                            execute_governed_tool, tool_name, tool_args, chat_id=session_id
+                        )
                         
                         try:
                             res_obj = json.loads(result_str)
+                            if res_obj.get("status") == "awaiting_approval":
+                                approval_pending = True
                             if "error" in res_obj:
                                 log_activity(
                                     activity_type="active",
@@ -1493,6 +1555,7 @@ class JarvisAgent:
             f"\n\n[Системная информация]:\n"
             f"Текущая дата и время: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
             f"День недели: {day_of_week}\n"
+            f"Если инструмент вернул status=awaiting_approval, действие НЕ выполнено. Сообщи ID задачи и запроси подтверждение владельца.\n"
             f"ВАЖНОЕ ПРАВИЛО: Ваши встроенные знания ограничены прошлым. Для получения ЛЮБОЙ актуальной информации о событиях, спортивных матчах (например, сегодняшние игры, коэффициенты ставок, аналитика), новостях, котировках или погоде, вы ОБЯЗАНЫ использовать поиск по интернету через инструмент web_search. Никогда не выдумывайте события и не опирайтесь на свои старые данные!\n"
             f"КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО искать, использовать, упоминать, цитировать или пересказывать в ответах Сэру готовые прогнозы, чужие статьи, советы или мнения о валуйных ставках (например, 'готовые прогнозы', 'валуйные ставки по версии LiveSport', 'экспертные мнения'). Вы должны искать исключительно сырые числовые данные: пары соперников, точное время начала матчей и коэффициенты (odds/котировки) букмекеров. Любые выводы и математические расчеты валуйности (EV = Probability * Odds - 1) вы обязаны делать строго самостоятельно и приводить только свои собственные результаты, не ссылаясь на чужие мнения!\n"
             f"Вы не имеете права лениться делать расчеты: если точных числовых коэффициентов в поиске нет, вы обязаны провести математическое прогнозирование (например, рассчитать вероятности победы/ничьей/поражения по распределению Пуассона на основе средней результативности или статистики голов команд) и рассчитать ожидаемую валуйность (EV = P * Odds - 1) на основе расчетных вероятностей и примерных коэффициентов, вместо выдачи сухого отказа или цитирования чужих прогнозов."
@@ -1503,31 +1566,24 @@ class JarvisAgent:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": user_content})
 
-        # Subagents are limited to safe information-gathering tools only
-        from backend.tools import TOOLS_SCHEMA, execute_tool
+        # Default subagent access is read-only/low-risk. Mutating and shell tools
+        # require an explicit skill and still pass through the Control Plane.
+        from backend.tools import TOOLS_SCHEMA
         safe_tool_names = {
             "get_system_stats",
             "get_weather",
             "get_current_time_israel",
             "web_search",
             "get_market_prices",
-            "add_price_alert",
             "get_rss_digest",
-            "save_subagent_memory",
             "get_subagent_memory",
             "get_todoist_tasks",
-            "add_todoist_task",
-            "delete_todoist_task",
             "get_calendar_events",
-            "add_calendar_event",
             "search_obsidian",
             "read_obsidian_note",
-            "create_obsidian_note",
-            "sync_obsidian_vault",
             "set_timer",
             "set_alarm",
             "cancel_timer_or_alarm",
-            "execute_command",
         }
         
         skill_to_tools = {
@@ -1604,6 +1660,7 @@ class JarvisAgent:
         latency_ms = 0
         error_msg = None
         tool_executed = False
+        approval_pending = False
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -1662,6 +1719,8 @@ class JarvisAgent:
                     tool_calls = normalized.tool_calls
                     if not tool_calls:
                         response_text = normalized.content or ""
+                        retry_error = None
+                        retry_finish_reason = None
 
                         if normalized.status == STATUS_EMPTY and not tool_executed:
                             logger.info("Sub-agent '%s' final response was empty after cleanup. Retrying for visible final answer...", subagent_name)
@@ -1671,25 +1730,32 @@ class JarvisAgent:
                                 model=subagent_model,
                                 messages=messages + [{"role": "user", "content": FINAL_ANSWER_RETRY_PROMPT}],
                                 temperature=min(subagent.get("temperature", 0.7), 0.3),
-                                max_tokens=self.max_tokens,
+                                max_tokens=_visible_answer_retry_budget(self.max_tokens),
                                 timeout=self.request_timeout,
                                 max_retries=0,
                                 client=client,
                                 stream_callback=stream_callback,
-                                provider_options={"provider": self.provider, "num_ctx": self.ollama_num_ctx, "keep_alive": self.ollama_keep_alive, "think": self.ollama_think},
+                                provider_options=_visible_answer_retry_options({"provider": self.provider, "num_ctx": self.ollama_num_ctx, "keep_alive": self.ollama_keep_alive, "think": self.ollama_think}),
                             )
                             total_prompt_tokens += retry.usage.input_tokens or 0
                             total_completion_tokens += retry.usage.output_tokens or 0
                             response_status = retry.status
                             response_text = retry.content or ""
+                            retry_error = retry.error_message
+                            retry_finish_reason = retry.finish_reason
 
                         if normalized.status == STATUS_REFUSAL and not response_text:
                             response_text = "Модель отклонила запрос."
-                        if not response_text.strip() and tool_executed:
+                        if not response_text.strip() and approval_pending:
+                            response_status = "awaiting_approval"
+                            response_text = "Действие не выполнено и ожидает подтверждения владельца в Control Plane."
+                        elif not response_text.strip() and tool_executed:
                             response_text = "Действия успешно выполнены, Сэр."
                         if not response_text.strip():
                             logger.warning("Sub-agent '%s' returned an empty final response for session %s", subagent_name, session_id)
-                            response_text = _empty_model_response_fallback(subagent_name)
+                            response_status = "empty"
+                            error_msg = retry_error or normalized.error_message
+                            response_text = _empty_model_response_fallback(subagent_name, retry_finish_reason or normalized.finish_reason)
                         
                         cost_usd = _provider_cost(self.api_base, self.provider, subagent_model, total_prompt_tokens, total_completion_tokens)
                         self.last_costs[session_id] = cost_usd
@@ -1723,9 +1789,17 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source=subagent_name,
-                            message=f"🛠️ Выполнение (субагент): '{tool_name}' с аргументами {tool_args_str}"
+                            message=f"Выполнение субагента через Control Plane: '{tool_name}'"
                         )
-                        result_str = await asyncio.to_thread(execute_tool, tool_name, tool_args, chat_id=session_id)
+                        from backend.control_plane import execute_governed_tool
+                        result_str = await asyncio.to_thread(
+                            execute_governed_tool, tool_name, tool_args, chat_id=session_id
+                        )
+                        try:
+                            if json.loads(result_str).get("status") == "awaiting_approval":
+                                approval_pending = True
+                        except Exception:
+                            pass
                         
                         messages.append({
                             "role": "tool",

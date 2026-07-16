@@ -14,6 +14,38 @@ def test_get_system_stats():
     assert "disk_total_gb" in stats
     assert stats["status"] == "nominal"
 
+
+def test_get_system_stats_prefers_fresh_host_snapshot(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "host-telemetry.json"
+    snapshot_path.write_text(json.dumps({
+        "schema_version": 1,
+        "collected_at": "2099-01-01T00:00:00Z",
+        "host": {
+            "hostname": "hermes-test",
+            "cpu": {"usage_percent": 21.5},
+            "memory": {"total_bytes": 64 * 1024 ** 3, "usage_percent": 37.2},
+            "disks": [{
+                "mountpoint": "/",
+                "total_bytes": 1024 * 1024 ** 3,
+                "used_bytes": 256 * 1024 ** 3,
+                "usage_percent": 25.0,
+            }],
+            "gpus": [],
+            "containers": [],
+        },
+    }), encoding="utf-8")
+    monkeypatch.setenv("HOST_TELEMETRY_PATH", str(snapshot_path))
+
+    stats = json.loads(tools.get_system_stats())
+
+    assert stats["scope"] == "physical_host"
+    assert stats["host"]["hostname"] == "hermes-test"
+    assert stats["cpu_load_percent"] == 21.5
+    assert stats["ram_total_gb"] == 64.0
+    assert stats["disk_used_percent"] == 25.0
+    assert stats["status"] == "nominal"
+    assert stats["runtime"]["scope"] == "backend_runtime"
+
 @pytest.mark.asyncio
 async def test_get_weather():
     # 1. Test fallback when no OWM API key configured

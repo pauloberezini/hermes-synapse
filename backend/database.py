@@ -296,6 +296,79 @@ def init_db():
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Control Plane: durable tasks, approval decisions and an evidence ledger.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_tasks (
+            id TEXT PRIMARY KEY,
+            parent_id TEXT,
+            origin TEXT NOT NULL DEFAULT 'user',
+            requester TEXT NOT NULL DEFAULT 'owner',
+            goal TEXT NOT NULL,
+            tool_name TEXT,
+            tool_arguments TEXT NOT NULL DEFAULT '{}',
+            assignee TEXT NOT NULL DEFAULT 'jarvis',
+            risk_class TEXT NOT NULL DEFAULT 'R0',
+            autonomy_level TEXT NOT NULL DEFAULT 'L0',
+            data_class TEXT NOT NULL DEFAULT 'Internal',
+            status TEXT NOT NULL DEFAULT 'queued',
+            approvals_required INTEGER NOT NULL DEFAULT 0,
+            approval_count INTEGER NOT NULL DEFAULT 0,
+            budget_commands INTEGER NOT NULL DEFAULT 1,
+            budget_tokens INTEGER NOT NULL DEFAULT 0,
+            budget_wallclock_s INTEGER NOT NULL DEFAULT 60,
+            commands_used INTEGER NOT NULL DEFAULT 0,
+            tokens_used INTEGER NOT NULL DEFAULT 0,
+            acceptance TEXT NOT NULL DEFAULT '[]',
+            rollback TEXT NOT NULL DEFAULT '',
+            result TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_workflow_tasks_status
+        ON workflow_tasks (status, created_at DESC)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_workflow_tasks_idempotency
+        ON workflow_tasks (idempotency_key, created_at DESC)
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT,
+            event_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            message TEXT NOT NULL,
+            risk_class TEXT NOT NULL,
+            confidence TEXT NOT NULL DEFAULT 'CONFIRMED',
+            output_hash TEXT NOT NULL DEFAULT '',
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_workflow_events_task
+        ON workflow_events (task_id, id DESC)
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS control_plane_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            kill_switch INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '',
+            updated_by TEXT NOT NULL DEFAULT 'system',
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO control_plane_state
+            (id, kill_switch, reason, updated_by, updated_at)
+        VALUES (1, 0, '', 'system', CURRENT_TIMESTAMP)
+    """)
     
     conn.commit()
     conn.close()

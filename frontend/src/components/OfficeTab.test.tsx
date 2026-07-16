@@ -41,7 +41,7 @@ describe('OfficeTab data adapters', () => {
     expect(normalizeOfficeStatus(unknown)).toBe('paused');
     expect(normalizeOfficeStatus({ ...unknown, is_enabled: false })).toBe('offline');
     expect(assignOfficeZone({ ...unknown, status: 'error' })).toBe('error');
-    expect(normalizeOfficeAgents([unknown], 'Unassigned')[0]).toMatchObject({ projectLabel: 'Unassigned', statusKind: 'paused', zone: 'idle' });
+    expect(normalizeOfficeAgents([unknown], 'Unassigned')[0]).toMatchObject({ projectLabel: 'Unassigned', statusKind: 'paused', zone: 'lounge' });
   });
 });
 
@@ -57,11 +57,11 @@ describe('OfficeTab interactions', () => {
 
   it('filters agents, opens the inspector, and restores it with keyboard controls', async () => {
     render(<OfficeTab t={key => key === 'officeTitle' ? 'ИИ-офис' : key} language="ru" isConnected />);
-    const analyst = await screen.findByRole('button', { name: /Data Analyst, Работают/i });
+    await screen.findByRole('img', { name: 'Интерактивный пиксельный офис агентов' });
+    expect(document.querySelector('.office-brand img')).toHaveAttribute('src', '/favicon.svg');
     fireEvent.change(screen.getByLabelText('Поиск агента…'), { target: { value: 'Data Analyst' } });
-    expect(screen.queryByText('QA Engineer With An Intentionally Long Display Name')).not.toBeInTheDocument();
-    fireEvent.click(analyst);
-    expect(screen.getByRole('dialog', { name: 'Data Analyst' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Data Analyst' })).toBeInTheDocument();
+    expect((document.querySelector('.inspector-portrait-sprite') as HTMLElement).style.backgroundImage).toContain('/pixel-agents-assets/characters/char_');
     expect(localStorage.getItem('hermes_office_agent')).toBe('analyst');
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -69,7 +69,7 @@ describe('OfficeTab interactions', () => {
 
   it('switches modes without refetching and persists the selected view', async () => {
     const { unmount } = render(<OfficeTab t={() => 'ИИ-офис'} language="en" isConnected />);
-    await screen.findByText('Data Analyst');
+    await screen.findByRole('img', { name: 'Interactive pixel agent office' });
     fireEvent.click(screen.getByRole('tab', { name: 'Command Center' }));
     expect(screen.getByRole('tab', { name: 'Command Center' })).toHaveAttribute('aria-selected', 'true');
     expect(localStorage.getItem('hermes_office_view')).toBe('command');

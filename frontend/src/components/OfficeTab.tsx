@@ -28,6 +28,8 @@ import {
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentEvent, AgentModel } from '../types';
+import { HermesMark } from './HermesMark';
+import { PixelOfficeCanvas } from './PixelOfficeCanvas';
 
 type OfficeView = 'office' | 'command' | 'list';
 type StatusKind = 'working' | 'waiting' | 'error' | 'paused' | 'offline';
@@ -125,8 +127,7 @@ export function normalizeOfficeStatus(agent: AgentModel): StatusKind {
 
 export function assignOfficeZone(agent: AgentModel, statusKind = normalizeOfficeStatus(agent)): ZoneKey {
   if (statusKind === 'error') return 'error';
-  if (statusKind === 'offline' || statusKind === 'paused') return 'idle';
-  if (statusKind === 'waiting') return 'lounge';
+  if (statusKind === 'offline' || statusKind === 'paused' || statusKind === 'waiting') return 'lounge';
   if (agent.parent_id || (agent.agent_type || '').includes('orchestrator')) return 'meeting';
   if (['running', 'processing'].includes((agent.status || '').toLowerCase())) return 'project';
   return 'work';
@@ -192,66 +193,30 @@ function officeSignature(agents: AgentModel[]) {
 
 const PixelAvatar = memo(function PixelAvatar({ agent, size = 'md' }: { agent: OfficeAgent; size?: 'sm' | 'md' | 'lg' }) {
   const variant = hashString(agent.id || agent.name) % 8;
+  const indicator = agent.statusKind === 'working' ? '•••' : agent.statusKind === 'waiting' ? '…' : agent.statusKind === 'error' ? '!' : agent.statusKind === 'paused' ? 'Ⅱ' : 'z';
   return (
     <span className={`office-avatar office-avatar-${size} office-avatar-${variant} is-${agent.statusKind}`} aria-hidden="true">
       <i className="office-avatar-shadow" /><i className="office-avatar-hair" /><i className="office-avatar-head" /><i className="office-avatar-face" />
       <i className="office-avatar-body" /><i className="office-avatar-arm left" /><i className="office-avatar-arm right" /><i className="office-avatar-leg left" /><i className="office-avatar-leg right" />
-      {agent.statusKind === 'error' && <b>!</b>}{agent.statusKind === 'offline' && <b>z</b>}
+      <b className={`office-avatar-indicator is-${agent.statusKind}`}>{indicator}</b>
     </span>
   );
 });
 
-const AgentSprite = memo(function AgentSprite({ agent, selected, onSelect, copy }: { agent: OfficeAgent; selected: boolean; onSelect: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en }) {
+const InspectorPortrait = memo(function InspectorPortrait({ agent }: { agent: OfficeAgent }) {
+  const palette = hashString(agent.id || agent.name) % 6;
   return (
-    <button
-      type="button"
-      className={`office-agent-sprite is-${agent.statusKind}${selected ? ' is-selected' : ''}`}
-      onClick={event => onSelect(agent, event.currentTarget)}
-      aria-label={`${agent.name}, ${statusLabel(agent.statusKind, copy)}`}
-      aria-pressed={selected}
-      title={`${agent.name}: ${agent.current_task || agent.last_action || copy.noTask}`}
-    >
-      <span className="office-pixel-desk"><i /><b /><em /></span>
-      <PixelAvatar agent={agent} />
-      <span className="office-sprite-label"><strong>{agent.name || agent.id}</strong><small>{statusLabel(agent.statusKind, copy)}</small></span>
-    </button>
+    <span className={`inspector-pixel-portrait is-${agent.statusKind}`} aria-hidden="true">
+      <i className="inspector-portrait-floor" />
+      <i className="inspector-portrait-sprite" style={{ backgroundImage: `url(/pixel-agents-assets/characters/char_${palette}.png)` }} />
+      <i className="inspector-portrait-status" />
+    </span>
   );
 });
 
-function ZoneDecor({ zone }: { zone: ZoneKey }) {
-  return (
-    <div className={`office-zone-decor decor-${zone}`} aria-hidden="true">
-      {zone === 'lounge' && <><i className="decor-sofa" /><i className="decor-table" /><i className="decor-plant" /></>}
-      {zone === 'meeting' && <><i className="decor-board" /><i className="decor-meeting-table" /></>}
-      {zone === 'project' && <><i className="decor-terminal one" /><i className="decor-terminal two" /></>}
-      {zone === 'idle' && <><i className="decor-beanbag one" /><i className="decor-beanbag two" /></>}
-      {zone === 'error' && <><i className="decor-error-monitor one" /><i className="decor-error-monitor two" /></>}
-      {zone === 'work' && <><i className="decor-window" /><i className="decor-plant" /></>}
-    </div>
-  );
-}
-
-const OfficeRoom = memo(function OfficeRoom({ zone, selectedAgentId, onSelect, copy, mobileActive }: { zone: OfficeZone; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en; mobileActive: boolean }) {
-  return (
-    <section className={`office-room room-${zone.id}${mobileActive ? ' is-mobile-active' : ''}`} aria-labelledby={`zone-${zone.id}`}>
-      <header><span className="office-zone-symbol">{zone.id === 'error' ? '!' : zone.id === 'lounge' ? '☕' : zone.id === 'meeting' ? '◆' : '▣'}</span><h3 id={`zone-${zone.id}`}>{zone.label}</h3><strong>{zone.agents.length}</strong></header>
-      <ZoneDecor zone={zone.id} />
-      <div className="office-room-agents">
-        {zone.agents.map(agent => <AgentSprite key={agent.id} agent={agent} selected={selectedAgentId === agent.id} onSelect={onSelect} copy={copy} />)}
-      </div>
-    </section>
-  );
-});
-
-function PixelOfficeView({ zones, selectedAgentId, onSelect, copy, zoom, mobileZone }: { zones: OfficeZone[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en; zoom: number; mobileZone: ZoneKey }) {
-  return (
-    <div className="office-map-viewport" tabIndex={0} aria-label={copy.office}>
-      <div className="office-pixel-map" style={{ '--office-zoom': zoom } as React.CSSProperties}>
-        <div className="office-map-grid" aria-hidden="true" />
-        {zones.map(zone => <OfficeRoom key={zone.id} zone={zone} selectedAgentId={selectedAgentId} onSelect={onSelect} copy={copy} mobileActive={mobileZone === zone.id} />)}
-      </div>
-    </div>
-  );
+function PixelOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru' }) {
+  const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
+  return <PixelOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} />;
 }
 
 function ActivityOverlay({ projects }: { projects: OfficeProject[] }) {
@@ -278,7 +243,7 @@ function ActivityOverlay({ projects }: { projects: OfficeProject[] }) {
   );
 }
 
-const ProjectPlatform = memo(function ProjectPlatform({ project, focused, dimmed, onFocus, onSelectAgent, copy }: { project: OfficeProject; focused: boolean; dimmed: boolean; onFocus: (id: string) => void; onSelectAgent: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en }) {
+const ProjectPlatform = memo(function ProjectPlatform({ project, focused, dimmed, onFocus, onSelectAgent, copy }: { project: OfficeProject; focused: boolean; dimmed: boolean; onFocus: (id: string) => void; onSelectAgent: (agent: OfficeAgent, trigger: HTMLElement) => void; copy: typeof COPY.ru | typeof COPY.en }) {
   return (
     <article className={`command-platform${focused ? ' is-focused' : ''}${dimmed ? ' is-dimmed' : ''}`} style={{ '--project-accent': project.accent } as React.CSSProperties}>
       <div className="command-platform-surface">
@@ -301,7 +266,7 @@ const ProjectPlatform = memo(function ProjectPlatform({ project, focused, dimmed
   );
 });
 
-function CommandCenterView({ projects, focusedProject, onFocus, onSelectAgent, copy }: { projects: OfficeProject[]; focusedProject: string; onFocus: (id: string) => void; onSelectAgent: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en }) {
+function CommandCenterView({ projects, focusedProject, onFocus, onSelectAgent, copy }: { projects: OfficeProject[]; focusedProject: string; onFocus: (id: string) => void; onSelectAgent: (agent: OfficeAgent, trigger: HTMLElement) => void; copy: typeof COPY.ru | typeof COPY.en }) {
   const visibleProjects = focusedProject ? projects.filter(project => project.id === focusedProject) : projects;
   const focus = projects.find(project => project.id === focusedProject);
   return (
@@ -328,7 +293,7 @@ function CommandCenterView({ projects, focusedProject, onFocus, onSelectAgent, c
   );
 }
 
-const CompactAgentRow = memo(function CompactAgentRow({ agent, onSelect, copy, language }: { agent: OfficeAgent; onSelect: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru' }) {
+const CompactAgentRow = memo(function CompactAgentRow({ agent, onSelect, copy, language }: { agent: OfficeAgent; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru' }) {
   return (
     <article className="compact-agent-row" role="listitem">
       <PixelAvatar agent={agent} size="sm" />
@@ -342,7 +307,7 @@ const CompactAgentRow = memo(function CompactAgentRow({ agent, onSelect, copy, l
   );
 });
 
-function CompactListView({ agents, onSelect, copy, language, groupMode, setGroupMode, sortMode, setSortMode }: { agents: OfficeAgent[]; onSelect: (agent: OfficeAgent, trigger: HTMLButtonElement) => void; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru'; groupMode: GroupMode; setGroupMode: (value: GroupMode) => void; sortMode: SortMode; setSortMode: (value: SortMode) => void }) {
+function CompactListView({ agents, onSelect, copy, language, groupMode, setGroupMode, sortMode, setSortMode }: { agents: OfficeAgent[]; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru'; groupMode: GroupMode; setGroupMode: (value: GroupMode) => void; sortMode: SortMode; setSortMode: (value: SortMode) => void }) {
   const groups = useMemo(() => {
     const sorted = [...agents].sort((a, b) => sortMode === 'name' ? a.name.localeCompare(b.name) : sortMode === 'status' ? STATUS_ORDER.indexOf(a.statusKind) - STATUS_ORDER.indexOf(b.statusKind) : (b.activityAt || '').localeCompare(a.activityAt || ''));
     const map = new Map<string, OfficeAgent[]>();
@@ -369,7 +334,7 @@ function AgentInspector({ agent, copy, language, onClose, onChat, panelRef }: { 
   return (
     <aside className="agent-inspector" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="inspector-agent-name">
       <button type="button" className="inspector-close" onClick={onClose} aria-label={copy.close}><X size={18} /></button>
-      <header><PixelAvatar agent={agent} size="lg" /><div><h2 id="inspector-agent-name" title={agent.name}>{agent.name}</h2><p>{agent.role || copy.specialist}</p><span className={`office-status-pill is-${agent.statusKind}`}>{statusIcon(agent.statusKind)}{statusLabel(agent.statusKind, copy)}</span></div></header>
+      <header><InspectorPortrait agent={agent} /><div><h2 id="inspector-agent-name" title={agent.name}>{agent.name}</h2><p>{agent.role || copy.specialist}</p><span className={`office-status-pill is-${agent.statusKind}`}>{statusIcon(agent.statusKind)}{statusLabel(agent.statusKind, copy)}</span></div></header>
       <div className="inspector-actions">
         {onChat && <button type="button" className="inspector-chat" onClick={() => onChat(agent.id)}><MessageSquare size={16} />{copy.chat}</button>}
         <button type="button" className="inspector-logs" onClick={() => panelRef.current?.querySelector('.inspector-events')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><FileText size={15} />{copy.logs}</button>
@@ -407,7 +372,6 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' 
   const [selectedAgentId, setSelectedAgentId] = useState(() => localStorage.getItem(AGENT_STORAGE_KEY) || '');
   const [focusedProject, setFocusedProject] = useState('');
   const [zoom, setZoom] = useState(1);
-  const [mobileZone, setMobileZone] = useState<ZoneKey>('work');
   const [groupMode, setGroupMode] = useState<GroupMode>('project');
   const [sortMode, setSortMode] = useState<SortMode>('name');
   const inspectorRef = useRef<HTMLElement | null>(null);
@@ -467,7 +431,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' 
     return agents.filter(agent => (!query || `${agent.name} ${agent.role || ''} ${agent.current_task || ''} ${agent.projectLabel}`.toLowerCase().includes(query)) && (!projectFilter || agent.projectId === projectFilter) && (!statusFilter || agent.statusKind === statusFilter));
   }, [agents, projectFilter, search, statusFilter]);
   const zones = useMemo<OfficeZone[]>(() => {
-    const definitions: [ZoneKey, string, string][] = [['work', copy.workZone, copy.workZone], ['lounge', copy.lounge, copy.lounge], ['meeting', copy.meeting, copy.meeting], ['project', copy.projectRoom, copy.projectRoom], ['idle', copy.idleZone, copy.idleZone], ['error', copy.support, copy.support]];
+    const definitions: [ZoneKey, string, string][] = [['work', copy.workZone, copy.workZone], ['lounge', copy.lounge, copy.lounge], ['meeting', copy.meeting, copy.meeting], ['project', copy.projectRoom, copy.projectRoom], ['error', copy.support, copy.support]];
     return definitions.map(([id, label, shortLabel]) => ({ id, label, shortLabel, agents: filteredAgents.filter(agent => agent.zone === id) }));
   }, [copy, filteredAgents]);
   const visibleProjects = useMemo(() => projects.map(project => ({ ...project, agents: project.agents.filter(agent => filteredAgents.some(item => item.id === agent.id)) })).filter(project => project.agents.length), [filteredAgents, projects]);
@@ -491,7 +455,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' 
   }, [agents, loading, selectedAgentId, view]);
 
   const setView = useCallback((next: OfficeView) => { setViewState(next); localStorage.setItem(VIEW_STORAGE_KEY, next); }, []);
-  const selectAgent = useCallback((agent: OfficeAgent, trigger: HTMLButtonElement) => {
+  const selectAgent = useCallback((agent: OfficeAgent, trigger: HTMLElement) => {
     lastTriggerRef.current = trigger;
     setSelectedAgentId(agent.id);
     localStorage.setItem(AGENT_STORAGE_KEY, agent.id);
@@ -527,7 +491,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' 
   return (
     <div className={`ai-office-page view-${view}${selectedAgent ? ' has-inspector' : ''}`}>
       <header className="office-command-bar">
-        <div className="office-brand"><span><Bot size={23} /></span><div><h1>{t('officeTitle')}</h1><p>{copy.subtitle}</p></div></div>
+        <div className="office-brand"><HermesMark className="office-brand-mark" /><div><h1>{t('officeTitle')}</h1><p>{copy.subtitle}</p></div></div>
         <div className="office-filters">
           <label className="office-search"><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={copy.search} aria-label={copy.search} />{search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X size={14} /></button>}</label>
           <label className="office-select"><BriefcaseBusiness size={15} /><select value={projectFilter} onChange={event => chooseProject(event.target.value)} aria-label={copy.allProjects}><option value="">{copy.allProjects}</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select><ChevronDown size={14} /></label>
@@ -542,12 +506,11 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' 
         <div className="office-workspace">
           <aside className="office-context-sidebar">
             <div className="context-sidebar-title"><span>{view === 'command' ? copy.projects : copy.zones}</span>{refreshing && <Loader2 size={14} />}</div>
-            {view === 'command' ? <nav>{projects.map(project => <button key={project.id} type="button" className={focusedProject === project.id ? 'is-active' : ''} onClick={() => setFocusedProject(focusedProject === project.id ? '' : project.id)}><i style={{ background: project.accent }}><BriefcaseBusiness size={13} /></i><span><strong title={project.name}>{project.name}</strong><small>{project.agents.length} {copy.agents}</small></span><em>{project.errors || ''}</em></button>)}</nav> : <nav>{zones.map(zone => <button key={zone.id} type="button" className={statusFilter && zone.agents.length ? 'has-filter' : ''} onClick={() => setStatusFilter(zone.id === 'error' ? 'error' : zone.id === 'idle' ? 'paused' : zone.id === 'lounge' ? 'waiting' : zone.id === 'work' ? 'working' : '')}><i><Monitor size={13} /></i><span><strong title={zone.label}>{zone.shortLabel}</strong><small>{zone.agents.length} {copy.agents}</small></span></button>)}</nav>}
+            {view === 'command' ? <nav>{projects.map(project => <button key={project.id} type="button" className={focusedProject === project.id ? 'is-active' : ''} onClick={() => setFocusedProject(focusedProject === project.id ? '' : project.id)}><i style={{ background: project.accent }}><BriefcaseBusiness size={13} /></i><span><strong title={project.name}>{project.name}</strong><small>{project.agents.length} {copy.agents}</small></span><em>{project.errors || ''}</em></button>)}</nav> : <nav>{zones.map(zone => <button key={zone.id} type="button" className={statusFilter && zone.agents.length ? 'has-filter' : ''} onClick={() => setStatusFilter(zone.id === 'error' ? 'error' : zone.id === 'work' ? 'working' : '')}><i><Monitor size={13} /></i><span><strong title={zone.label}>{zone.shortLabel}</strong><small>{zone.agents.length} {copy.agents}</small></span></button>)}</nav>}
             {view === 'office' && <div className="office-zoom-controls"><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(value => Math.max(.75, value - .1))} aria-label="Zoom out"><Minus size={15} /></button><button type="button" onClick={() => setZoom(1)} aria-label={copy.fit}><Maximize2 size={14} /></button><button type="button" onClick={() => setZoom(value => Math.min(1.25, value + .1))} aria-label="Zoom in"><Plus size={15} /></button></div>}
           </aside>
           <main className="office-stage">
-            {view === 'office' && <nav className="office-mobile-zone-picker" aria-label={copy.zones}>{zones.map(zone => <button type="button" key={zone.id} className={mobileZone === zone.id ? 'is-active' : ''} onClick={() => setMobileZone(zone.id)}><span>{zone.id === 'error' ? '!' : zone.id === 'lounge' ? '☕' : zone.id === 'meeting' ? '◆' : '▣'}</span><strong>{zone.shortLabel}</strong><em>{zone.agents.length}</em></button>)}</nav>}
-            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView zones={zones} selectedAgentId={selectedAgentId} onSelect={selectAgent} copy={copy} zoom={zoom} mobileZone={mobileZone} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
+            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
           </main>
           {selectedAgent && <AgentInspector agent={selectedAgent} copy={copy} language={language} onClose={closeInspector} onChat={selectChat} panelRef={inspectorRef} />}
         </div>

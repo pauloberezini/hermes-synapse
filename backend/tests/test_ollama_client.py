@@ -3,7 +3,13 @@ import json
 import httpx
 import pytest
 
-from backend.ollama_client import OllamaClient, OllamaError, is_ollama_provider, normalize_ollama_base_url
+from backend.ollama_client import (
+    OllamaClient,
+    OllamaError,
+    is_ollama_provider,
+    normalize_keep_alive,
+    normalize_ollama_base_url,
+)
 
 
 def test_normalize_base_url_and_provider_detection(monkeypatch):
@@ -12,6 +18,34 @@ def test_normalize_base_url_and_provider_detection(monkeypatch):
     assert normalize_ollama_base_url("http://ollama:11434/api") == "http://ollama:11434"
     assert is_ollama_provider("http://127.0.0.1:11434")
     assert is_ollama_provider("https://provider.example/v1", "ollama")
+
+
+def test_normalize_keep_alive_numeric_sentinels():
+    assert normalize_keep_alive("-1") == -1
+    assert normalize_keep_alive(" 0 ") == 0
+    assert normalize_keep_alive("20m") == "20m"
+
+
+@pytest.mark.asyncio
+async def test_native_chat_sends_numeric_keep_alive_as_number():
+    captured = {}
+
+    async def handler(request: httpx.Request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={
+            "model": "qwen3:8b",
+            "message": {"role": "assistant", "content": "ok"},
+            "done": True,
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await OllamaClient("http://ollama:11434", client=http_client).chat(
+            model="qwen3:8b",
+            messages=[{"role": "user", "content": "hello"}],
+            keep_alive="-1",
+        )
+
+    assert captured["keep_alive"] == -1
 
 
 @pytest.mark.asyncio

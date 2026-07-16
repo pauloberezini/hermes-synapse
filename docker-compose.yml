@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   backend:
     build:
@@ -14,6 +20,7 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
       - OLLAMA_BASE_URL=http://ollama:11434
+      - LLM_LOCK_PROVIDER_ENDPOINT=true
       - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-262144}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:--1}
@@ -30,8 +37,17 @@ services:
       - ${HERMES_ENV_FILE:-.env}:/app/.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - qdrant
-      - ollama
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging: *default-logging
     networks:
       - hermes-net
 
@@ -44,7 +60,15 @@ services:
     ports:
       - "9119:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
     networks:
       - hermes-net
 
@@ -57,6 +81,13 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333; printf 'GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
     networks:
       - hermes-net
 
@@ -75,6 +106,13 @@ services:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1}
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         reservations:

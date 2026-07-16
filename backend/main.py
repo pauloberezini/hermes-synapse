@@ -1,11 +1,18 @@
 import asyncio
 import logging
+import os
+import sqlite3
 from typing import List, Optional
 from contextlib import asynccontextmanager
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from backend.logging_config import configure_logging
+
+configure_logging()
+
 from backend.agent import agent_instance, DECISION_LOGS
 from backend.bot import init_bot, shutdown_bot
 from backend.websocket_manager import manager
@@ -79,11 +86,9 @@ class ScheduledTaskCreate(BaseModel):
     time_str: Optional[str] = None
     interval_hours: Optional[float] = None
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+class ControlPlaneAction(BaseModel):
+    reason: str = ""
+
 logger = logging.getLogger("hermes.main")
 
 # In-flight chat tasks keyed by opaque client run id. This is process-local by
@@ -170,7 +175,12 @@ from fastapi.responses import JSONResponse
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     # Allow public auth routes and plots (images)
-    if path in ("/api/auth/request-code", "/api/auth/verify-code") or path.startswith("/api/plots/"):
+    if path in (
+        "/health/live",
+        "/health/ready",
+        "/api/auth/request-code",
+        "/api/auth/verify-code",
+    ) or path.startswith("/api/plots/"):
         return await call_next(request)
         
     # Apply auth only to API routes
@@ -195,7 +205,6 @@ async def request_code():
     import os
     
     code = generate_otp()
-    logger.info(f"Generated OTP Code: {code}")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not chat_id:
         return {"status": "error", "message": "TELEGRAM_CHAT_ID is not configured on backend."}
@@ -249,6 +258,55 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health/live", include_in_schema=False)
+async def health_live():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready", include_in_schema=False)
+async def health_ready():
+    """Check dependencies without loading a model or running inference."""
+    checks: dict[str, dict] = {}
+
+    try:
+        from backend.database import DB_PATH
+        with sqlite3.connect(DB_PATH, timeout=2) as connection:
+            connection.execute("SELECT 1").fetchone()
+        checks["database"] = {"ok": True}
+    except Exception as exc:
+        checks["database"] = {"ok": False, "error": type(exc).__name__}
+
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        qdrant_url = (
+            f"http://{os.getenv('QDRANT_HOST', 'qdrant')}:"
+            f"{os.getenv('QDRANT_PORT', '6333')}/readyz"
+        )
+        try:
+            response = await client.get(qdrant_url)
+            checks["qdrant"] = {"ok": response.status_code == 200}
+        except Exception as exc:
+            checks["qdrant"] = {"ok": False, "error": type(exc).__name__}
+
+        try:
+            response = await client.get(f"{agent_instance.ollama_base_url}/api/version")
+            checks["ollama"] = {"ok": response.status_code == 200}
+        except Exception as exc:
+            checks["ollama"] = {"ok": False, "error": type(exc).__name__}
+
+    from backend.obsidian import _get_api_key, is_reachable
+    if _get_api_key():
+        try:
+            checks["obsidian"] = {"ok": await is_reachable()}
+        except Exception as exc:
+            checks["obsidian"] = {"ok": False, "error": type(exc).__name__}
+
+    ready = all(item["ok"] for item in checks.values())
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"status": "ready" if ready else "degraded", "checks": checks},
+    )
 
 @app.get("/api/status")
 async def get_status():
@@ -549,6 +607,72 @@ async def get_agent_events_api(agent_id: str, limit: int = 50):
 async def get_office_state_api():
     from backend.database import get_agent_office_state
     return get_agent_office_state()
+
+@app.get("/api/control-plane/summary")
+async def get_control_plane_summary_api(limit: int = 100):
+    from backend.control_plane import get_summary
+    return get_summary(limit=limit)
+
+@app.get("/api/control-plane/tasks")
+async def get_control_plane_tasks_api(limit: int = 100, status: Optional[str] = None):
+    from backend.control_plane import list_tasks
+    return list_tasks(limit=limit, status=status)
+
+@app.get("/api/control-plane/events")
+async def get_control_plane_events_api(limit: int = 100):
+    from backend.control_plane import list_events
+    return list_events(limit=limit)
+
+@app.post("/api/control-plane/tasks/{task_id}/approve")
+async def approve_control_plane_task_api(task_id: str):
+    from backend.control_plane import approve_task, execute_governed_tool
+    try:
+        task = approve_task(task_id, actor="owner:web")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    execution = None
+    if task["status"] == "approved" and task.get("tool_name"):
+        execution = await asyncio.to_thread(
+            execute_governed_tool,
+            task["tool_name"],
+            task.get("tool_arguments") or {},
+            task.get("requester") or "control-plane",
+            approved_task_id=task_id,
+        )
+        from backend.control_plane import get_task
+        task = get_task(task_id) or task
+    return {"status": task["status"], "task": task, "execution": execution}
+
+@app.post("/api/control-plane/tasks/{task_id}/reject")
+async def reject_control_plane_task_api(task_id: str, action: ControlPlaneAction):
+    from backend.control_plane import reject_task
+    try:
+        task = reject_task(task_id, action.reason or "Rejected by owner", actor="owner:web")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"status": task["status"], "task": task}
+
+@app.post("/api/control-plane/kill")
+async def kill_control_plane_api(action: ControlPlaneAction):
+    from backend.control_plane import set_kill_switch
+    state = set_kill_switch(True, action.reason or "Emergency stop requested by owner", actor="owner:web")
+    cancelled_runs = 0
+    for run in list(ACTIVE_CHAT_RUNS.values()):
+        if not run.done():
+            run.cancel()
+            cancelled_runs += 1
+    return {"status": "stopped", "state": state, "cancelled_runs": cancelled_runs}
+
+@app.post("/api/control-plane/resume")
+async def resume_control_plane_api(action: ControlPlaneAction):
+    from backend.control_plane import set_kill_switch
+    state = set_kill_switch(False, action.reason or "Resumed by owner", actor="owner:web")
+    return {"status": "running", "state": state}
 
 @app.post("/api/subagents/positions")
 async def update_subagent_positions_api(update: SubagentPositionsUpdate):

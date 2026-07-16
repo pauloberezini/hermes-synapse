@@ -34,6 +34,19 @@ describe('App Component', () => {
     expect(screen.getByRole('button', { name: /request code in telegram/i })).toBeInTheDocument();
   });
 
+  it('does not poll protected tools APIs before authentication', async () => {
+    localStorage.setItem('jarvis_active_tab', 'tools');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    expect(screen.getByText('HERMES')).toBeInTheDocument();
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /request code in telegram/i })).toBeInTheDocument();
+  });
+
   it('requests OTP and shows confirmation message', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

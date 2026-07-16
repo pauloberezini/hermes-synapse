@@ -54,8 +54,8 @@ def _read_cpu_percent_from_proc() -> Optional[int]:
     return int(round((1 - idle_delta / total_delta) * 100))
 
 
-def get_system_stats() -> str:
-    """Reads real system stats or marks unavailable metrics explicitly."""
+def _runtime_system_stats() -> Dict[str, Any]:
+    """Read metrics visible to the backend process (usually its container)."""
     try:
         unavailable = []
         stat = os.statvfs('/')
@@ -93,7 +93,7 @@ def get_system_stats() -> str:
 
         available = len(unavailable) == 0
 
-        return json.dumps({
+        return {
             "available": available,
             "cpu_load_percent":  cpu_load,
             "ram_used_percent":  mem_used_pct,
@@ -107,10 +107,10 @@ def get_system_stats() -> str:
             "warning": "Metrics describe the backend process environment/container, not necessarily the whole physical host.",
             "unavailable": unavailable,
             "error": None if available else f"Unavailable metrics: {', '.join(unavailable)}"
-        }, ensure_ascii=False)
+        }
     except Exception as e:
         logger.error(f"Error reading system stats: {e}")
-        return json.dumps({
+        return {
             "available": False,
             "error": str(e),
             "status": "unavailable",
@@ -118,7 +118,102 @@ def get_system_stats() -> str:
             "source": "backend runtime:/proc + statvfs(/)",
             "warning": "Metrics describe the backend process environment/container, not necessarily the whole physical host.",
             "unavailable": ["cpu", "ram", "disk"]
-        }, ensure_ascii=False)
+        }
+
+
+def _host_telemetry_path() -> str:
+    return os.getenv(
+        "HOST_TELEMETRY_PATH",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "host-telemetry.json"),
+    )
+
+
+def _read_host_telemetry() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Read and validate the unprivileged snapshot written by the host agent."""
+    path = _host_telemetry_path()
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return None, "Host telemetry collector is not installed"
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not read host telemetry snapshot: %s", exc)
+        return None, f"Host telemetry snapshot cannot be read: {exc}"
+
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or not isinstance(payload.get("host"), dict):
+        return None, "Host telemetry snapshot has an unsupported format"
+    return payload, None
+
+
+def _parse_collected_at(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _host_system_stats(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    host = snapshot["host"]
+    cpu = host.get("cpu") if isinstance(host.get("cpu"), dict) else {}
+    memory = host.get("memory") if isinstance(host.get("memory"), dict) else {}
+    disks = host.get("disks") if isinstance(host.get("disks"), list) else []
+    root_disk = next(
+        (disk for disk in disks if isinstance(disk, dict) and disk.get("mountpoint") == "/"),
+        next((disk for disk in disks if isinstance(disk, dict)), {}),
+    )
+
+    collected_at = _parse_collected_at(snapshot.get("collected_at"))
+    age_seconds = max(0.0, (datetime.now(timezone.utc) - collected_at).total_seconds()) if collected_at else None
+    stale = age_seconds is None or age_seconds > 30
+    unavailable = []
+    if cpu.get("usage_percent") is None:
+        unavailable.append("cpu")
+    if not memory.get("total_bytes"):
+        unavailable.append("ram")
+    if not root_disk.get("total_bytes"):
+        unavailable.append("disk")
+    if stale:
+        unavailable.append("freshness")
+
+    status = "stale" if stale else ("partial" if unavailable else "nominal")
+    total_memory = memory.get("total_bytes") or 0
+    total_disk = root_disk.get("total_bytes") or 0
+    used_disk = root_disk.get("used_bytes") or 0
+    return {
+        "available": not stale and len(unavailable) == 0,
+        "cpu_load_percent": cpu.get("usage_percent"),
+        "ram_used_percent": memory.get("usage_percent"),
+        "ram_total_gb": round(total_memory / (1024 ** 3), 1) if total_memory else None,
+        "disk_used_percent": root_disk.get("usage_percent"),
+        "disk_total_gb": round(total_disk / (1024 ** 3), 1) if total_disk else None,
+        "disk_used_gb": round(used_disk / (1024 ** 3), 1) if total_disk else None,
+        "status": status,
+        "scope": "physical_host",
+        "source": "hermes-host-agent",
+        "collected_at": snapshot.get("collected_at"),
+        "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+        "stale": stale,
+        "host": host,
+        "unavailable": unavailable,
+        "warning": "The last host telemetry snapshot is stale" if stale else None,
+        "error": None,
+    }
+
+
+def get_system_stats() -> str:
+    """Return physical host telemetry, with an explicit runtime fallback."""
+    snapshot, host_error = _read_host_telemetry()
+    if snapshot:
+        result = _host_system_stats(snapshot)
+        result["runtime"] = _runtime_system_stats()
+        return json.dumps(result, ensure_ascii=False)
+
+    runtime = _runtime_system_stats()
+    runtime["host_error"] = host_error
+    return json.dumps(runtime, ensure_ascii=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1525,7 +1620,9 @@ def execute_command(command: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
-    logger.info(f"Executing tool '{name}' with args: {arguments}")
+    # Arguments can contain personal data or credentials. The Control Plane stores
+    # a redacted form; application logs only need the selected tool name.
+    logger.info("Executing tool '%s'", name)
 
     if name.startswith("ctrader_") or name.startswith("bcm_"):
         try:

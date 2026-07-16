@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
@@ -51,6 +52,16 @@ def is_ollama_provider(api_base: str = "", provider: str = "") -> bool:
     if base:
         return "ollama" in base or base.rstrip("/").endswith(":11434")
     return os.getenv("LLM_PROVIDER", "").strip().lower() == "ollama"
+
+
+def normalize_keep_alive(value: Any) -> Any:
+    """Ollama accepts numeric sentinels as numbers, not numeric strings."""
+    if isinstance(value, str):
+        normalized = value.strip()
+        if re.fullmatch(r"[+-]?\d+", normalized):
+            return int(normalized)
+        return normalized
+    return value
 
 
 def _error_message(response: httpx.Response) -> str:
@@ -255,7 +266,9 @@ class OllamaClient:
             "messages": _ollama_messages(messages),
             "stream": stream_callback is not None,
             "options": options,
-            "keep_alive": keep_alive if keep_alive is not None else os.getenv("OLLAMA_KEEP_ALIVE", "5m"),
+            "keep_alive": normalize_keep_alive(
+                keep_alive if keep_alive is not None else os.getenv("OLLAMA_KEEP_ALIVE", "5m")
+            ),
         }
         if tools:
             payload["tools"] = tools

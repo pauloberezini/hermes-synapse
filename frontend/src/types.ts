@@ -134,6 +134,68 @@ export interface AgentEvent {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowTask {
+  id: string;
+  parent_id?: string | null;
+  origin: string;
+  requester: string;
+  goal: string;
+  tool_name?: string | null;
+  tool_arguments?: Record<string, unknown>;
+  assignee: string;
+  risk_class: 'R0' | 'R1' | 'R2' | 'R3' | 'R4';
+  autonomy_level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5';
+  data_class: string;
+  status: 'queued' | 'running' | 'blocked' | 'awaiting_approval' | 'approved' | 'done' | 'failed' | 'killed' | 'rejected';
+  approvals_required: number;
+  approval_count: number;
+  approval_required: boolean;
+  budget_commands: number;
+  budget_tokens: number;
+  budget_wallclock_s: number;
+  commands_used: number;
+  tokens_used: number;
+  acceptance: string[];
+  rollback: string;
+  result: string;
+  error: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
+export interface WorkflowEvent {
+  id: number;
+  evidence_id: string;
+  task_id?: string | null;
+  event_type: string;
+  actor: string;
+  message: string;
+  risk_class: string;
+  confidence: string;
+  output_hash: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ControlPlaneSummary {
+  state: {
+    kill_switch: boolean;
+    reason: string;
+    updated_by: string;
+    updated_at: string;
+  };
+  counts: Record<string, number>;
+  pending_approvals: WorkflowTask[];
+  tasks: WorkflowTask[];
+  events: WorkflowEvent[];
+  policy: {
+    risk_levels: string[];
+    unknown_tools: string;
+    r4_double_confirmation: boolean;
+  };
+}
+
 export interface SystemStats {
   available?: boolean;
   cpu_load_percent?: number | null;
@@ -146,8 +208,92 @@ export interface SystemStats {
   scope?: string;
   source?: string;
   warning?: string;
+  host_error?: string;
   unavailable?: string[];
   error?: string | null;
+  collected_at?: string;
+  age_seconds?: number | null;
+  stale?: boolean;
+  host?: HostTelemetry;
+  runtime?: Omit<SystemStats, 'host' | 'runtime'>;
+}
+
+export interface HostTelemetry {
+  hostname?: string;
+  os?: string;
+  kernel?: string;
+  architecture?: string;
+  uptime_seconds?: number;
+  boot_time?: string | null;
+  process_count?: number;
+  cpu?: {
+    model?: string;
+    logical_cores?: number;
+    usage_percent?: number | null;
+    load_1m?: number | null;
+    load_5m?: number | null;
+    load_15m?: number | null;
+  };
+  memory?: {
+    total_bytes?: number;
+    used_bytes?: number;
+    available_bytes?: number;
+    usage_percent?: number | null;
+    swap_total_bytes?: number;
+    swap_used_bytes?: number;
+  };
+  disks?: Array<{
+    device?: string;
+    mountpoint?: string;
+    filesystem?: string;
+    total_bytes?: number;
+    used_bytes?: number;
+    available_bytes?: number;
+    usage_percent?: number | null;
+  }>;
+  network?: {
+    primary_ip?: string | null;
+    rx_bytes?: number;
+    tx_bytes?: number;
+    rx_bytes_per_second?: number;
+    tx_bytes_per_second?: number;
+    interfaces?: Array<{
+      name?: string;
+      rx_bytes?: number;
+      tx_bytes?: number;
+      rx_bytes_per_second?: number;
+      tx_bytes_per_second?: number;
+    }>;
+  };
+  gpus?: Array<{
+    index?: number;
+    name?: string;
+    uuid?: string;
+    driver_version?: string;
+    memory_total_bytes?: number | null;
+    memory_used_bytes?: number | null;
+    memory_usage_percent?: number | null;
+    utilization_percent?: number | null;
+    memory_utilization_percent?: number | null;
+    temperature_celsius?: number | null;
+    power_draw_watts?: number | null;
+    power_limit_watts?: number | null;
+    fan_percent?: number | null;
+  }>;
+  containers?: Array<{
+    name?: string;
+    image?: string;
+    state?: string;
+    health?: string;
+    status?: string;
+    ports?: string;
+    cpu_percent?: number | null;
+    memory_percent?: number | null;
+    memory_usage?: string | null;
+    network_io?: string | null;
+    block_io?: string | null;
+    pids?: number | null;
+  }>;
 }
 
 export interface RenderedListItem {

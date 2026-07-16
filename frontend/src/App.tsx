@@ -19,7 +19,8 @@ import {
   Building2,
   UserCog,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  ShieldCheck
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AgentModel, SystemStats } from './types';
@@ -46,12 +47,14 @@ import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
 import { AgentsAdminTab } from './components/AgentsAdminTab';
 import { OfficeTab } from './components/OfficeTab';
+import { ProcessesTab } from './components/ProcessesTab';
+import { HermesMark } from './components/HermesMark';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'processes' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
     if (saved === 'settings') return 'tools';
     return (saved as any) || 'chat';
@@ -674,7 +677,7 @@ export default function App() {
                   .slice(0, 80);
                 new Notification('VEXA', {
                   body: preview || 'New Vexa response',
-                  icon: '/favicon.ico',
+                  icon: '/favicon.svg',
                   tag: 'jarvis-reply',
                   silent: false,
                 });
@@ -1075,7 +1078,7 @@ export default function App() {
 
   // Fetch system stats and timers when the "tools" tab is active
   useEffect(() => {
-    if (activeTab !== 'tools') return;
+    if (!isAuthenticated || activeTab !== 'tools') return;
 
     const fetchStats = () => {
       fetch('/api/system/stats')
@@ -1107,7 +1110,17 @@ export default function App() {
 
     const fetchTimersData = () => {
       fetch('/api/timers')
-        .then(res => res.json())
+        .then(async res => {
+          const contentType = res.headers.get('content-type') || '';
+          if (!res.ok || !contentType.includes('application/json')) {
+            throw new Error(`Timers API unavailable (${res.status})`);
+          }
+          const data = await res.json();
+          if (!Array.isArray(data)) {
+            throw new Error('Timers API returned an invalid payload');
+          }
+          return data;
+        })
         .then(data => setTimers(data))
         .catch(err => console.log('Error fetching timers:', err));
     };
@@ -1126,13 +1139,13 @@ export default function App() {
       clearInterval(statsInterval);
       clearInterval(timersInterval);
     };
-  }, [activeTab]);
+  }, [activeTab, isAuthenticated]);
 
   // Local smooth countdown for timers in state
   useEffect(() => {
     const localTicker = setInterval(() => {
       setTimers(prevTimers =>
-        prevTimers.map(timer => {
+        (Array.isArray(prevTimers) ? prevTimers : []).map(timer => {
           if (timer.status === 'running' && timer.time_left > 0) {
             return { ...timer, time_left: timer.time_left - 1 };
           }
@@ -1351,10 +1364,10 @@ export default function App() {
           textAlign: 'center'
         }} className="glass-panel">
           
-          <div style={{ marginBottom: '30px' }}>
-            <div className="pulse-dot" style={{ width: 16, height: 16, margin: '0 auto 12px' }} />
-            <h1 className="glow-text-cyan" style={{ fontSize: '2.5rem', fontWeight: 800, letterSpacing: '2px', margin: 0 }}>HERMES</h1>
-            <p style={{ color: '#06b6d4', fontSize: '0.9rem', letterSpacing: '4px', margin: '4px 0 0', textTransform: 'uppercase' }}>Secure Access Link</p>
+          <div className="hermes-auth-brand" style={{ marginBottom: '30px' }}>
+            <HermesMark className="hermes-auth-mark" />
+            <h1 className="glow-text-cyan" style={{ fontSize: '2.5rem', fontWeight: 800, letterSpacing: 0, margin: 0 }}>HERMES</h1>
+            <p style={{ color: '#06b6d4', fontSize: '0.9rem', letterSpacing: 0, margin: '4px 0 0', textTransform: 'uppercase' }}>Secure Access Link</p>
           </div>
 
           <p style={{ color: '#94a3b8', fontSize: '0.95rem', lineHeight: '1.6', marginBottom: '30px' }}>
@@ -1511,9 +1524,7 @@ export default function App() {
           {isSidebarCollapsed ? <ChevronsRight size={17} /> : <ChevronsLeft size={17} />}
         </button>
         <div style={styles.logoArea}>
-          <div className="hermes-logo-mark">
-            <div className="pulse-dot" />
-          </div>
+          <HermesMark />
           <h1 className="glow-text-cyan sidebar-title" style={styles.logoTitle}>HERMES</h1>
         </div>
         <p className="sidebar-subtitle" style={styles.logoSubtitle}>{t('appSubtitle')}</p>
@@ -1535,6 +1546,15 @@ export default function App() {
           >
             <Building2 size={18} />
             <span>{t('navOffice')}</span>
+          </button>
+
+          <button
+            style={navStyle('processes')}
+            onClick={() => { setActiveTab('processes'); setSidebarOpen(false); }}
+            title={t('navProcesses')}
+          >
+            <ShieldCheck size={18} />
+            <span>{t('navProcesses')}</span>
           </button>
 
           <button
@@ -1745,6 +1765,8 @@ export default function App() {
             }}
           />
         )}
+
+        {activeTab === 'processes' && <ProcessesTab language={language} />}
 
         {activeTab === 'agents' && (
           <AgentsAdminTab
