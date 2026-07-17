@@ -138,7 +138,7 @@ function statusBubble(character: CanvasCharacter, language: 'en' | 'ru') {
 export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom, onZoom, language, liveTrace, theme = 'hermes', onTheme }: PixelOfficeCanvasProps) {
   const initialLayout = useMemo(() => loadStoredLayout(), []);
   const engineRef = useRef(new CanvasOfficeEngine(initialLayout));
-  const palette = useMemo(() => OFFICE_THEMES[theme] ?? OFFICE_THEMES.hermes, [theme]);
+  const palette = OFFICE_THEMES[theme] ?? OFFICE_THEMES.hermes;
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -382,7 +382,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
     };
     frameId = requestAnimationFrame(render);
     return () => { cancelAnimationFrame(frameId); observer.disconnect(); };
-  }, [editorOpen, historyTick, language, palette, selectedAgentId, zoom]);
+  }, [editorOpen, historyTick, language, selectedAgentId, theme, zoom]);
 
   useEffect(() => { tintedWallsRef.current = null; }, [theme]);
 
