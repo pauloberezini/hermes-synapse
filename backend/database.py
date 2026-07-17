@@ -11,6 +11,151 @@ logger = logging.getLogger("hermes.database")
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "hermes.db")
 
+
+def _get_conn() -> sqlite3.Connection:
+    """Open a SQLite connection configured for concurrent runtime access."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+class DatabaseBackend(ABC):
+    @abstractmethod
+    @contextmanager
+    def connect(self):
+        ...
+
+    @abstractmethod
+    def translate_placeholder(self, sql: str) -> str:
+        ...
+
+    @abstractmethod
+    def init_schema(self) -> None:
+        ...
+
+
+class SQLiteBackend(DatabaseBackend):
+    @contextmanager
+    def connect(self):
+        conn = _get_conn()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def translate_placeholder(self, sql: str) -> str:
+        return sql
+
+    def init_schema(self) -> None:
+        _init_sqlite_schema()
+
+
+class PostgresBackend(DatabaseBackend):
+    def __init__(self, url: str):
+        try:
+            from sqlalchemy import create_engine
+        except ImportError as exc:
+            raise ImportError(
+                "PostgreSQL backend requires SQLAlchemy and psycopg2. "
+                "Install the optional postgres dependency group."
+            ) from exc
+        self._engine = create_engine(url, pool_pre_ping=True)
+
+    @contextmanager
+    def connect(self):
+        raw_conn = self._engine.raw_connection()
+        try:
+            yield raw_conn
+            raw_conn.commit()
+        except Exception:
+            raw_conn.rollback()
+            raise
+        finally:
+            raw_conn.close()
+
+    def translate_placeholder(self, sql: str) -> str:
+        return sql.replace("?", "%s")
+
+    def init_schema(self) -> None:
+        _init_postgres_schema()
+
+
+def _create_backend() -> DatabaseBackend:
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if url.startswith("postgresql"):
+        logger.info("Database backend: PostgreSQL (%s)", url.split("@")[-1])
+        return PostgresBackend(url)
+    logger.info("Database backend: SQLite with WAL mode (path=%s)", DB_PATH)
+    return SQLiteBackend()
+
+
+_backend: Optional[DatabaseBackend] = None
+
+
+def _get_backend() -> DatabaseBackend:
+    global _backend
+    if _backend is None:
+        _backend = _create_backend()
+    return _backend
+
+
+def _set_backend_for_tests(backend: Optional[DatabaseBackend]) -> None:
+    global _backend
+    _backend = backend
+
+
+def _execute(sql: str, params: tuple = ()) -> list:
+    backend = _get_backend()
+    with backend.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(backend.translate_placeholder(sql), params)
+        conn.commit()
+        try:
+            return cursor.fetchall()
+        except Exception:
+            return []
+
+
+def _executemany(sql: str, params_list: list) -> None:
+    backend = _get_backend()
+    with backend.connect() as conn:
+        cursor = conn.cursor()
+        cursor.executemany(backend.translate_placeholder(sql), params_list)
+        conn.commit()
+
+
+def _lastrowid(sql: str, params: tuple = ()) -> Optional[int]:
+    backend = _get_backend()
+    translated = backend.translate_placeholder(sql)
+    if isinstance(backend, PostgresBackend):
+        if "returning" not in translated.lower():
+            translated = translated.rstrip(";") + " RETURNING id"
+        with backend.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(translated, params)
+            row = cursor.fetchone()
+            conn.commit()
+            return row[0] if row else None
+    with backend.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(translated, params)
+        last_id = cursor.lastrowid
+        conn.commit()
+        return last_id
+
+
+def _rowcount(sql: str, params: tuple = ()) -> int:
+    backend = _get_backend()
+    with backend.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(backend.translate_placeholder(sql), params)
+        conn.commit()
+        return cursor.rowcount
+
+
 def _json_or_empty(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -1568,4 +1713,3 @@ def db_get_aggregated_metrics() -> Dict[str, Any]:
 
 # Auto-initialize database schema on import to prevent missing tables
 init_db()
-
