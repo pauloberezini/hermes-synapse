@@ -5,6 +5,44 @@ export type CanvasAgentStatus = 'working' | 'waiting' | 'error' | 'paused' | 'of
 export type CanvasCharacterState = 'idle' | 'walk' | 'type' | 'read' | 'rest';
 export type CanvasDirection = 'down' | 'left' | 'right' | 'up';
 export type FurnitureKind = keyof typeof FURNITURE_CATALOG;
+export type CanvasLifecycle = 'entering' | 'active' | 'leaving';
+export type CanvasSpeechKind = 'info' | 'success' | 'error';
+
+export interface CanvasSpeech {
+  text: string;
+  kind: CanvasSpeechKind;
+  until: number;
+}
+
+export interface CanvasLiveTrace {
+  agent: string;
+  action: string;
+  message: string;
+  status?: string;
+}
+
+/** Keyword → specialist persona, mirroring the routing table from Claude-Office (bilingual). */
+const SPECIALIST_RULES: Array<[RegExp, string]> = [
+  [/debug|crash|traceback|exception|ошибк|баг|исключен|падени/i, 'Debugger'],
+  [/review|pull request|\bpr\b|\bgit\b|commit|merge|ревью|коммит/i, 'Reviewer'],
+  [/\bui\b|\bcss\b|design|layout|render|интерфейс|дизайн|вёрстк|верстк/i, 'Frontend'],
+  [/\btest|coverage|\be2e\b|pytest|vitest|тест|покрыти/i, 'Tester'],
+  [/auth|security|token|secret|credential|безопасн|авториз|секрет/i, 'Security'],
+  [/deploy|docker|\bci\b|pipeline|container|деплой|контейнер|сборк/i, 'DevOps'],
+  [/perf|latency|cache|optimi|profil|производит|кэш|оптимиз/i, 'PerfEng'],
+  [/\bsql\b|database|sqlite|qdrant|\bdb\b|\bбд\b|база данных|запрос к базе/i, 'DBA'],
+  [/search|research|analy|index|scrape|изуч|поиск|анализ|исследов|индекс/i, 'Researcher'],
+  [/\bllm\b|prompt|embedding|inference|ollama|промпт|модел|инференс/i, 'AI Eng'],
+  [/\bapi\b|rest|webhook|endpoint|request|интеграц|запрос/i, 'Fullstack'],
+  [/architect|pattern|refactor|structure|архитектур|рефактор|структур/i, 'Architect'],
+];
+
+export function inferSpecialist(...parts: Array<string | undefined | null>): string | null {
+  const haystack = parts.filter(Boolean).join(' ');
+  if (!haystack.trim()) return null;
+  for (const [pattern, role] of SPECIALIST_RULES) if (pattern.test(haystack)) return role;
+  return null;
+}
 
 export interface CanvasAgentData {
   id: string;
@@ -75,6 +113,11 @@ export interface CanvasCharacter {
   seat: { col: number; row: number; purpose: 'work' | 'lounge' } | null;
   wanderTimer: number;
   spawnTimer: number;
+  lifecycle: CanvasLifecycle;
+  speech: CanvasSpeech | null;
+  specialist: string | null;
+  activeUntil: number;
+  removeAt: number | null;
 }
 
 function hashString(value: string) {
@@ -196,45 +239,71 @@ function directionTo(from: { col: number; row: number }, to: { col: number; row:
   return 'down';
 }
 
+/** Monotonic seconds advanced by update(dt); used for speech expiry and lifecycle timing. */
+const SPEECH_TTL = 6;
+
 export class CanvasOfficeEngine {
   layout: CanvasOfficeLayout;
   characters = new Map<string, CanvasCharacter>();
+  clock = 0;
+  door: { col: number; row: number };
 
   constructor(layout = createDefaultCanvasLayout()) {
     this.layout = cloneOfficeLayout(layout);
+    this.door = this.findDoor();
   }
 
   setLayout(layout: CanvasOfficeLayout) {
     this.layout = cloneOfficeLayout(layout);
+    this.door = this.findDoor();
     this.reassignSeats();
+  }
+
+  /** Nearest walkable tile to the bottom-centre of the floor — where agents enter and exit. */
+  private findDoor(): { col: number; row: number } {
+    const blocked = getBlockedTiles(this.layout);
+    const centre = Math.floor(this.layout.cols / 2);
+    for (let row = this.layout.rows - 2; row >= 1; row -= 1) {
+      for (let spread = 0; spread < this.layout.cols; spread += 1) {
+        for (const col of [centre + spread, centre - spread]) {
+          if (col > 0 && col < this.layout.cols - 1 && !blocked.has(tileKey(col, row))) return { col, row };
+        }
+      }
+    }
+    return { col: 1, row: this.layout.rows - 2 };
   }
 
   setAgents(agents: CanvasAgentData[]) {
     const ids = new Set(agents.map(agent => agent.id));
-    this.characters.forEach((_character, id) => { if (!ids.has(id)) this.characters.delete(id); });
-    const blocked = getBlockedTiles(this.layout);
+    // Agents that dropped off the roster walk out through the door before they are removed.
+    this.characters.forEach(character => {
+      if (!ids.has(character.agent.id) && character.lifecycle !== 'leaving') {
+        character.lifecycle = 'leaving';
+        character.seat = null;
+        character.path = findOfficePath(this.layout, character, this.door);
+        character.state = character.path.length ? 'walk' : 'idle';
+      }
+    });
     const occupied = new Set([...this.characters.values()].map(character => tileKey(character.col, character.row)));
-    const spawnTiles: Array<{ col: number; row: number }> = [];
-    for (let row = 1; row < this.layout.rows - 1; row += 1) for (let col = 1; col < this.layout.cols - 1; col += 1) if (!blocked.has(tileKey(col, row))) spawnTiles.push({ col, row });
     agents.forEach(agent => {
       const current = this.characters.get(agent.id);
       if (current) {
         const wasWorking = current.agent.statusKind === 'working';
         current.agent = agent;
+        if (current.lifecycle === 'leaving') current.lifecycle = 'active';
+        if (!current.specialist) current.specialist = inferSpecialist(agent.current_task, agent.last_action);
         if (!wasWorking && agent.statusKind === 'working') this.sendToSeat(current);
         return;
       }
-      let spawn = spawnTiles[hashString(agent.id) % Math.max(1, spawnTiles.length)] || { col: 1, row: 1 };
-      for (let offset = 0; offset < spawnTiles.length; offset += 1) {
-        const candidate = spawnTiles[(hashString(agent.id) + offset) % spawnTiles.length];
-        if (!occupied.has(tileKey(candidate.col, candidate.row))) { spawn = candidate; break; }
-      }
-      const { col, row } = spawn;
+      // Newcomers walk in through the door rather than teleporting to a random tile.
+      const { col, row } = this.door;
       occupied.add(tileKey(col, row));
       this.characters.set(agent.id, {
         agent, col, row, x: col * OFFICE_TILE_SIZE + 8, y: row * OFFICE_TILE_SIZE + 8,
-        direction: 'down', state: 'idle', path: [], frame: 0, frameTimer: 0,
+        direction: 'up', state: 'walk', path: [], frame: 0, frameTimer: 0,
         palette: hashString(agent.id) % 6, seat: null, wanderTimer: 1 + (hashString(agent.id) % 30) / 10, spawnTimer: .7,
+        lifecycle: 'entering', speech: null, specialist: inferSpecialist(agent.current_task, agent.last_action),
+        activeUntil: 0, removeAt: null,
       });
     });
     this.reassignSeats();
@@ -315,11 +384,33 @@ export class CanvasOfficeEngine {
     return true;
   }
 
+  /** Attach a live speech bubble (and infer specialist) from an orchestrator trace. */
+  applyTrace(trace: CanvasLiveTrace) {
+    const needle = (trace.agent || '').trim().toLowerCase();
+    if (!needle) return;
+    const character = [...this.characters.values()].find(item => {
+      const name = (item.agent.name || '').trim().toLowerCase();
+      return name === needle || name.includes(needle) || needle.includes(name) || item.agent.id.toLowerCase() === needle;
+    });
+    if (!character) return;
+    const kind: CanvasSpeechKind = trace.status === 'error' ? 'error' : trace.status === 'success' ? 'success' : 'info';
+    const text = (trace.message || trace.action || '').split('\n')[0].trim();
+    if (text) character.speech = { text: text.slice(0, 90), kind, until: this.clock + SPEECH_TTL };
+    character.activeUntil = this.clock + SPEECH_TTL;
+    const specialist = inferSpecialist(trace.action, trace.message, character.agent.current_task);
+    if (specialist) character.specialist = specialist;
+  }
+
   update(dt: number) {
+    this.clock += dt;
+    const toRemove: string[] = [];
     this.characters.forEach(character => {
       character.spawnTimer = Math.max(0, character.spawnTimer - dt);
       character.frameTimer += dt;
       if (character.frameTimer >= .18) { character.frameTimer = 0; character.frame = (character.frame + 1) % 4; }
+      if (character.speech && this.clock >= character.speech.until) character.speech = null;
+      if (character.lifecycle === 'entering' && (character.col !== this.door.col || character.row !== this.door.row)) character.lifecycle = 'active';
+      if (character.lifecycle === 'leaving' && !character.path.length) { toRemove.push(character.agent.id); return; }
       if (character.path.length) {
         const target = character.path[0];
         character.direction = directionTo(character, target);
@@ -358,5 +449,6 @@ export class CanvasOfficeEngine {
         character.wanderTimer = 4 + (hashString(character.agent.id + String(character.frame)) % 50) / 10;
       }
     });
+    toRemove.forEach(id => this.characters.delete(id));
   }
 }

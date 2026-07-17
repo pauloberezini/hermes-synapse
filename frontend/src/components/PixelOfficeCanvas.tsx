@@ -1,4 +1,4 @@
-import { Armchair, BrickWall, Download, Eraser, MousePointer2, PaintBucket, Redo2, RotateCcw, Trash2, Undo2, Upload } from 'lucide-react';
+import { Armchair, BrickWall, Download, Eraser, MousePointer2, PaintBucket, Palette, Redo2, RotateCcw, Trash2, Undo2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CanvasOfficeEngine,
@@ -12,11 +12,32 @@ import {
   type CanvasAgentData,
   type CanvasCharacter,
   type CanvasDirection,
+  type CanvasLiveTrace,
   type CanvasOfficeLayout,
   type FurnitureKind,
 } from './officeCanvasEngine';
 
 type EditorTool = 'select' | 'floor' | 'wall' | 'furniture' | 'erase';
+
+export type OfficeThemeKey = 'hermes' | 'noir' | 'terminal' | 'sunset';
+
+interface OfficeTheme {
+  label: string;
+  background: string;
+  wallTint: string;
+  floorWash: string;
+  grid: string;
+  accent: string;
+}
+
+export const OFFICE_THEMES: Record<OfficeThemeKey, OfficeTheme> = {
+  hermes: { label: 'Hermes', background: '#080c12', wallTint: '#465264', floorWash: 'rgba(24,31,44,.0)', grid: 'rgba(79,110,247,.22)', accent: '#9b88ff' },
+  noir: { label: 'Noir', background: '#0a0a0b', wallTint: '#3a3a3e', floorWash: 'rgba(10,10,12,.42)', grid: 'rgba(200,200,210,.14)', accent: '#d7d7de' },
+  terminal: { label: 'Terminal', background: '#020806', wallTint: '#123a24', floorWash: 'rgba(10,60,30,.30)', grid: 'rgba(64,255,140,.20)', accent: '#3affa0' },
+  sunset: { label: 'Sunset', background: '#160a14', wallTint: '#5a3350', floorWash: 'rgba(90,30,50,.28)', grid: 'rgba(255,150,90,.18)', accent: '#ff9f6b' },
+};
+
+export const OFFICE_THEME_STORAGE_KEY = 'hermes_office_theme';
 
 interface PixelOfficeCanvasProps {
   agents: CanvasAgentData[];
@@ -25,13 +46,40 @@ interface PixelOfficeCanvasProps {
   zoom: number;
   onZoom: (zoom: number) => void;
   language: 'en' | 'ru';
+  liveTrace?: (CanvasLiveTrace & { ts: number }) | null;
+  theme?: OfficeThemeKey;
+  onTheme?: (theme: OfficeThemeKey) => void;
 }
 
 const FLOOR_ASSETS = Array.from({ length: 9 }, (_, index) => `/pixel-agents-assets/floors/floor_${index}.png`);
 const CHARACTER_ASSETS = Array.from({ length: 6 }, (_, index) => `/pixel-agents-assets/characters/char_${index}.png`);
 const WALL_ASSET = '/pixel-agents-assets/walls/wall_0.png';
 const STATUS_COLORS = { working: '#2ecc71', waiting: '#f4c430', error: '#ff4d5e', paused: '#b06ef7', offline: '#7d8aa5' } as const;
+const SPEECH_COLORS = { info: '#4f6ef7', success: '#2ecc71', error: '#ff4d5e' } as const;
+const SPECIALIST_COLORS: Record<string, string> = {
+  Debugger: '#ff6b6b', Reviewer: '#c792ea', Frontend: '#4fc3f7', Tester: '#ffd166', Security: '#ff5e8a',
+  DevOps: '#5ad1c0', PerfEng: '#ffa94d', DBA: '#8d9eff', Researcher: '#63e6be', 'AI Eng': '#b197fc', Fullstack: '#74c0fc', Architect: '#ffc078',
+};
 const FURNITURE_KINDS = Object.keys(FURNITURE_CATALOG) as FurnitureKind[];
+
+function wrapPixelText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (ctx.measureText(candidate).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+      if (lines.length === maxLines) break;
+    } else line = candidate;
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  if (lines.length === maxLines && (line || words.length > lines.join(' ').split(/\s+/).length)) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].replace(/[.,;:\s]+$/, '')}…`;
+  }
+  return lines;
+}
 
 function loadStoredLayout() {
   try {
@@ -51,7 +99,7 @@ function imageFor(cache: Map<string, HTMLImageElement>, src: string) {
   return image;
 }
 
-function tintWallSheet(image: HTMLImageElement) {
+function tintWallSheet(image: HTMLImageElement, tint: string) {
   const canvas = document.createElement('canvas');
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
@@ -59,7 +107,7 @@ function tintWallSheet(image: HTMLImageElement) {
   if (!context) return null;
   context.drawImage(image, 0, 0);
   context.globalCompositeOperation = 'multiply';
-  context.fillStyle = '#465264';
+  context.fillStyle = tint;
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.globalCompositeOperation = 'source-over';
   return canvas;
@@ -87,9 +135,11 @@ function statusBubble(character: CanvasCharacter, language: 'en' | 'ru') {
   return null;
 }
 
-export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom, onZoom, language }: PixelOfficeCanvasProps) {
+export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom, onZoom, language, liveTrace, theme = 'hermes', onTheme }: PixelOfficeCanvasProps) {
   const initialLayout = useMemo(() => loadStoredLayout(), []);
   const engineRef = useRef(new CanvasOfficeEngine(initialLayout));
+  const palette = useMemo(() => OFFICE_THEMES[theme] ?? OFFICE_THEMES.hermes, [theme]);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const imagesRef = useRef(new Map<string, HTMLImageElement>());
@@ -111,6 +161,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
 
   useEffect(() => { engineRef.current.setAgents(agents); }, [agents]);
+  useEffect(() => { if (liveTrace) engineRef.current.applyTrace(liveTrace); }, [liveTrace]);
 
   const commitLayout = useCallback((next: CanvasOfficeLayout, keepRedo = false) => {
     undoRef.current.push(cloneOfficeLayout(engineRef.current.layout));
@@ -171,7 +222,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.imageSmoothingEnabled = false;
-      ctx.fillStyle = '#080c12';
+      ctx.fillStyle = palette.background;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       const worldWidth = engine.layout.cols * OFFICE_TILE_SIZE;
       const worldHeight = engine.layout.rows * OFFICE_TILE_SIZE;
@@ -202,9 +253,14 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
         }
       });
 
+      if (palette.floorWash !== 'rgba(24,31,44,.0)') {
+        ctx.fillStyle = palette.floorWash;
+        ctx.fillRect(offsetX, offsetY, worldWidth * scale, worldHeight * scale);
+      }
+
       const drawables: Array<{ z: number; draw: () => void }> = [];
       const wallImage = imageFor(imagesRef.current, WALL_ASSET);
-      if (!tintedWallsRef.current && wallImage.complete && wallImage.naturalWidth) tintedWallsRef.current = tintWallSheet(wallImage);
+      if (!tintedWallsRef.current && wallImage.complete && wallImage.naturalWidth) tintedWallsRef.current = tintWallSheet(wallImage, palette.wallTint);
       engine.layout.tiles.forEach((tile, index) => {
         if (tile !== 0) return;
         const col = index % engine.layout.cols;
@@ -270,13 +326,46 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
             ctx.fillStyle = '#e6ebf5'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, labelX + width / 2, labelY + 5 * scale, width - 6 * scale);
           }
 
-          const bubble = statusBubble(character, language);
-          if (bubble) {
-            const bubbleX = Math.round(offsetX + (character.x + 5) * scale);
-            const bubbleY = Math.round(offsetY + (character.y - 30) * scale);
-            ctx.fillStyle = '#f3f5f8'; ctx.fillRect(bubbleX, bubbleY, 10 * scale, 9 * scale);
-            ctx.fillStyle = STATUS_COLORS[character.agent.statusKind]; ctx.fillRect(bubbleX + 2 * scale, bubbleY + 2 * scale, 6 * scale, 5 * scale);
-            ctx.fillStyle = '#0b0f17'; ctx.font = `800 ${Math.max(8, 5 * scale)}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(bubble.text, bubbleX + 5 * scale, bubbleY + 4.5 * scale);
+          if (character.specialist && (selected || hovered || character.speech)) {
+            const chipColor = SPECIALIST_COLORS[character.specialist] || palette.accent;
+            ctx.font = `700 ${Math.max(8, 4.5 * scale)}px Inter, sans-serif`;
+            const chipW = ctx.measureText(character.specialist).width + 8 * scale;
+            const chipX = Math.round(offsetX + character.x * scale - chipW / 2);
+            const chipY = Math.round(offsetY + (character.y + 10) * scale);
+            ctx.fillStyle = 'rgba(8,12,18,.9)'; ctx.fillRect(chipX, chipY, chipW, 8 * scale);
+            ctx.fillStyle = chipColor; ctx.fillRect(chipX, chipY, Math.max(1, 1.5 * scale), 8 * scale);
+            ctx.fillStyle = chipColor; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(character.specialist, chipX + chipW / 2 + scale, chipY + 4 * scale);
+          }
+
+          if (character.speech) {
+            const accent = SPEECH_COLORS[character.speech.kind];
+            ctx.font = `600 ${Math.max(8, 4.6 * scale)}px Inter, sans-serif`;
+            const maxWidth = 92 * scale;
+            const lines = wrapPixelText(ctx, character.speech.text, maxWidth - 8 * scale, 2);
+            const lineH = Math.max(8, 6 * scale);
+            const boxW = Math.min(maxWidth, Math.max(...lines.map(line => ctx.measureText(line).width)) + 8 * scale);
+            const boxH = lines.length * lineH + 5 * scale;
+            const boxX = Math.round(offsetX + character.x * scale - boxW / 2);
+            const boxY = Math.round(offsetY + (character.y - 30) * scale - boxH);
+            ctx.fillStyle = 'rgba(243,245,248,.97)'; ctx.fillRect(boxX, boxY, boxW, boxH);
+            ctx.fillStyle = accent; ctx.fillRect(boxX, boxY, boxW, Math.max(1, 1.5 * scale));
+            ctx.fillStyle = 'rgba(243,245,248,.97)'; ctx.beginPath();
+            ctx.moveTo(boxX + boxW / 2 - 3 * scale, boxY + boxH);
+            ctx.lineTo(boxX + boxW / 2 + 3 * scale, boxY + boxH);
+            ctx.lineTo(boxX + boxW / 2, boxY + boxH + 4 * scale);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#141821'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            lines.forEach((line, index) => ctx.fillText(line, boxX + boxW / 2, boxY + 4 * scale + index * lineH + lineH / 2));
+          } else {
+            const bubble = statusBubble(character, language);
+            if (bubble) {
+              const bubbleX = Math.round(offsetX + (character.x + 5) * scale);
+              const bubbleY = Math.round(offsetY + (character.y - 30) * scale);
+              ctx.fillStyle = '#f3f5f8'; ctx.fillRect(bubbleX, bubbleY, 10 * scale, 9 * scale);
+              ctx.fillStyle = STATUS_COLORS[character.agent.statusKind]; ctx.fillRect(bubbleX + 2 * scale, bubbleY + 2 * scale, 6 * scale, 5 * scale);
+              ctx.fillStyle = '#0b0f17'; ctx.font = `800 ${Math.max(8, 5 * scale)}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(bubble.text, bubbleX + 5 * scale, bubbleY + 4.5 * scale);
+            }
           }
           ctx.fillStyle = STATUS_COLORS[character.agent.statusKind];
           ctx.fillRect(Math.round(offsetX + (character.x - 2) * scale), Math.round(offsetY + (character.y + 7) * scale), 4 * scale, Math.max(1, scale));
@@ -285,7 +374,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
       drawables.sort((a, b) => a.z - b.z).forEach(item => item.draw());
 
       if (editorOpen) {
-        ctx.strokeStyle = 'rgba(79,110,247,.22)'; ctx.lineWidth = 1;
+        ctx.strokeStyle = palette.grid; ctx.lineWidth = 1;
         for (let col = 0; col <= engine.layout.cols; col += 1) { const x = offsetX + col * OFFICE_TILE_SIZE * scale + .5; ctx.beginPath(); ctx.moveTo(x, offsetY); ctx.lineTo(x, offsetY + worldHeight * scale); ctx.stroke(); }
         for (let row = 0; row <= engine.layout.rows; row += 1) { const y = offsetY + row * OFFICE_TILE_SIZE * scale + .5; ctx.beginPath(); ctx.moveTo(offsetX, y); ctx.lineTo(offsetX + worldWidth * scale, y); ctx.stroke(); }
       }
@@ -293,7 +382,9 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
     };
     frameId = requestAnimationFrame(render);
     return () => { cancelAnimationFrame(frameId); observer.disconnect(); };
-  }, [editorOpen, historyTick, language, selectedAgentId, zoom]);
+  }, [editorOpen, historyTick, language, palette, selectedAgentId, zoom]);
+
+  useEffect(() => { tintedWallsRef.current = null; }, [theme]);
 
   const screenToTile = useCallback((clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -399,6 +490,20 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
       />
 
       <button type="button" className={`pixel-layout-toggle${editorOpen ? ' is-active' : ''}`} onClick={() => setEditorOpen(value => !value)} title={language === 'ru' ? 'Редактор офиса' : 'Office editor'} aria-pressed={editorOpen}><Armchair size={16} /></button>
+      {onTheme && (
+        <div className="pixel-theme-switcher">
+          <button type="button" className={`pixel-theme-toggle${themeMenuOpen ? ' is-active' : ''}`} onClick={() => setThemeMenuOpen(value => !value)} title={language === 'ru' ? 'Тема офиса' : 'Office theme'} aria-haspopup="true" aria-expanded={themeMenuOpen} style={{ '--theme-accent': palette.accent } as React.CSSProperties}><Palette size={16} /></button>
+          {themeMenuOpen && (
+            <div className="pixel-theme-menu" role="menu">
+              {(Object.keys(OFFICE_THEMES) as OfficeThemeKey[]).map(key => (
+                <button key={key} type="button" role="menuitemradio" aria-checked={theme === key} className={theme === key ? 'is-active' : ''} onClick={() => { onTheme(key); setThemeMenuOpen(false); }}>
+                  <span className="pixel-theme-dot" style={{ background: OFFICE_THEMES[key].accent }} />{OFFICE_THEMES[key].label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {editorOpen && <div className="pixel-editor-toolbar" role="toolbar" aria-label={language === 'ru' ? 'Редактор офиса' : 'Office editor'}>
         <div className="pixel-editor-tools">{editorTools.map(item => <button key={item.id} type="button" className={tool === item.id ? 'is-active' : ''} onClick={() => setTool(item.id)} title={item.title} aria-label={item.title} aria-pressed={tool === item.id}>{item.icon}</button>)}</div>
         {tool === 'floor' && <div className="pixel-floor-swatches">{FLOOR_ASSETS.map((src, index) => <button key={src} type="button" className={floor === index + 1 ? 'is-active' : ''} onClick={() => setFloor(index + 1)} title={`Floor ${index + 1}`} aria-label={`Floor ${index + 1}`}><img src={src} alt="" /></button>)}</div>}

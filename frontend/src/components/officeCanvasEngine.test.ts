@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CanvasOfficeEngine, createDefaultCanvasLayout, findOfficePath, getBlockedTiles, getWallMask, normalizeCanvasLayout } from './officeCanvasEngine';
+import { CanvasOfficeEngine, createDefaultCanvasLayout, findOfficePath, getBlockedTiles, getWallMask, inferSpecialist, normalizeCanvasLayout } from './officeCanvasEngine';
 
 describe('canvas office engine', () => {
   it('finds routes around walls and blocking furniture', () => {
@@ -38,6 +38,47 @@ describe('canvas office engine', () => {
     expect(characters.every(character => character.seat?.purpose === 'lounge')).toBe(true);
     expect(new Set(characters.map(character => `${character.col},${character.row}`)).size).toBe(9);
     expect(characters.every(character => character.state === 'rest')).toBe(true);
+  });
+
+  it('spawns newcomers at the door and lets them enter', () => {
+    const engine = new CanvasOfficeEngine();
+    engine.setAgents([{ id: 'a1', name: 'Alpha', statusKind: 'working' }]);
+    const character = engine.characters.get('a1');
+    expect(character?.col).toBe(engine.door.col);
+    expect(character?.row).toBe(engine.door.row);
+    expect(character?.lifecycle).toBe('entering');
+    for (let frame = 0; frame < 400; frame += 1) engine.update(.05);
+    expect(engine.characters.get('a1')?.lifecycle).toBe('active');
+  });
+
+  it('walks removed agents out through the door before deleting them', () => {
+    const engine = new CanvasOfficeEngine();
+    engine.setAgents([{ id: 'a1', name: 'Alpha', statusKind: 'working' }]);
+    for (let frame = 0; frame < 300; frame += 1) engine.update(.05);
+    engine.setAgents([]);
+    expect(engine.characters.get('a1')?.lifecycle).toBe('leaving');
+    for (let frame = 0; frame < 400; frame += 1) engine.update(.05);
+    expect(engine.characters.has('a1')).toBe(false);
+  });
+
+  it('attaches a live speech bubble from a matching trace and expires it', () => {
+    const engine = new CanvasOfficeEngine();
+    engine.setAgents([{ id: 'research', name: 'Research Agent', statusKind: 'working' }]);
+    engine.update(.05);
+    engine.applyTrace({ agent: 'Research Agent', action: 'web_search', message: 'Searching arxiv for papers', status: 'success' });
+    const character = engine.characters.get('research');
+    expect(character?.speech?.text).toContain('Searching');
+    expect(character?.speech?.kind).toBe('success');
+    expect(character?.specialist).toBe('Researcher');
+    for (let frame = 0; frame < 200; frame += 1) engine.update(.05);
+    expect(engine.characters.get('research')?.speech).toBeNull();
+  });
+
+  it('maps keywords to specialist personas', () => {
+    expect(inferSpecialist('fix the crash', 'traceback')).toBe('Debugger');
+    expect(inferSpecialist('обнови вёрстку', undefined)).toBe('Frontend');
+    expect(inferSpecialist('rotate the auth token')).toBe('Security');
+    expect(inferSpecialist('just chatting')).toBeNull();
   });
 
   it('keeps large agent rosters and rejects malformed saved layouts', () => {

@@ -46,7 +46,7 @@ import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
 import { AgentsAdminTab } from './components/AgentsAdminTab';
-import { OfficeTab } from './components/OfficeTab';
+import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 import { ProcessesTab } from './components/ProcessesTab';
 import { HermesMark } from './components/HermesMark';
 import { MetricsTab } from './components/MetricsTab';
@@ -157,6 +157,8 @@ export default function App() {
   const [editedModel, setEditedModel] = useState('');
   const [editedRuntimeConfig, setEditedRuntimeConfig] = useState<Partial<SystemConfig>>({});
   
+  const [officeLiveTrace, setOfficeLiveTrace] = useState<OfficeLiveTrace | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
   const mainChatEndRef = useRef<HTMLDivElement | null>(null);
   const subagentChatEndRef = useRef<HTMLDivElement | null>(null);
@@ -784,6 +786,13 @@ export default function App() {
                 role: 'system',
                 content: `⚙️ [${data.trace.agent}] ${data.trace.action}: ${data.trace.message.split('\n')[0]}`
               }]);
+              setOfficeLiveTrace({
+                agent: data.trace.agent,
+                action: data.trace.action,
+                message: data.trace.message,
+                status: data.trace.status,
+                ts: Date.now(),
+              });
             }
           }
         } catch (err) {
@@ -1914,6 +1923,7 @@ export default function App() {
             t={t}
             isConnected={isConnected}
             language={language}
+            liveTrace={officeLiveTrace}
             selectChat={(agentId) => {
               selectChat(agentId);
               setActiveTab('chat');

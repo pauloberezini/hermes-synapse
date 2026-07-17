@@ -2381,6 +2381,24 @@ body::after {
   box-shadow: 0 5px 18px rgba(0,0,0,.28); transition: color var(--office-fast), border-color var(--office-fast), background var(--office-fast);
 }
 .pixel-layout-toggle:hover, .pixel-layout-toggle.is-active { color: #e6ebf5; border-color: var(--office-accent); background: #1a2333; }
+.pixel-theme-switcher { position: absolute; z-index: 8; top: 52px; right: 10px; }
+.pixel-theme-toggle {
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border: 1px solid rgba(139,150,173,.3); border-radius: 6px; color: #aab5ca; background: rgba(11,15,23,.92); cursor: pointer;
+  box-shadow: 0 5px 18px rgba(0,0,0,.28); transition: color var(--office-fast), border-color var(--office-fast), background var(--office-fast);
+}
+.pixel-theme-toggle:hover, .pixel-theme-toggle.is-active { color: #e6ebf5; border-color: var(--theme-accent, var(--office-accent)); background: #1a2333; }
+.pixel-theme-menu {
+  position: absolute; top: 40px; right: 0; min-width: 132px; display: flex; flex-direction: column; gap: 2px; padding: 5px;
+  border: 1px solid rgba(139,150,173,.26); border-radius: 8px; background: rgba(11,15,23,.96); box-shadow: 0 10px 28px rgba(0,0,0,.4); backdrop-filter: blur(8px);
+}
+.pixel-theme-menu button {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 5px; background: transparent;
+  color: #aab5ca; font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; transition: background var(--office-fast), color var(--office-fast);
+}
+.pixel-theme-menu button:hover { background: #1a2333; color: #e6ebf5; }
+.pixel-theme-menu button.is-active { background: #1a2333; color: #e6ebf5; }
+.pixel-theme-dot { width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,.4); flex-shrink: 0; }
 .pixel-editor-toolbar {
   position: absolute; z-index: 7; top: 10px; left: 10px; right: 54px; min-height: 42px; display: flex; align-items: center; gap: 8px;
   padding: 4px; border: 1px solid rgba(139,150,173,.26); border-radius: 7px; background: rgba(11,15,23,.94); box-shadow: 0 8px 24px rgba(0,0,0,.34);

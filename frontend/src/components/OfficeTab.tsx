@@ -28,8 +28,11 @@ import {
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentEvent, AgentModel } from '../types';
+import type { CanvasLiveTrace } from './officeCanvasEngine';
 import { HermesMark } from './HermesMark';
-import { PixelOfficeCanvas } from './PixelOfficeCanvas';
+import { OFFICE_THEMES, OFFICE_THEME_STORAGE_KEY, PixelOfficeCanvas, type OfficeThemeKey } from './PixelOfficeCanvas';
+
+export type OfficeLiveTrace = CanvasLiveTrace & { ts: number };
 
 type OfficeView = 'office' | 'command' | 'list';
 type StatusKind = 'working' | 'waiting' | 'error' | 'paused' | 'offline';
@@ -42,6 +45,7 @@ interface OfficeTabProps {
   selectChat?: (chatId: string) => void;
   isConnected?: boolean;
   language?: 'en' | 'ru';
+  liveTrace?: OfficeLiveTrace | null;
 }
 
 export interface OfficeAgent extends AgentModel {
@@ -214,9 +218,9 @@ const InspectorPortrait = memo(function InspectorPortrait({ agent }: { agent: Of
   );
 });
 
-function PixelOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru' }) {
+function PixelOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language, liveTrace, theme, onTheme }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru'; liveTrace?: OfficeLiveTrace | null; theme: OfficeThemeKey; onTheme: (theme: OfficeThemeKey) => void }) {
   const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
-  return <PixelOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} />;
+  return <PixelOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={onTheme} />;
 }
 
 function ActivityOverlay({ projects }: { projects: OfficeProject[] }) {
@@ -355,8 +359,13 @@ function ViewSwitcher({ view, setView, copy }: { view: OfficeView; setView: (vie
   return <div className="office-view-switcher" role="tablist" aria-label="Office view">{views.map(item => <button key={item.id} type="button" role="tab" aria-selected={view === item.id} className={view === item.id ? 'is-active' : ''} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span></button>)}</div>;
 }
 
-export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' }: OfficeTabProps) {
+export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru', liveTrace = null }: OfficeTabProps) {
   const copy = COPY[language];
+  const [theme, setThemeState] = useState<OfficeThemeKey>(() => {
+    const saved = localStorage.getItem(OFFICE_THEME_STORAGE_KEY);
+    return saved && saved in OFFICE_THEMES ? (saved as OfficeThemeKey) : 'hermes';
+  });
+  const setTheme = useCallback((next: OfficeThemeKey) => { setThemeState(next); localStorage.setItem(OFFICE_THEME_STORAGE_KEY, next); }, []);
   const [rawAgents, setRawAgents] = useState<AgentModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -510,7 +519,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru' 
             {view === 'office' && <div className="office-zoom-controls"><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(value => Math.max(.75, value - .1))} aria-label="Zoom out"><Minus size={15} /></button><button type="button" onClick={() => setZoom(1)} aria-label={copy.fit}><Maximize2 size={14} /></button><button type="button" onClick={() => setZoom(value => Math.min(1.25, value + .1))} aria-label="Zoom in"><Plus size={15} /></button></div>}
           </aside>
           <main className="office-stage">
-            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
+            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
           </main>
           {selectedAgent && <AgentInspector agent={selectedAgent} copy={copy} language={language} onClose={closeInspector} onChat={selectChat} panelRef={inspectorRef} />}
         </div>
