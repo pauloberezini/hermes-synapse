@@ -6,9 +6,12 @@ import pytest
 from backend.ollama_client import (
     OllamaClient,
     OllamaError,
+    installed_model_names,
     is_ollama_provider,
     normalize_keep_alive,
     normalize_ollama_base_url,
+    resolve_installed_model,
+    select_installed_model,
 )
 
 
@@ -24,6 +27,20 @@ def test_normalize_keep_alive_numeric_sentinels():
     assert normalize_keep_alive("-1") == -1
     assert normalize_keep_alive(" 0 ") == 0
     assert normalize_keep_alive("20m") == "20m"
+
+
+def test_installed_model_resolution_prefers_current_then_configured_default():
+    models = [
+        {"name": "hf.co/unsloth/Qwen3.6:Q4"},
+        {"model": "hermes-brain:latest"},
+        {"name": "HERMES-BRAIN:latest"},
+    ]
+    names = installed_model_names(models)
+
+    assert names == ["hf.co/unsloth/Qwen3.6:Q4", "hermes-brain:latest"]
+    assert resolve_installed_model("hermes-brain", names) == "hermes-brain:latest"
+    assert select_installed_model("missing", "hermes-brain", names) == "hermes-brain:latest"
+    assert select_installed_model("hf.co/unsloth/Qwen3.6:Q4", "hermes-brain", names) == names[0]
 
 
 @pytest.mark.asyncio

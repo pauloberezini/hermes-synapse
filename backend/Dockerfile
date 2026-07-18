@@ -6,13 +6,16 @@ ENV PYTHONPATH=/app
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# RHVoice and its Russian voices are distributed in Debian's non-free component.
+RUN sed -Ei 's/Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     ffmpeg \
     nodejs \
     npm \
+    rhvoice \
+    rhvoice-russian \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies directly

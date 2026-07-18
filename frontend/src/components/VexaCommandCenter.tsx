@@ -25,6 +25,15 @@ interface TtsStatus {
   browser_fallback: boolean;
 }
 
+interface SttStatus {
+  enabled: boolean;
+  dependency_available: boolean;
+  model: string;
+  loaded: boolean;
+  loading?: boolean;
+  last_error?: string | null;
+}
+
 interface VexaCommandCenterProps {
   agents: AgentModel[];
   messages: ChatMessage[];
@@ -67,6 +76,9 @@ const COPY = {
     browser: 'Системный женский',
     policy: 'Контроль рисков включён',
     privacy: 'Микрофон активен только при синем индикаторе',
+    secureContextRequired: 'Для микрофона нужен HTTPS или localhost',
+    recognitionReady: 'Распознавание готово',
+    recognitionLoading: 'Загружаю модель речи',
   },
   en: {
     title: 'VEXA',
@@ -96,6 +108,9 @@ const COPY = {
     browser: 'System female',
     policy: 'Risk controls enabled',
     privacy: 'The microphone is active only with the blue indicator',
+    secureContextRequired: 'Microphone requires HTTPS or localhost',
+    recognitionReady: 'Recognition ready',
+    recognitionLoading: 'Loading speech model',
   },
 } as const;
 
@@ -243,8 +258,10 @@ export function VexaCommandCenter({
   const [input, setInput] = useState('');
   const [conversationMode, setConversationMode] = useState(false);
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
+  const [sttStatus, setSttStatus] = useState<SttStatus | null>(null);
   const lastAutoListenRef = useRef('');
   const phase = phaseFor(isConnected, micState, isGenerating, isSpeaking);
+  const secureMicrophone = window.isSecureContext;
 
   const conversation = useMemo(() => {
     const user = [...messages].reverse().find(message => message.role === 'user');
@@ -263,14 +280,14 @@ export function VexaCommandCenter({
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/voice/tts/status')
-      .then(response => response.ok ? response.json() : Promise.reject(new Error('TTS status unavailable')))
-      .then(data => {
-        if (!cancelled) setTtsStatus(data);
-      })
-      .catch(() => {
-        if (!cancelled) setTtsStatus(null);
-      });
+    Promise.allSettled([
+      fetch('/api/voice/tts/status').then(response => response.ok ? response.json() : Promise.reject()),
+      fetch('/api/voice/status').then(response => response.ok ? response.json() : Promise.reject()),
+    ]).then(([tts, stt]) => {
+      if (cancelled) return;
+      setTtsStatus(tts.status === 'fulfilled' ? tts.value : null);
+      setSttStatus(stt.status === 'fulfilled' ? stt.value : null);
+    });
     return () => {
       cancelled = true;
     };
@@ -291,6 +308,10 @@ export function VexaCommandCenter({
   };
 
   const toggleConversation = () => {
+    if (!secureMicrophone) {
+      onVoiceToggle();
+      return;
+    }
     const next = !conversationMode;
     setConversationMode(next);
     lastAutoListenRef.current = conversation.answerKey;
@@ -300,6 +321,13 @@ export function VexaCommandCenter({
   const voiceName = ttsStatus?.available
     ? `${copy.local} · ${ttsStatus.active_provider || 'TTS'}${ttsStatus.voice ? ` · ${ttsStatus.voice}` : ''}`
     : copy.browser;
+  const recognitionName = !secureMicrophone
+    ? copy.secureContextRequired
+    : sttStatus?.loading
+      ? copy.recognitionLoading
+      : sttStatus?.enabled && sttStatus?.dependency_available
+        ? `${copy.recognitionReady} · ${sttStatus.model}`
+        : 'STT unavailable';
 
   return (
     <section className={`vexa-command-center is-${phase}`} aria-label={copy.subtitle}>
@@ -375,6 +403,7 @@ export function VexaCommandCenter({
           type="button"
           className={`vexa-conversation-toggle${conversationMode ? ' is-active' : ''}`}
           onClick={toggleConversation}
+          aria-disabled={!secureMicrophone}
           aria-pressed={conversationMode}
         >
           <Radio size={16} />
@@ -431,7 +460,7 @@ export function VexaCommandCenter({
 
       <footer className="vexa-footer">
         <span><i className={micState !== 'off' ? 'is-recording' : ''} /> {copy.privacy}</span>
-        <span>STT · faster-whisper</span>
+        <span title={sttStatus?.last_error || recognitionName}>STT · {recognitionName}</span>
       </footer>
     </section>
   );

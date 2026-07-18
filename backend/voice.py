@@ -1,5 +1,6 @@
 import os
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 
@@ -10,6 +11,8 @@ class VoiceTranscriptionError(RuntimeError):
 _model = None
 _model_lock = threading.Lock()
 _model_signature: Optional[tuple[str, str, str, Optional[str]]] = None
+_model_loading = False
+_model_error: Optional[str] = None
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
@@ -20,13 +23,14 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 
 def _voice_config() -> Dict[str, Any]:
+    default_download_root = str(Path(__file__).resolve().parent / "data" / "voice-models")
     return {
         "enabled": _env_bool("VOICE_STT_ENABLED", True),
         "model": os.getenv("VOICE_STT_MODEL", "small").strip() or "small",
         "device": os.getenv("VOICE_STT_DEVICE", "cpu").strip() or "cpu",
         "compute_type": os.getenv("VOICE_STT_COMPUTE_TYPE", "int8").strip() or "int8",
         "language": os.getenv("VOICE_STT_LANGUAGE", "ru").strip() or None,
-        "download_root": os.getenv("VOICE_STT_DOWNLOAD_ROOT", "").strip() or None,
+        "download_root": os.getenv("VOICE_STT_DOWNLOAD_ROOT", default_download_root).strip() or default_download_root,
         "beam_size": int(os.getenv("VOICE_STT_BEAM_SIZE", "5")),
         "vad_filter": _env_bool("VOICE_STT_VAD_FILTER", True),
     }
@@ -49,11 +53,14 @@ def get_voice_status() -> Dict[str, Any]:
         "compute_type": config["compute_type"],
         "language": config["language"] or "auto",
         "loaded": _model is not None,
+        "loading": _model_loading,
+        "last_error": _model_error,
+        "cache_persistent": bool(config["download_root"]),
     }
 
 
 def _get_model():
-    global _model, _model_signature
+    global _model, _model_signature, _model_error
 
     config = _voice_config()
     if not config["enabled"]:
@@ -82,11 +89,30 @@ def _get_model():
             "compute_type": config["compute_type"],
         }
         if config["download_root"]:
+            Path(config["download_root"]).mkdir(parents=True, exist_ok=True)
             kwargs["download_root"] = config["download_root"]
 
-        _model = WhisperModel(config["model"], **kwargs)
+        try:
+            _model = WhisperModel(config["model"], **kwargs)
+            _model_error = None
+        except Exception as exc:
+            _model_error = str(exc)[:500]
+            raise
         _model_signature = signature
         return _model
+
+
+def preload_voice_model() -> Dict[str, Any]:
+    global _model_loading, _model_error
+    _model_loading = True
+    try:
+        _get_model()
+        return get_voice_status()
+    except Exception as exc:
+        _model_error = str(exc)[:500]
+        raise VoiceTranscriptionError(f"Voice model preload failed: {exc}") from exc
+    finally:
+        _model_loading = False
 
 
 def transcribe_audio_file(audio_path: str, language: Optional[str] = None) -> Dict[str, Any]:

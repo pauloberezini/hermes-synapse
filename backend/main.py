@@ -115,6 +115,57 @@ logger = logging.getLogger("hermes.main")
 ACTIVE_CHAT_RUNS: dict[str, asyncio.Task] = {}
 
 
+async def _ensure_ollama_model_available(*, repair: bool) -> str:
+    """Validate the active local model and optionally repair stale persisted settings."""
+    from backend.ollama_client import (
+        OllamaClient,
+        installed_model_names,
+        is_ollama_provider,
+        resolve_installed_model,
+        select_installed_model,
+    )
+
+    if not is_ollama_provider(agent_instance.api_base, agent_instance.provider):
+        return agent_instance.model
+
+    models = await OllamaClient(
+        agent_instance.ollama_base_url,
+        timeout=min(agent_instance.request_timeout, 15),
+    ).list_models()
+    available = installed_model_names(models)
+    selected = resolve_installed_model(agent_instance.model, available)
+    if selected:
+        return selected
+    if not repair:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "ollama_model_not_installed",
+                "message": f"Ollama model '{agent_instance.model}' is not installed.",
+                "available_models": available,
+            },
+        )
+
+    selected = select_installed_model(
+        agent_instance.model,
+        os.getenv("LLM_MODEL", ""),
+        available,
+    )
+    if not selected:
+        raise RuntimeError("Ollama is reachable but has no installed models.")
+
+    stale_model = agent_instance.model
+    agent_instance.model = selected
+    from backend.database import save_app_settings
+    save_app_settings(agent_instance.get_runtime_config())
+    logger.warning(
+        "Repaired stale Ollama model setting: %s -> %s",
+        stale_model,
+        selected,
+    )
+    return selected
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
@@ -123,6 +174,22 @@ async def lifespan(app: FastAPI):
     
     from backend.rag import init_rag
     init_rag()
+
+    try:
+        await _ensure_ollama_model_available(repair=True)
+    except Exception as exc:
+        logger.error("Ollama startup model validation failed: %s", exc)
+
+    if os.getenv("VOICE_STT_PRELOAD", "false").lower() in {"1", "true", "yes", "on"}:
+        async def _preload_voice():
+            try:
+                from backend.voice import preload_voice_model
+                status = await asyncio.to_thread(preload_voice_model)
+                logger.info("Voice recognition ready: %s", status["model"])
+            except Exception as exc:
+                logger.warning("Voice recognition preload failed (will retry on demand): %s", exc)
+
+        asyncio.create_task(_preload_voice())
 
     if os.getenv("PROJECT_MEMORY_AUTO_INDEX", "true").lower() in {"1", "true", "yes", "on"}:
         async def _index_project_memory():
@@ -369,10 +436,52 @@ async def get_config():
 
 @app.post("/api/config")
 async def update_config(update: ConfigUpdate):
+    selected_model = update.model
+    prospective_provider = update.provider if update.provider is not None else agent_instance.provider
+    prospective_api_base = update.api_base if update.api_base is not None else agent_instance.api_base
+    from backend.ollama_client import (
+        OllamaClient,
+        installed_model_names,
+        is_ollama_provider,
+        resolve_installed_model,
+    )
+    if is_ollama_provider(prospective_api_base, prospective_provider) and (
+        update.model is not None
+        or update.provider is not None
+        or update.ollama_base_url is not None
+    ):
+        ollama_base_url = update.ollama_base_url or agent_instance.ollama_base_url
+        try:
+            available = installed_model_names(
+                await OllamaClient(
+                    ollama_base_url,
+                    timeout=min(agent_instance.request_timeout, 15),
+                ).list_models()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "ollama_unavailable",
+                    "message": f"Cannot validate the local model: {exc}",
+                },
+            ) from exc
+        requested_model = update.model or agent_instance.model
+        selected_model = resolve_installed_model(requested_model, available)
+        if selected_model is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "ollama_model_not_installed",
+                    "message": f"Ollama model '{requested_model}' is not installed.",
+                    "available_models": available,
+                },
+            )
+
     if update.system_prompt is not None:
         agent_instance.update_system_prompt(update.system_prompt)
-    if update.model is not None:
-        agent_instance.model = update.model
+    if selected_model is not None:
+        agent_instance.model = selected_model
     agent_instance.update_runtime_config(
         provider=update.provider,
         api_base=update.api_base,

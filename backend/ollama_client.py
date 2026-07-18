@@ -64,6 +64,43 @@ def normalize_keep_alive(value: Any) -> Any:
     return value
 
 
+def installed_model_names(models: List[Dict[str, Any]]) -> List[str]:
+    """Return unique Ollama model names while preserving server order."""
+    names: List[str] = []
+    seen: set[str] = set()
+    for item in models:
+        name = str(item.get("name") or item.get("model") or "").strip()
+        if name and name.lower() not in seen:
+            names.append(name)
+            seen.add(name.lower())
+    return names
+
+
+def resolve_installed_model(requested: str, available: List[str]) -> Optional[str]:
+    """Resolve exact names and Ollama's implicit ``:latest`` alias."""
+    candidate = (requested or "").strip()
+    if not candidate:
+        return None
+
+    by_lower = {name.lower(): name for name in available}
+    exact = by_lower.get(candidate.lower())
+    if exact:
+        return exact
+
+    if ":" not in candidate:
+        return by_lower.get(f"{candidate}:latest".lower())
+    return None
+
+
+def select_installed_model(current: str, preferred: str, available: List[str]) -> Optional[str]:
+    """Keep the current model when possible, otherwise use the configured default."""
+    return (
+        resolve_installed_model(current, available)
+        or resolve_installed_model(preferred, available)
+        or (available[0] if available else None)
+    )
+
+
 def _error_message(response: httpx.Response) -> str:
     try:
         payload = response.json()

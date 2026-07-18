@@ -490,6 +490,14 @@ export default function App() {
   }, []);
 
   const startVoiceRecording = useCallback(async () => {
+    if (!window.isSecureContext) {
+      alert(
+        appSettingsRef.current.language === 'ru'
+          ? 'Браузер блокирует микрофон на обычном HTTP. Откройте Vexa через HTTPS или через http://localhost:9119 по SSH-туннелю.'
+          : 'The browser blocks microphone access over plain HTTP. Open Vexa over HTTPS or through http://localhost:9119 using an SSH tunnel.'
+      );
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       alert('Voice recording is not supported by this browser.');
       return;

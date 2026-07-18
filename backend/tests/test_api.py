@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.agent import agent_instance
 from backend.auth import active_sessions
+from unittest.mock import AsyncMock, patch
 
 client = TestClient(app)
 client.headers = {"Authorization": "Bearer test-token"}
@@ -27,28 +28,53 @@ def test_get_config():
 def test_update_config():
     original_prompt = agent_instance.system_prompt
     original_model = agent_instance.model
+    original_provider = agent_instance.provider
     
     try:
-        response = client.post(
-            "/api/config",
-            json={
-                "system_prompt": "Новый тестовый промпт",
-                "model": "openai/gpt-4o"
-            }
-        )
+        with patch(
+            "backend.ollama_client.OllamaClient.list_models",
+            new=AsyncMock(return_value=[{"name": "qwen-test:latest"}]),
+        ):
+            response = client.post(
+                "/api/config",
+                json={
+                    "system_prompt": "Новый тестовый промпт",
+                    "model": "qwen-test",
+                    "provider": "ollama",
+                }
+            )
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
         assert data["config"]["system_prompt"] == "Новый тестовый промпт"
-        assert data["config"]["model"] == "openai/gpt-4o"
+        assert data["config"]["model"] == "qwen-test:latest"
         
         # Verify in agent
         assert agent_instance.system_prompt == "Новый тестовый промпт"
-        assert agent_instance.model == "openai/gpt-4o"
+        assert agent_instance.model == "qwen-test:latest"
     finally:
         # Restore defaults
         agent_instance.system_prompt = original_prompt
         agent_instance.model = original_model
+        agent_instance.provider = original_provider
+
+
+def test_update_config_rejects_missing_local_model():
+    original_model = agent_instance.model
+    original_provider = agent_instance.provider
+    try:
+        with patch(
+            "backend.ollama_client.OllamaClient.list_models",
+            new=AsyncMock(return_value=[{"name": "installed:latest"}]),
+        ):
+            response = client.post("/api/config", json={"model": "missing-model", "provider": "ollama"})
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "ollama_model_not_installed"
+        assert agent_instance.model == original_model
+    finally:
+        agent_instance.model = original_model
+        agent_instance.provider = original_provider
 
 def test_upload_and_list_files():
     import io
@@ -133,4 +159,3 @@ def test_auth_flow():
             os.environ["TELEGRAM_CHAT_ID"] = original_chat_id
         else:
             os.environ.pop("TELEGRAM_CHAT_ID", None)
-

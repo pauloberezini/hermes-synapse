@@ -165,7 +165,7 @@ OLLAMA_API_KEY=
 LLM_MODEL=hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
 OLLAMA_NUM_CTX=262144
 OLLAMA_KEEP_ALIVE=-1
-OLLAMA_THINK=true
+OLLAMA_THINK=false
 OLLAMA_FLASH_ATTENTION=1
 OLLAMA_KV_CACHE_TYPE=q8_0
 ```
@@ -194,13 +194,18 @@ When creating or editing sub-agents on the visual canvas dashboard:
 4. Voice messages are supported when local STT is enabled. Send a Telegram voice message and Jarvis will transcribe it locally, echo the recognized text, and process it like a normal command.
 
 ### 🎙️ Local Voice Assistant
-Hermes uses `faster-whisper` for free local speech-to-text. The web dashboard records audio with the browser `MediaRecorder` API and sends it to `/api/voice/transcribe`; Telegram voice notes use the same backend pipeline.
+Hermes uses `faster-whisper` for free local speech-to-text. The web dashboard records audio with the browser `MediaRecorder` API and sends it to `/api/voice/transcribe`; Telegram voice notes use the same backend pipeline. Browsers expose microphones only in a secure context, so remote web voice input requires HTTPS; `http://localhost` also works for an SSH-tunnel connection.
 
 Recommended defaults:
 * `VOICE_STT_MODEL=small`
 * `VOICE_STT_DEVICE=cpu`
 * `VOICE_STT_COMPUTE_TYPE=int8`
 * `VOICE_STT_LANGUAGE=ru`
+* `VOICE_STT_DOWNLOAD_ROOT=/app/backend/data/voice-models`
+* `VOICE_STT_PRELOAD=true`
+* `VOICE_TTS_ENABLED=true`
+* `VOICE_TTS_PROVIDER=rhvoice`
+* `VOICE_TTS_VOICE=anna`
 
 The first transcription downloads the selected Whisper model. Rebuild the backend image after changing dependencies:
 ```bash
