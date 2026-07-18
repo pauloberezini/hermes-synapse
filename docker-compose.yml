@@ -33,6 +33,9 @@ services:
       - PROJECT_WORKSPACE_ROOT=/workspace
       - PROJECT_MEMORY_AUTO_INDEX=${PROJECT_MEMORY_AUTO_INDEX:-true}
       - AUTONOMY_PROJECT_CONTEXT=${AUTONOMY_PROJECT_CONTEXT:-true}
+      - AUTONOMY_INSTALL_ENABLED=${AUTONOMY_INSTALL_ENABLED:-false}
+      - AUTONOMY_CAPABILITY_ROOT=/app/backend/data/capabilities
+      - AUTONOMY_INSTALL_TIMEOUT_SECONDS=${AUTONOMY_INSTALL_TIMEOUT_SECONDS:-300}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

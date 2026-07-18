@@ -1057,8 +1057,54 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "diagnose_capabilities",
+            "description": "Проверяет доступные локальные инструменты и безопасно сообщает, каких возможностей не хватает. Ничего не устанавливает.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_capability",
+            "description": "Создаёт проверяемый запрос на установку возможности из внутреннего allowlist. Установка не начнётся без подтверждения владельца.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "capability_id": {
+                        "type": "string",
+                        "enum": ["visual_validation"],
+                        "description": "Идентификатор зарегистрированной возможности."
+                    }
+                },
+                "required": ["capability_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_mcp_connection",
+            "description": "Создаёт безопасное предложение подключения OpenAPI-сервиса через MCP. Подключение требует двух подтверждений владельца; секрет передаётся только ссылкой на переменную окружения.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Короткое имя подключения: буквы a-z, цифры, _ или -."},
+                    "url": {"type": "string", "description": "HTTPS OpenAPI URL; HTTP разрешён только в частной сети."},
+                    "auth_env_var": {
+                        "type": "string",
+                        "enum": ["", "STATIC_BEARER_TOKEN"],
+                        "description": "Имя разрешённой переменной окружения с bearer token или пустая строка."
+                    }
+                },
+                "required": ["name", "url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "execute_command",
-            "description": "Выполняет команду оболочки (shell command) в локальной системе и возвращает её stdout/stderr. Используйте для выполнения curl-запросов к внешним API, запуска python-скриптов или системных задач.",
+            "description": "Аварийный запуск команды оболочки класса R4. Используйте только когда зарегистрированные инструменты неприменимы; требует двух подтверждений владельца.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1654,6 +1700,35 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
 
     if name == "get_system_stats":
         return get_system_stats()
+
+    elif name == "diagnose_capabilities":
+        from backend.autonomy import doctor_capabilities
+        return json.dumps(doctor_capabilities(), ensure_ascii=False)
+
+    elif name == "request_capability":
+        from backend.autonomy import propose_capability
+        try:
+            return json.dumps(
+                propose_capability(arguments.get("capability_id", "")),
+                ensure_ascii=False,
+            )
+        except KeyError:
+            return json.dumps({"error": "Unknown or unreviewed capability"}, ensure_ascii=False)
+
+    elif name == "request_mcp_connection":
+        from backend.mcp_governance import build_openapi_config, create_connection_proposal
+        try:
+            config = build_openapi_config(
+                arguments.get("name", ""),
+                arguments.get("url", ""),
+                arguments.get("auth_env_var", ""),
+            )
+            return json.dumps(
+                create_connection_proposal(config["name"], config),
+                ensure_ascii=False,
+            )
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
     elif name == "get_weather":
         return get_weather(

@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     ffmpeg \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies directly
@@ -36,6 +38,7 @@ RUN pip install --no-cache-dir \
     "google-auth-httplib2>=0.2.0" \
     "google-api-python-client>=2.95.0" \
     "todoist-api-python>=2.1.3" \
+    "pytest==8.3.5" \
     "faster-whisper>=1.1.0"
 
 

@@ -34,6 +34,9 @@ const COPY = {
     stopConfirm: 'Немедленно остановить новые действия и активные запуски?', rejectConfirm: 'Отклонить эту задачу?', r4Confirm: 'Это действие класса R4. Подтвердить текущий этап?',
     autonomyTitle: 'Контур автономности', indexed: 'Файлов в памяти', capabilities: 'Инструменты', plans: 'Активные планы',
     proposals: 'На проверке', reindex: 'Обновить память', neverIndexed: 'Индекс ещё не создан', fresh: 'Обновлено',
+    broker: 'Брокер возможностей', brokerHint: 'Только проверенные рецепты, изолированная установка и approval владельца',
+    available: 'Готово', missing: 'Не установлено', request: 'Запросить', requested: 'Запрошено',
+    managed: 'Управляемый рецепт', noInstall: 'Ручная настройка', installerOff: 'Исполнение отключено политикой',
   },
   en: {
     title: 'Processes & Control', subtitle: 'Tasks, approvals, limits and execution evidence',
@@ -48,6 +51,9 @@ const COPY = {
     stopConfirm: 'Immediately stop new actions and active runs?', rejectConfirm: 'Reject this task?', r4Confirm: 'This is an R4 action. Confirm the current stage?',
     autonomyTitle: 'Autonomy Runtime', indexed: 'Files in memory', capabilities: 'Capabilities', plans: 'Active plans',
     proposals: 'Under review', reindex: 'Refresh memory', neverIndexed: 'Index has not been created', fresh: 'Updated',
+    broker: 'Capability broker', brokerHint: 'Reviewed recipes, isolated installation and explicit owner approval',
+    available: 'Ready', missing: 'Not installed', request: 'Request', requested: 'Requested',
+    managed: 'Managed recipe', noInstall: 'Manual setup', installerOff: 'Execution disabled by policy',
   },
 } as const;
 
@@ -164,6 +170,24 @@ export function ProcessesTab({ language }: Props) {
     }
   };
 
+  const requestCapability = async (capabilityId: string) => {
+    setBusy(`capability-${capabilityId}`);
+    try {
+      const response = await fetch(`/api/autonomy/capabilities/${encodeURIComponent(capabilityId)}/propose`, {
+        method: 'POST',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      await load(true);
+      const taskId = payload.control_task?.id || payload.control_task_id;
+      if (taskId) setSelectedId(taskId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy('');
+    }
+  };
+
   if (loading && !summary) return <div className="control-loading"><RefreshCw className="spin-slow" size={20} />Control Plane</div>;
 
   const stopped = Boolean(summary?.state.kill_switch);
@@ -202,6 +226,38 @@ export function ProcessesTab({ language }: Props) {
           <div><Wrench size={16} /><span>{copy.capabilities}</span><strong>{autonomy ? `${autonomy.capabilities.ready}/${autonomy.capabilities.total}` : '—'}</strong><small>{autonomy?.capabilities.status || '—'}</small></div>
           <div><ListChecks size={16} /><span>{copy.plans}</span><strong>{autonomy?.plans.filter(plan => plan.status === 'running').length ?? 0}</strong><small>{autonomy?.plans[0]?.goal || '—'}</small></div>
           <div><ShieldCheck size={16} /><span>{copy.proposals}</span><strong>{autonomy?.proposals.filter(item => item.status === 'awaiting_approval').length ?? 0}</strong><small>{autonomy?.proposals[0]?.capability_id || '—'}</small></div>
+        </div>
+        <div className="capability-broker">
+          <div className="capability-broker-head">
+            <div><Wrench size={16} /><span><strong>{copy.broker}</strong><small>{copy.brokerHint}</small></span></div>
+          </div>
+          <div className="capability-list">
+            {autonomy?.capabilities.capabilities.map(capability => {
+              const proposal = autonomy.proposals.find(item =>
+                item.capability_id === capability.id
+                && ['awaiting_approval', 'approved', 'installing'].includes(item.status)
+              );
+              const recipe = autonomy.proposals.find(item => item.capability_id === capability.id)?.plan?.recipe;
+              const canRequest = capability.status !== 'ready' && capability.install_available && !proposal;
+              return <div className="capability-row" key={capability.id}>
+                <span className={`capability-health is-${capability.status}`}><CircleDot size={13} /></span>
+                <span className="capability-main">
+                  <strong>{capability.label}</strong>
+                  <small>{capability.active_provider || recipe?.package || (capability.install_available ? copy.managed : copy.noInstall)}
+                    {recipe?.version ? ` ${recipe.version}` : ''}</small>
+                </span>
+                <span className={`capability-state is-${capability.status}`}>
+                  {proposal ? `${copy.requested}: ${proposal.status}` : capability.status === 'ready' ? copy.available : copy.missing}
+                </span>
+                {canRequest && <button
+                  type="button"
+                  className="capability-request"
+                  disabled={Boolean(busy)}
+                  onClick={() => void requestCapability(capability.id)}
+                ><Wrench size={13} />{copy.request}</button>}
+              </div>;
+            })}
+          </div>
         </div>
       </section>
 

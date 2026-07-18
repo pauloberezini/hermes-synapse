@@ -247,7 +247,17 @@ export interface AutonomySummary {
     status: string;
     risk_class: string;
     control_task_id?: string | null;
+    plan?: {
+      recipe?: {
+        package?: string;
+        version?: string;
+        license?: string;
+      };
+      enabled?: boolean;
+      isolation?: Record<string, boolean>;
+    };
     created_at: string;
+    updated_at?: string;
   }>;
 }
 

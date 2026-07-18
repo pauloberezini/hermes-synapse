@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, RefreshCw, Terminal, CheckCircle2, XCircle, ChevronDown, ChevronRight, Globe, Code } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Terminal, CheckCircle2, ChevronDown, ChevronRight, Globe } from 'lucide-react';
 import { styles } from '../styles';
 
 interface MCPServer {
@@ -18,51 +18,6 @@ const AUTH = (): Record<string, string> => {
 
 const API = '/api/mcp/servers';
 
-function EnvEditor({ value, onChange }: {
-  value: Record<string, string>;
-  onChange: (v: Record<string, string>) => void;
-}) {
-  const entries = Object.entries(value);
-  const set = (idx: number, k: string, v: string) => {
-    const next = [...entries];
-    next[idx] = [k, v];
-    onChange(Object.fromEntries(next.filter(([key]) => key)));
-  };
-  const remove = (idx: number) => {
-    const next = entries.filter((_, i) => i !== idx);
-    onChange(Object.fromEntries(next));
-  };
-  const add = () => onChange({ ...value, '': '' });
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      {entries.map(([k, v], i) => (
-        <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <input
-            className="form-input" placeholder="KEY" value={k}
-            onChange={e => set(i, e.target.value, v)}
-            style={{ flex: '0 0 140px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}
-          />
-          <span style={{ color: 'var(--text-dim)' }}>=</span>
-          <input
-            className="form-input" placeholder="value" value={v}
-            onChange={e => set(i, k, e.target.value)}
-            style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}
-          />
-          <button type="button" onClick={() => remove(i)}
-            style={{ background: 'none', border: 'none', color: 'rgba(239,68,68,0.6)', cursor: 'pointer', padding: '4px' }}>
-            <XCircle size={14} />
-          </button>
-        </div>
-      ))}
-      <button type="button" onClick={add}
-        style={{ alignSelf: 'flex-start', background: 'none', border: '1px dashed rgba(255,255,255,0.15)', borderRadius: '6px', color: 'var(--text-dim)', padding: '4px 10px', fontSize: '0.75rem', cursor: 'pointer' }}>
-        + Add env var
-      </button>
-    </div>
-  );
-}
-
 export function MCPTab() {
   const [servers, setServers] = useState<MCPServer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,22 +25,9 @@ export function MCPTab() {
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
-  // General Form state
   const [name, setName] = useState('');
-  const [serverType, setServerType] = useState<'stdio' | 'openapi'>('stdio');
-
-  // Stdio transport state
-  const [command, setCommand] = useState('npx');
-  const [argsStr, setArgsStr] = useState('');
-  const [env, setEnv] = useState<Record<string, string>>({});
-
-  // OpenAPI transport state
   const [openapiUrl, setOpenapiUrl] = useState('');
-  const [authType, setAuthType] = useState<'none' | 'oauth2' | 'static'>('none');
-  const [authTokenUrl, setAuthTokenUrl] = useState('');
-  const [authUsername, setAuthUsername] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [staticToken, setStaticToken] = useState('');
+  const [authType, setAuthType] = useState<'none' | 'static'>('none');
 
   const load = () => {
     setLoading(true);
@@ -104,53 +46,34 @@ export function MCPTab() {
 
     setSaving(true);
     try {
-      let finalCommand = command;
-      let finalArgs: string[] = [];
-      let finalEnv: Record<string, string> = {};
-
-      if (serverType === 'openapi') {
-        if (!openapiUrl.trim()) {
-          alert('Please enter the OpenAPI spec JSON URL.');
-          setSaving(false);
-          return;
-        }
-        finalCommand = 'python3';
-        finalArgs = ['/app/backend/mcp_openapi_proxy.py'];
-        finalEnv = {
-          OPENAPI_URL: openapiUrl.trim(),
-        };
-
-        if (authType === 'oauth2') {
-          if (authTokenUrl) finalEnv.AUTH_TOKEN_URL = authTokenUrl.trim();
-          if (authUsername) finalEnv.AUTH_USERNAME = authUsername.trim();
-          if (authPassword) finalEnv.AUTH_PASSWORD = authPassword.trim();
-        } else if (authType === 'static') {
-          if (staticToken) finalEnv.STATIC_BEARER_TOKEN = staticToken.trim();
-        }
-      } else {
-        if (!command.trim()) {
-          alert('Please enter a command.');
-          setSaving(false);
-          return;
-        }
-        finalArgs = argsStr.split(/\s+/).filter(Boolean);
-        finalEnv = env;
+      if (!openapiUrl.trim()) {
+        alert('Please enter the OpenAPI spec JSON URL.');
+        setSaving(false);
+        return;
       }
+      const finalEnv: Record<string, string> = { OPENAPI_URL: openapiUrl.trim() };
+      if (authType === 'static') finalEnv.STATIC_BEARER_TOKEN = '${STATIC_BEARER_TOKEN}';
 
       const res = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...AUTH() },
-        body: JSON.stringify({ name: name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''), command: finalCommand, args: finalArgs, env: finalEnv }),
+        body: JSON.stringify({
+          name: name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+          command: 'python3',
+          args: ['/app/backend/mcp_openapi_proxy.py'],
+          env: finalEnv,
+        }),
       });
       const data = await res.json();
-      if (data.status === 'success') {
-        // Reset states
-        setName(''); setCommand('npx'); setArgsStr(''); setEnv({});
-        setOpenapiUrl(''); setAuthType('none'); setAuthTokenUrl(''); setAuthUsername(''); setAuthPassword(''); setStaticToken('');
+      if (data.status === 'awaiting_approval') {
+        setName('');
+        setOpenapiUrl('');
+        setAuthType('none');
         setShowForm(false);
+        alert(`Validated R4 connection request ${data.task_id}. Approve it twice in Processes & Control.`);
         load();
       } else {
-        alert(data.warning || 'Config saved but server failed to connect — check logs.');
+        alert(data.detail || data.warning || 'Connection proposal was not created.');
         load();
       }
     } catch (e) {
@@ -195,34 +118,9 @@ export function MCPTab() {
           <form onSubmit={handleSave} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }} className="glass-panel">
             <h3 style={{ fontSize: '1rem', color: '#fff', fontWeight: 600, margin: 0 }} className="glow-text-cyan">NEW MCP SERVER</h3>
 
-            {/* Server Type Tabs */}
-            <div style={{ display: 'flex', gap: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
-              <button
-                type="button"
-                onClick={() => setServerType('stdio')}
-                style={{
-                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  padding: '8px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '0.8rem',
-                  fontWeight: 600, background: serverType === 'stdio' ? 'rgba(0,240,255,0.15)' : 'rgba(255,255,255,0.02)',
-                  color: serverType === 'stdio' ? '#00f0ff' : 'var(--text-dim)', transition: 'all 0.2s'
-                }}
-              >
-                <Code size={14} />
-                <span>Local Command (Stdio)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setServerType('openapi')}
-                style={{
-                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  padding: '8px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '0.8rem',
-                  fontWeight: 600, background: serverType === 'openapi' ? 'rgba(0,240,255,0.15)' : 'rgba(255,255,255,0.02)',
-                  color: serverType === 'openapi' ? '#00f0ff' : 'var(--text-dim)', transition: 'all 0.2s'
-                }}
-              >
-                <Globe size={14} />
-                <span>Remote REST API (OpenAPI)</span>
-              </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', border: '1px solid rgba(0,240,255,0.16)', borderRadius: '6px', color: '#75d9ef', background: 'rgba(0,140,190,0.06)', fontSize: '0.78rem', fontWeight: 600 }}>
+              <Globe size={14} />
+              <span>Governed OpenAPI Bridge · R4</span>
             </div>
 
             {/* Server name */}
@@ -231,72 +129,22 @@ export function MCPTab() {
               <input className="form-input" value={name} onChange={e => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} placeholder="e.g. filesystem or market_data" required />
             </div>
 
-            {serverType === 'stdio' ? (
-              /* Stdio Command Fields */
-              <>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Command</label>
-                  <input className="form-input" value={command} onChange={e => setCommand(e.target.value)} placeholder="e.g. npx" required />
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>OpenAPI Specification URL</label>
+              <input className="form-input" value={openapiUrl} onChange={e => setOpenapiUrl(e.target.value)} placeholder="https://service.example/openapi.json" required />
+            </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Args (space-separated)</label>
-                  <input className="form-input" value={argsStr} onChange={e => setArgsStr(e.target.value)} placeholder="e.g. -y @modelcontextprotocol/server-filesystem /data" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }} />
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Environment variables</label>
-                  <EnvEditor value={env} onChange={setEnv} />
-                </div>
-              </>
-            ) : (
-              /* OpenAPI REST Fields */
-              <>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>OpenAPI Specification URL (openapi.json or swagger.json)</label>
-                  <input className="form-input" value={openapiUrl} onChange={e => setOpenapiUrl(e.target.value)} placeholder="e.g. https://mcp-antonbustrov.waw0.amvera.tech/openapi.json" required />
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Authentication Method</label>
-                  <select
-                    className="form-input"
-                    value={authType}
-                    onChange={e => setAuthType(e.target.value as any)}
-                  >
-                    <option value="none">No authentication</option>
-                    <option value="oauth2">OAuth2 Password Grant (username/password)</option>
-                    <option value="static">Static Bearer Token (API Key / JWT)</option>
-                  </select>
-                </div>
-
-                {authType === 'oauth2' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                      <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Token Endpoint URL</label>
-                      <input className="form-input" value={authTokenUrl} onChange={e => setAuthTokenUrl(e.target.value)} placeholder="e.g. https://mcp-antonbustrov.waw0.amvera.tech/token" />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Username</label>
-                        <input className="form-input" value={authUsername} onChange={e => setAuthUsername(e.target.value)} placeholder="user" />
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Password</label>
-                        <input type="password" className="form-input" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="••••••••" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {authType === 'static' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Static Bearer Token</label>
-                    <input type="password" className="form-input" value={staticToken} onChange={e => setStaticToken(e.target.value)} placeholder="ey..." />
-                  </div>
-                )}
-              </>
-            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Authentication</label>
+              <select
+                className="form-input"
+                value={authType}
+                onChange={e => setAuthType(e.target.value as 'none' | 'static')}
+              >
+                <option value="none">No authentication</option>
+                <option value="static">STATIC_BEARER_TOKEN environment reference</option>
+              </select>
+            </div>
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
               <button type="submit" className="btn-primary" disabled={saving}>
@@ -309,26 +157,6 @@ export function MCPTab() {
               </button>
             </div>
 
-            {/* Quick templates (only for stdio mode) */}
-            {serverType === 'stdio' && (
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
-                <p style={{ fontSize: '0.72rem', color: 'var(--text-dim)', marginBottom: '8px', fontWeight: 600 }}>QUICK TEMPLATES</p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {[
-                    { name: 'filesystem', command: 'npx', args: '-y @modelcontextprotocol/server-filesystem /data' },
-                    { name: 'brave-search', command: 'npx', args: '-y @modelcontextprotocol/server-brave-search' },
-                    { name: 'github', command: 'npx', args: '-y @modelcontextprotocol/server-github' },
-                    { name: 'puppeteer', command: 'npx', args: '-y @modelcontextprotocol/server-puppeteer' },
-                  ].map(t => (
-                    <button key={t.name} type="button"
-                      onClick={() => { setName(t.name); setCommand(t.command); setArgsStr(t.args); }}
-                      style={{ padding: '4px 12px', borderRadius: '16px', border: '1px solid rgba(0,240,255,0.2)', background: 'transparent', color: 'rgba(0,240,255,0.7)', fontSize: '0.72rem', cursor: 'pointer' }}>
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </form>
         )}
 
@@ -445,7 +273,7 @@ export function MCPTab() {
         {/* Docs hint */}
         <div style={{ padding: '14px 16px', borderRadius: '10px', background: 'rgba(0,240,255,0.04)', border: '1px solid rgba(0,240,255,0.1)' }}>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
-            💡 <strong style={{ color: 'var(--text-muted)' }}>Choosing Server Type:</strong> Use <strong style={{ color: 'var(--text-muted)' }}>Local Command (Stdio)</strong> for local MCP servers (npx, python scripts). Use <strong style={{ color: 'var(--text-muted)' }}>Remote REST API (OpenAPI)</strong> to dynamically connect any FastAPI / Swagger service — simply paste the URL and login credentials if auth is required.
+            <strong style={{ color: 'var(--text-muted)' }}>Governed connection:</strong> OpenAPI bridges are validated first and activated only after two explicit approvals in Processes &amp; Control.
           </p>
         </div>
       </div>

@@ -20,6 +20,7 @@ OPEN_STATUSES = ("queued", "running", "awaiting_approval", "approved", "blocked"
 
 TOOL_RISKS = {
     "get_system_stats": "R0",
+    "diagnose_capabilities": "R0",
     "get_current_time_israel": "R0",
     "get_weather": "R0",
     "get_calendar_events": "R0",
@@ -38,6 +39,8 @@ TOOL_RISKS = {
     "set_recurring_reminder": "R2",
     "add_price_alert": "R2",
     "call_subagent": "R2",
+    "request_capability": "R2",
+    "request_mcp_connection": "R2",
     "add_calendar_event": "R3",
     "add_todoist_task": "R3",
     "create_subagent": "R3",

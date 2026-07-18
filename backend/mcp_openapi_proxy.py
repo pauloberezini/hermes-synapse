@@ -2,6 +2,9 @@
 import sys
 import os
 import json
+import ipaddress
+import re
+import socket
 import time
 import urllib.request
 import urllib.parse
@@ -24,6 +27,54 @@ token = ""
 token_expiry = 0
 openapi_spec = {}
 tools_map = {} # tool_name -> spec info
+MAX_SPEC_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_TOOLS = 128
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(newurl, code, "Redirects are disabled", headers, fp)
+
+
+SAFE_OPENER = urllib.request.build_opener(NoRedirectHandler())
+
+
+def _origin(url):
+    parsed = urllib.parse.urlparse(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
+
+
+def validate_outbound_url(url, allowed_origin=None):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Only absolute HTTP(S) URLs are allowed")
+    if parsed.username or parsed.password:
+        raise ValueError("Embedded URL credentials are forbidden")
+    if allowed_origin and _origin(url) != allowed_origin:
+        raise ValueError("OpenAPI server origin differs from the approved specification origin")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    for family, _, _, _, sockaddr in socket.getaddrinfo(parsed.hostname, port):
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        address = ipaddress.ip_address(sockaddr[0])
+        if address.is_link_local or address.is_multicast or address.is_unspecified:
+            raise ValueError("Target resolves to a blocked network range")
+    return url
+
+
+def safe_urlopen(request, timeout, allowed_origin=None):
+    url = request.full_url if isinstance(request, urllib.request.Request) else request
+    validate_outbound_url(url, allowed_origin=allowed_origin)
+    return SAFE_OPENER.open(request, timeout=timeout)
+
+
+def read_limited(response, limit):
+    payload = response.read(limit + 1)
+    if len(payload) > limit:
+        raise ValueError("Remote response exceeds the configured size limit")
+    return payload
 
 def get_token():
     global token, token_expiry
@@ -51,8 +102,8 @@ def get_token():
         req.add_header("accept", "application/json")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
         
-        with urllib.request.urlopen(req, timeout=10) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
+        with safe_urlopen(req, timeout=10, allowed_origin=_origin(AUTH_TOKEN_URL)) as response:
+            res_data = json.loads(read_limited(response, 512 * 1024).decode("utf-8"))
             token = res_data.get("access_token")
             # Default to 15 min expiry if not specified
             expires_in = res_data.get("expires_in", 900)
@@ -67,8 +118,8 @@ def load_openapi_spec():
     global openapi_spec
     log(f"Loading OpenAPI specification from {OPENAPI_URL}...")
     try:
-        with urllib.request.urlopen(OPENAPI_URL, timeout=15) as response:
-            openapi_spec = json.loads(response.read().decode("utf-8"))
+        with safe_urlopen(OPENAPI_URL, timeout=15, allowed_origin=_origin(OPENAPI_URL)) as response:
+            openapi_spec = json.loads(read_limited(response, MAX_SPEC_BYTES).decode("utf-8"))
         log("OpenAPI specification loaded successfully.")
         parse_tools()
     except Exception as e:
@@ -78,8 +129,16 @@ def parse_tools():
     global tools_map
     paths = openapi_spec.get("paths", {})
     for path, methods in paths.items():
+        if len(tools_map) >= MAX_TOOLS:
+            break
+        if not isinstance(path, str) or not path.startswith("/") or not isinstance(methods, dict):
+            continue
         for method, details in methods.items():
+            if len(tools_map) >= MAX_TOOLS:
+                break
             if method.lower() not in ("get", "post", "put", "delete"):
+                continue
+            if not isinstance(details, dict):
                 continue
                 
             op_id = details.get("operationId")
@@ -87,10 +146,15 @@ def parse_tools():
                 # Generate unique operationId from path and method
                 clean_path = path.replace("/", "_").replace("{", "").replace("}", "")
                 op_id = f"{method.lower()}{clean_path}"
+            op_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(op_id))[:64]
+            if not op_id or op_id in tools_map:
+                continue
                 
             summary = details.get("summary", "")
             description = details.get("description", "")
             doc_string = f"{summary}\n\n{description}" if summary else description
+            doc_string = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", str(doc_string))
+            doc_string = f"[Untrusted remote API description] {doc_string}".strip()
             
             # Map parameters into schema
             parameters = details.get("parameters", [])
@@ -151,7 +215,7 @@ def call_api(tool_name, arguments):
     # Replace path parameters
     url_path = path
     for k, v in path_args.items():
-        url_path = url_path.replace(f"{{{k}}}", urllib.parse.quote(v))
+        url_path = url_path.replace(f"{{{k}}}", urllib.parse.quote(v, safe=""))
         
     # Build complete URL
     server_url = openapi_spec.get("servers", [{}])[0].get("url")
@@ -160,7 +224,8 @@ def call_api(tool_name, arguments):
         parsed = urllib.parse.urlparse(OPENAPI_URL)
         server_url = f"{parsed.scheme}://{parsed.netloc}"
         
-    full_url = f"{server_url.rstrip('/')}{url_path}"
+    approved_origin = _origin(OPENAPI_URL)
+    full_url = f"{server_url.rstrip('/')}/{url_path.lstrip('/')}"
     if query_args:
         full_url += f"?{urllib.parse.urlencode(query_args)}"
         
@@ -176,8 +241,8 @@ def call_api(tool_name, arguments):
             if t:
                 req.add_header("Authorization", f"Bearer {t}")
                 
-            with urllib.request.urlopen(req, timeout=30) as response:
-                content = response.read().decode("utf-8")
+            with safe_urlopen(req, timeout=30, allowed_origin=approved_origin) as response:
+                content = read_limited(response, MAX_RESPONSE_BYTES).decode("utf-8")
                 return content
         except urllib.error.HTTPError as e:
             if e.code == 401 and retry == 0 and AUTH_USERNAME:

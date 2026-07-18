@@ -6,6 +6,7 @@ export const dictionaries: Record<Language, Dictionary> = {
   en: {
     appSubtitle: 'AI office control console',
     navChat: 'Chat',
+    navVexa: 'Vexa Voice',
     navOffice: 'AI Office',
     navProcesses: 'Processes',
     navAgents: 'Agent Admin',
@@ -123,6 +124,7 @@ export const dictionaries: Record<Language, Dictionary> = {
   ru: {
     appSubtitle: 'Консоль управления ИИ-офисом',
     navChat: 'Чат',
+    navVexa: 'Голос Vexa',
     navOffice: 'ИИ-офис',
     navProcesses: 'Процессы',
     navAgents: 'Админка агентов',

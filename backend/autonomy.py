@@ -92,16 +92,16 @@ CAPABILITY_REGISTRY: dict[str, dict[str, Any]] = {
         "label": "Browser visual validation",
         "required": False,
         "providers": [
+            {"id": "playwright-managed", "managed_capability": "visual_validation"},
             {"id": "playwright", "command": "playwright", "probe": ["playwright", "--version"]},
             {"id": "chromium", "command": "chromium", "probe": ["chromium", "--version"]},
             {"id": "google-chrome", "command": "google-chrome", "probe": ["google-chrome", "--version"]},
         ],
         "install": {
-            "mode": "project",
-            "ecosystem": "npm",
-            "package": "@playwright/test",
+            "mode": "managed",
+            "recipe": "visual_validation",
             "risk_class": "R3",
-            "notes": "Install only with an exact version, disabled lifecycle scripts and owner approval.",
+            "notes": "Exact reviewed recipe, isolated prefix, disabled lifecycle scripts and owner approval.",
         },
     },
     "containers": {
@@ -507,6 +507,13 @@ def _probe_provider(provider: dict[str, Any]) -> dict[str, Any]:
     result = {"id": provider["id"], "status": "missing", "detail": ""}
     if provider.get("builtin"):
         return {**result, "status": "ready", "detail": "Built into Hermes"}
+    if provider.get("managed_capability"):
+        from backend.capability_broker import inspect_managed_provider
+
+        return {
+            **result,
+            **inspect_managed_provider(provider["managed_capability"]),
+        }
     command = provider.get("command")
     executable = shutil.which(command) if command else None
     if not executable:
@@ -780,19 +787,27 @@ def propose_capability(capability_id: str) -> dict[str, Any]:
             "capability": health,
             "reason": "No reviewed automatic installation path is registered.",
         }
+    with _connect() as connection:
+        existing = connection.execute(
+            """
+            SELECT * FROM capability_proposals
+            WHERE capability_id = ? AND status IN ('awaiting_approval', 'approved', 'installing')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (capability_id,),
+        ).fetchone()
+    if existing:
+        item = dict(existing)
+        item["plan"] = json.loads(item["plan"] or "{}")
+        return item
+
+    from backend.capability_broker import build_install_plan
+
     proposal_id = f"cap-{uuid.uuid4().hex[:12]}"
     plan = {
-        "capability_id": capability_id,
+        **build_install_plan(capability_id),
         "label": spec["label"],
-        "preflight": [
-            "Pin an exact version or signed release",
-            "Verify license, checksum and platform compatibility",
-            "Use project/user scope; never request root",
-            "Disable package lifecycle scripts during inspection",
-            "Run doctor and regression checks after activation",
-        ],
         "install": install,
-        "automatic_execution": False,
     }
     from backend.control_plane import create_review_task
 
@@ -801,8 +816,8 @@ def propose_capability(capability_id: str) -> dict[str, Any]:
         arguments=plan,
         risk_class=install.get("risk_class", "R3"),
         acceptance=plan["preflight"],
-        rollback="Remove only exact-owned files/configuration, then re-run capability doctor.",
-        requester="autonomy",
+        rollback=plan["rollback"],
+        requester="autonomy:capability",
     )
     now = _now()
     with _connect() as connection:
@@ -831,6 +846,64 @@ def propose_capability(capability_id: str) -> dict[str, Any]:
     }
 
 
+def get_capability_proposal(
+    proposal_id: Optional[str] = None,
+    *,
+    control_task_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    _init_schema()
+    if not proposal_id and not control_task_id:
+        raise ValueError("proposal_id or control_task_id is required")
+    column = "id" if proposal_id else "control_task_id"
+    value = proposal_id or control_task_id
+    with _connect() as connection:
+        row = connection.execute(
+            f"SELECT * FROM capability_proposals WHERE {column} = ? ORDER BY created_at DESC LIMIT 1",
+            (value,),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    item["plan"] = json.loads(item["plan"] or "{}")
+    return item
+
+
+def _set_capability_proposal_status(proposal_id: str, status: str) -> None:
+    with _connect() as connection:
+        connection.execute(
+            "UPDATE capability_proposals SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _now(), proposal_id),
+        )
+
+
+def execute_approved_capability(control_task_id: str) -> dict[str, Any]:
+    proposal = get_capability_proposal(control_task_id=control_task_id)
+    if not proposal:
+        raise KeyError(control_task_id)
+    from backend.capability_broker import install_capability
+    from backend.control_plane import finish_task, get_task, start_task
+
+    task = get_task(control_task_id)
+    if not task or task["status"] != "approved":
+        raise PermissionError("Capability proposal is not approved")
+    if proposal["status"] not in {"awaiting_approval", "approved", "failed"}:
+        raise ValueError(f"Proposal cannot execute from status {proposal['status']}")
+    _set_capability_proposal_status(proposal["id"], "installing")
+    start_task(control_task_id)
+    try:
+        result = install_capability(
+            proposal["capability_id"],
+            proposal["plan"].get("recipe_digest", ""),
+        )
+    except Exception as exc:
+        _set_capability_proposal_status(proposal["id"], "failed")
+        finish_task(control_task_id, "", error=str(exc))
+        raise
+    _set_capability_proposal_status(proposal["id"], "installed")
+    finish_task(control_task_id, json.dumps(result, ensure_ascii=False))
+    return result
+
+
 def autonomy_summary(root: Optional[str] = None) -> dict[str, Any]:
     _init_schema()
     workspace = resolve_workspace(root)
@@ -849,7 +922,7 @@ def autonomy_summary(root: Optional[str] = None) -> dict[str, Any]:
         ).fetchone()[0]
         proposal_rows = connection.execute(
             """
-            SELECT id, capability_id, status, risk_class, control_task_id, created_at
+            SELECT id, capability_id, status, risk_class, control_task_id, plan, created_at, updated_at
             FROM capability_proposals
             ORDER BY created_at DESC
             LIMIT 20
@@ -865,7 +938,13 @@ def autonomy_summary(root: Optional[str] = None) -> dict[str, Any]:
             "entries": memory_count,
         },
         "plans": list_plans(limit=20),
-        "proposals": [dict(row) for row in proposal_rows],
+        "proposals": [
+            {
+                **dict(row),
+                "plan": json.loads(row["plan"] or "{}"),
+            }
+            for row in proposal_rows
+        ],
         "role_contracts": ROLE_CONTRACTS,
     }
 

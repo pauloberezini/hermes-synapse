@@ -1,0 +1,9 @@
+{
+  "name": "hermes-capability-visual-validation",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@playwright/test": "1.57.0"
+  }
+}

@@ -20,7 +20,8 @@ import {
   UserCog,
   ChevronsLeft,
   ChevronsRight,
-  ShieldCheck
+  ShieldCheck,
+  AudioWaveform
 } from 'lucide-react';
 
 import type { AppSettings, ChatMessage, ChatSession, DecisionLog, ActivityLog, SystemConfig, AgentModel, SystemStats } from './types';
@@ -50,6 +51,7 @@ import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 import { ProcessesTab } from './components/ProcessesTab';
 import { HermesMark } from './components/HermesMark';
 import { MetricsTab } from './components/MetricsTab';
+import { VexaCommandCenter } from './components/VexaCommandCenter';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -60,7 +62,7 @@ const langToLocale: Record<string, string> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'processes' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'metrics'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'vexa' | 'office' | 'processes' | 'agents' | 'schedule' | 'config' | 'logs' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'metrics'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
     if (saved === 'settings') return 'tools';
     return (saved as any) || 'chat';
@@ -170,6 +172,10 @@ export default function App() {
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
   const micStateRef = useRef<'off' | 'listening' | 'capturing' | 'transcribing'>('off');
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAudioUrlRef = useRef('');
+  const ttsRequestRef = useRef(0);
+  const serverTtsAvailableRef = useRef<boolean | null>(null);
   // Last user message per session, used by the "Retry" action (P0 UX).
   const lastUserMessageRef = useRef<Record<string, string>>({});
 
@@ -227,14 +233,27 @@ export default function App() {
     }
   }, [activeTab]);
 
+  const stopSpeech = useCallback(() => {
+    ttsRequestRef.current += 1;
+    window.speechSynthesis?.cancel();
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current.src = '';
+      ttsAudioRef.current = null;
+    }
+    if (ttsAudioUrlRef.current) {
+      URL.revokeObjectURL(ttsAudioUrlRef.current);
+      ttsAudioUrlRef.current = '';
+    }
+    setIsSpeaking(false);
+    setPlayingMsgIndex(null);
+  }, []);
+
   // ── TTS helper ─────────────────────────────────────────────────────────────
   const speakText = useCallback((rawText: string, msgIndex?: number) => {
-    if (!('speechSynthesis' in window)) return;
     // If already playing this message — stop it
     if (msgIndex !== undefined && msgIndex === playingMsgIndex) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
-      setPlayingMsgIndex(null);
+      stopSpeech();
       return;
     }
     // Filter out Markdown tables and dividers line-by-line first
@@ -268,34 +287,90 @@ export default function App() {
       .trim();
     if (!clean) return;
 
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(clean);
-    const locale = langToLocale[appSettingsRef.current.language] || 'ru-RU';
-    utter.lang = locale;
-    utter.rate = 1.05;
-    utter.pitch = 0.95;
-
-    // Prefer a native voice for the selected language
-    const voices = window.speechSynthesis.getVoices();
-    const langVoices = voices.filter(v => v.lang.startsWith(appSettingsRef.current.language));
-    const maleVoice = langVoices.find(v =>
-      v.name.toLowerCase().includes('yuri') ||
-      v.name.toLowerCase().includes('pavel') ||
-      v.name.toLowerCase().includes('male') ||
-      v.name.toLowerCase().includes('boris')
-    );
-    if (maleVoice) {
-      utter.voice = maleVoice;
-    } else if (langVoices.length > 0) {
-      utter.voice = langVoices[langVoices.length - 1];
-    }
-
+    stopSpeech();
+    const requestId = ttsRequestRef.current;
     if (msgIndex !== undefined) setPlayingMsgIndex(msgIndex);
-    utter.onstart  = () => setIsSpeaking(true);
-    utter.onend    = () => { setIsSpeaking(false); setPlayingMsgIndex(null); };
-    utter.onerror  = () => { setIsSpeaking(false); setPlayingMsgIndex(null); };
-    window.speechSynthesis.speak(utter);
-  }, [playingMsgIndex]);
+
+    const browserFallback = () => {
+      if (requestId !== ttsRequestRef.current || !('speechSynthesis' in window)) return;
+      const utter = new SpeechSynthesisUtterance(clean);
+      const locale = langToLocale[appSettingsRef.current.language] || 'ru-RU';
+      utter.lang = locale;
+      utter.rate = 1;
+      utter.pitch = 1.03;
+
+      const voices = window.speechSynthesis.getVoices();
+      const langVoices = voices.filter(v => v.lang.startsWith(appSettingsRef.current.language));
+      const femaleVoice = langVoices.find(v =>
+        v.name.toLowerCase().includes('alena') ||
+        v.name.toLowerCase().includes('milena') ||
+        v.name.toLowerCase().includes('svetlana') ||
+        v.name.toLowerCase().includes('tatyana') ||
+        v.name.toLowerCase().includes('katya') ||
+        v.name.toLowerCase().includes('irina') ||
+        v.name.toLowerCase().includes('elena') ||
+        v.name.toLowerCase().includes('xenia') ||
+        v.name.toLowerCase().includes('baya') ||
+        v.name.toLowerCase().includes('female')
+      );
+      if (femaleVoice) utter.voice = femaleVoice;
+      else if (langVoices.length > 0) utter.voice = langVoices[0];
+
+      utter.onstart = () => setIsSpeaking(true);
+      utter.onend = () => {
+        setIsSpeaking(false);
+        setPlayingMsgIndex(null);
+      };
+      utter.onerror = () => {
+        setIsSpeaking(false);
+        setPlayingMsgIndex(null);
+      };
+      window.speechSynthesis.speak(utter);
+    };
+
+    void (async () => {
+      try {
+        if (serverTtsAvailableRef.current === null) {
+          const statusResponse = await fetch('/api/voice/tts/status');
+          const status = statusResponse.ok ? await statusResponse.json() : null;
+          serverTtsAvailableRef.current = Boolean(status?.available);
+        }
+        if (!serverTtsAvailableRef.current) {
+          browserFallback();
+          return;
+        }
+
+        const response = await fetch('/api/voice/synthesize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: clean, rate: 1 }),
+        });
+        if (!response.ok) throw new Error('Local TTS provider is unavailable.');
+        const blob = await response.blob();
+        if (requestId !== ttsRequestRef.current) return;
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        ttsAudioUrlRef.current = url;
+        ttsAudioRef.current = audio;
+        audio.onplay = () => setIsSpeaking(true);
+        audio.onended = stopSpeech;
+        audio.onerror = () => {
+          serverTtsAvailableRef.current = false;
+          ttsAudioRef.current = null;
+          if (ttsAudioUrlRef.current) {
+            URL.revokeObjectURL(ttsAudioUrlRef.current);
+            ttsAudioUrlRef.current = '';
+          }
+          setIsSpeaking(false);
+          browserFallback();
+        };
+        await audio.play();
+      } catch {
+        serverTtsAvailableRef.current = false;
+        browserFallback();
+      }
+    })();
+  }, [playingMsgIndex, stopSpeech]);
 
   // ── Voice command helpers ───────────────────────────────────────────────────
   useEffect(() => {
@@ -324,7 +399,7 @@ export default function App() {
     } catch { /* localStorage unavailable — non-fatal */ }
   }, [inputValue, currentChatId]);
 
-  const sendChatText = useCallback((text: string) => {
+  const sendChatText = useCallback((text: string, targetChatId = currentChatIdRef.current) => {
     const command = text.trim();
     if (!command || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
 
@@ -340,22 +415,20 @@ export default function App() {
       return false;
     }
     lastSentTimeRef.current = now;
-    lastUserMessageRef.current[currentChatIdRef.current] = command;
+    lastUserMessageRef.current[targetChatId] = command;
 
-    window.speechSynthesis?.cancel();
-    setIsSpeaking(false);
-    setPlayingMsgIndex(null);
+    stopSpeech();
     const runId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     activeRunIdRef.current = runId;
     wsRef.current.send(JSON.stringify({
       type: 'chat_message',
       content: command,
-      chat_id: currentChatIdRef.current,
+      chat_id: targetChatId,
       run_id: runId
     }));
     setIsGenerating(true);
     return true;
-  }, []);
+  }, [stopSpeech]);
 
   const resetVoiceRecorder = useCallback(() => {
     voiceStreamRef.current?.getTracks().forEach(track => track.stop());
@@ -391,7 +464,13 @@ export default function App() {
         throw new Error('No speech detected in recording.');
       }
 
-      const sent = sendChatText(text);
+      const vexaMode = localStorage.getItem('jarvis_active_tab') === 'vexa';
+      if (vexaMode && currentChatIdRef.current !== 'dashboard') {
+        currentChatIdRef.current = 'dashboard';
+        setCurrentChatId('dashboard');
+        localStorage.setItem('jarvis_current_chat_id', 'dashboard');
+      }
+      const sent = sendChatText(text, vexaMode ? 'dashboard' : currentChatIdRef.current);
       setInputValue(sent ? '' : text);
       if (sent) playBeep(1040, 0.12);
     } catch (err) {
@@ -462,9 +541,7 @@ export default function App() {
       recorder.start();
       setMicEnabled(true);
       setMicState('capturing');
-      window.speechSynthesis?.cancel();
-      setIsSpeaking(false);
-      setPlayingMsgIndex(null);
+      stopSpeech();
       stopAlarmSound();
       playBeep(880, 0.12);
     } catch (err) {
@@ -474,7 +551,7 @@ export default function App() {
       setMicState('off');
       alert('Microphone access was denied or is unavailable.');
     }
-  }, [resetVoiceRecorder, submitVoiceBlob]);
+  }, [resetVoiceRecorder, stopSpeech, submitVoiceBlob]);
 
   const handleVoiceToggle = useCallback(() => {
     if (micStateRef.current === 'capturing') {
@@ -696,9 +773,7 @@ export default function App() {
               activeRunIdRef.current = null;
               setIsGenerating(false);
               if (data.suppress_tts) {
-                window.speechSynthesis?.cancel();
-                setIsSpeaking(false);
-                setPlayingMsgIndex(null);
+                stopSpeech();
               } else if (ttsEnabledRef.current && msgChatId === currentChatIdRef.current) {
                 speakText(data.content as string);
               }
@@ -1407,6 +1482,15 @@ export default function App() {
     }
   };
 
+  const handleVexaCommand = useCallback((text: string) => {
+    if (currentChatIdRef.current !== 'dashboard') {
+      currentChatIdRef.current = 'dashboard';
+      setCurrentChatId('dashboard');
+      localStorage.setItem('jarvis_current_chat_id', 'dashboard');
+    }
+    return sendChatText(text, 'dashboard');
+  }, [sendChatText]);
+
   const handleStopGeneration = useCallback(() => {
     const runId = activeRunIdRef.current;
     if (runId) {
@@ -1418,10 +1502,8 @@ export default function App() {
       activeRunIdRef.current = null;
     }
     setIsGenerating(false);
-    window.speechSynthesis?.cancel();
-    setIsSpeaking(false);
-    setPlayingMsgIndex(null);
-  }, []);
+    stopSpeech();
+  }, [stopSpeech]);
 
   // Re-send the last user message for the current session (P0 UX "Retry").
   const handleRetryLast = useCallback(() => {
@@ -1624,7 +1706,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-container scanlines${activeTab === 'office' ? ' is-office-mode' : ''}`}>
+    <div className={`app-container scanlines${activeTab === 'office' ? ' is-office-mode' : ''}${activeTab === 'vexa' ? ' is-vexa-mode' : ''}`}>
       {/* Mobile Menu Toggle Button */}
       <button 
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1697,6 +1779,19 @@ export default function App() {
           >
             <MessageSquare size={18} />
             <span>{t('navChat')}</span>
+          </button>
+
+          <button
+            style={navStyle('vexa')}
+            onClick={() => {
+              selectChat('dashboard');
+              setActiveTab('vexa');
+              setSidebarOpen(false);
+            }}
+            title={t('navVexa')}
+          >
+            <AudioWaveform size={18} />
+            <span>{t('navVexa')}</span>
           </button>
 
           <button
@@ -1876,7 +1971,10 @@ export default function App() {
       </aside>
 
       {/* 2. Main Workspace */}
-      <main style={styles.mainContent} className={activeTab === 'office' ? 'office-main' : undefined}>
+      <main
+        style={styles.mainContent}
+        className={activeTab === 'office' ? 'office-main' : activeTab === 'vexa' ? 'vexa-main' : undefined}
+      >
         {activeTab === 'chat' && (
           <ChatTab
             currentChatId={currentChatId}
@@ -1915,6 +2013,21 @@ export default function App() {
             onChangeModel={() => setActiveTab('config')}
             subagents={subagents}
             handleSetSessionAgent={handleSetSessionAgent}
+          />
+        )}
+
+        {activeTab === 'vexa' && (
+          <VexaCommandCenter
+            agents={subagents}
+            messages={messages}
+            isConnected={isConnected}
+            isGenerating={isGenerating}
+            isSpeaking={isSpeaking}
+            micState={micState}
+            onVoiceToggle={handleVoiceToggle}
+            onCommand={handleVexaCommand}
+            onStop={handleStopGeneration}
+            language={language}
           />
         )}
 

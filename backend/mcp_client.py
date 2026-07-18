@@ -8,12 +8,30 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger("hermes.mcp_client")
 
+
+def _base_process_environment() -> Dict[str, str]:
+    """Do not leak the backend's API keys and tokens into third-party MCP processes."""
+    allowed = {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "TMPDIR",
+    }
+    return {key: value for key, value in os.environ.items() if key in allowed}
+
+
 class MCPServerClient:
     def __init__(self, name: str, config: Dict[str, Any]):
+        from backend.mcp_governance import expand_environment, validate_server_config
+
+        validated = validate_server_config(name, config)
         self.name = name
-        self.command = config.get("command")
-        self.args = config.get("args", [])
-        self.env = {**os.environ, **config.get("env", {})}
+        self.command = validated["command"]
+        self.args = validated["args"]
+        self.env = {**_base_process_environment(), **expand_environment(validated["env"])}
         self.process = None
         self.reader = None
         self.writer = None
@@ -46,6 +64,10 @@ class MCPServerClient:
             logger.info(f"MCP server '{self.name}' successfully initialized with {len(self.tools)} tools.")
         except Exception as e:
             logger.error(f"Failed to start MCP server '{self.name}': {e}")
+            if self.process and self.process.returncode is None:
+                self.process.terminate()
+                await self.process.wait()
+            raise
 
     async def _read_loop(self):
         # Background task reading stderr to log it
@@ -144,6 +166,24 @@ class MCPServerClient:
 mcp_clients: Dict[str, MCPServerClient] = {}
 mcp_tool_to_server: Dict[str, str] = {}
 
+
+def register_client_tools(name: str, client: MCPServerClient) -> None:
+    from backend.tools import TOOLS_SCHEMA
+
+    for tool in client.tools:
+        tool_name = tool["name"]
+        mcp_tool_to_server[tool_name] = name
+        if not any(item.get("function", {}).get("name") == tool_name for item in TOOLS_SCHEMA):
+            TOOLS_SCHEMA.append({
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
+                },
+            })
+
+
 async def init_mcp_servers():
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(backend_dir, "data", "mcp_config.json")
@@ -160,24 +200,13 @@ async def init_mcp_servers():
             config = json.load(f)
         servers = config.get("mcpServers", {})
         for name, srv_config in servers.items():
-            client = MCPServerClient(name, srv_config)
-            await client.start()
-            mcp_clients[name] = client
-            for tool in client.tools:
-                tool_name = tool["name"]
-                mcp_tool_to_server[tool_name] = name
-                
-                # Dynamically register tool schema in tools.py TOOLS_SCHEMA
-                from backend.tools import TOOLS_SCHEMA
-                if not any(t.get("function", {}).get("name") == tool_name for t in TOOLS_SCHEMA):
-                    TOOLS_SCHEMA.append({
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "description": tool.get("description", ""),
-                            "parameters": tool.get("inputSchema", {"type": "object", "properties": {}})
-                        }
-                    })
+            try:
+                client = MCPServerClient(name, srv_config)
+                await client.start()
+                mcp_clients[name] = client
+                register_client_tools(name, client)
+            except Exception as exc:
+                logger.error("Skipping unsafe or unavailable MCP server '%s': %s", name, exc)
     except Exception as e:
         logger.error(f"Error loading MCP servers: {e}")
 

@@ -103,6 +103,11 @@ class ProjectMemoryEntryRequest(BaseModel):
     files: List[str] = Field(default_factory=list)
     source: str = "owner"
 
+class VoiceSynthesisRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    voice: Optional[str] = Field(default=None, max_length=80)
+    rate: float = Field(default=1.0, ge=0.6, le=1.6)
+
 logger = logging.getLogger("hermes.main")
 
 # In-flight chat tasks keyed by opaque client run id. This is process-local by
@@ -488,6 +493,49 @@ async def voice_status_api():
     from backend.voice import get_voice_status
     return get_voice_status()
 
+@app.get("/api/voice/tts/status")
+async def voice_tts_status_api():
+    from backend.tts import get_tts_status
+    return get_tts_status()
+
+
+@app.post("/api/voice/synthesize")
+async def synthesize_voice_api(payload: VoiceSynthesisRequest):
+    import tempfile
+    from backend.tts import VoiceSynthesisError, synthesize_speech
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="hermes_tts_", suffix=".wav", delete=False) as tmp:
+            temp_path = tmp.name
+
+        result = await asyncio.to_thread(
+            synthesize_speech,
+            payload.text,
+            temp_path,
+            payload.voice,
+            payload.rate,
+        )
+        with open(temp_path, "rb") as audio_file:
+            audio = audio_file.read()
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={
+                "X-Vexa-TTS-Provider": result["provider"],
+                "X-Vexa-TTS-Voice": result["voice"],
+                "Cache-Control": "no-store",
+            },
+        )
+    except VoiceSynthesisError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
 
 @app.post("/api/voice/transcribe")
 async def transcribe_voice_api(file: UploadFile = File(...), language: Optional[str] = None):
@@ -742,14 +790,26 @@ async def approve_control_plane_task_api(task_id: str):
         raise HTTPException(status_code=409, detail=str(exc))
 
     execution = None
-    if task["status"] == "approved" and task.get("tool_name"):
-        execution = await asyncio.to_thread(
-            execute_governed_tool,
-            task["tool_name"],
-            task.get("tool_arguments") or {},
-            task.get("requester") or "control-plane",
-            approved_task_id=task_id,
-        )
+    if task["status"] == "approved":
+        try:
+            from backend.autonomy import get_capability_proposal, execute_approved_capability
+            from backend.mcp_governance import get_connection_proposal, execute_approved_connection
+
+            if get_capability_proposal(control_task_id=task_id):
+                execution = await asyncio.to_thread(execute_approved_capability, task_id)
+            elif get_connection_proposal(task_id):
+                execution = await execute_approved_connection(task_id)
+            elif task.get("tool_name"):
+                execution = await asyncio.to_thread(
+                    execute_governed_tool,
+                    task["tool_name"],
+                    task.get("tool_arguments") or {},
+                    task.get("requester") or "control-plane",
+                    approved_task_id=task_id,
+                )
+        except Exception as exc:
+            logger.error("Approved Control Plane task %s failed: %s", task_id, exc)
+            execution = {"status": "failed", "error": str(exc)}
         from backend.control_plane import get_task
         task = get_task(task_id) or task
     return {"status": task["status"], "task": task, "execution": execution}
@@ -1023,8 +1083,8 @@ async def unload_ollama_model(request: OllamaModelRequest):
 class MCPServerConfig(BaseModel):
     name: str
     command: str
-    args: list = []
-    env: dict = {}
+    args: list = Field(default_factory=list)
+    env: dict = Field(default_factory=dict)
 
 @app.get("/api/mcp/servers")
 async def get_mcp_servers():
@@ -1051,40 +1111,23 @@ async def get_mcp_servers():
 
 @app.post("/api/mcp/servers")
 async def add_mcp_server(server: MCPServerConfig):
-    """Adds or updates an MCP server config and reconnects."""
-    import json, os
-    from backend.mcp_client import mcp_clients, mcp_tool_to_server, MCPServerClient
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mcp_config.json")
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    config = {}
-    if os.path.exists(config_path):
-        with open(config_path, "r") as f:
-            config = json.load(f)
-    config.setdefault("mcpServers", {})
-    config["mcpServers"][server.name] = {
-        "command": server.command,
-        "args": server.args,
-        "env": server.env,
-    }
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
-    # Connect the new server live
+    """Validate an MCP config and create a double-confirmation connection proposal."""
+    from backend.mcp_governance import create_connection_proposal
     try:
-        if server.name in mcp_clients:
-            await mcp_clients[server.name].shutdown()
-        client = MCPServerClient(server.name, config["mcpServers"][server.name])
-        await client.start()
-        mcp_clients[server.name] = client
-        from backend.tools import TOOLS_SCHEMA
-        for tool in client.tools:
-            tool_name = tool["name"]
-            mcp_tool_to_server[tool_name] = server.name
-            if not any(t.get("function", {}).get("name") == tool_name for t in TOOLS_SCHEMA):
-                TOOLS_SCHEMA.append({"type": "function", "function": {"name": tool_name, "description": tool.get("description", ""), "parameters": tool.get("inputSchema", {"type": "object", "properties": {}})}})
-        return {"status": "success", "name": server.name, "tools": len(client.tools)}
-    except Exception as e:
-        logger.error(f"MCP server connect error: {e}")
-        return {"status": "config_saved", "warning": str(e)}
+        proposal = await asyncio.to_thread(
+            create_connection_proposal,
+            server.name,
+            {"command": server.command, "args": server.args, "env": server.env},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": proposal["status"],
+        "proposal_id": proposal["id"],
+        "task_id": proposal["control_task_id"],
+        "risk_class": "R4",
+        "message": "Connection validated. Two explicit owner approvals are required before activation.",
+    }
 
 @app.delete("/api/mcp/servers/{name}")
 async def delete_mcp_server(name: str):
