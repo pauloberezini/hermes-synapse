@@ -9,8 +9,8 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, subprotocol: str | None = None):
+        await websocket.accept(subprotocol=subprotocol)
         self.active_connections.add(websocket)
         logger.info(f"New dashboard connected. Total active connections: {len(self.active_connections)}")
 

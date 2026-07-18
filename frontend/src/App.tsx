@@ -680,10 +680,10 @@ export default function App() {
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const token = localStorage.getItem('jarvis_auth_token') || '';
-      const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${encodeURIComponent(token)}`;
+      const wsUrl = `${protocol}//${window.location.host}/api/ws`;
       
-      console.log(`Connecting to WebSocket: ${wsUrl}`);
-      const ws = new WebSocket(wsUrl);
+      console.log('Connecting to authenticated WebSocket.');
+      const ws = new WebSocket(wsUrl, ['hermes-v1', `hermes-auth.${token}`]);
       wsRef.current = ws;
 
       ws.onopen = () => {

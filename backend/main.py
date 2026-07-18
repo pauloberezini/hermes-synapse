@@ -1411,14 +1411,24 @@ async def obsidian_delete_note(path: str):
 
 @app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    token = websocket.query_params.get("token")
+    offered_protocols = [
+        item.strip()
+        for item in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if item.strip()
+    ]
+    auth_protocol = next(
+        (item for item in offered_protocols if item.startswith("hermes-auth.")),
+        "",
+    )
+    token = auth_protocol.removeprefix("hermes-auth.")
+    response_protocol = "hermes-v1" if "hermes-v1" in offered_protocols else None
     from backend.auth import validate_session
     if not token or not validate_session(token):
-        await websocket.accept()
+        await websocket.accept(subprotocol=response_protocol)
         await websocket.close(code=1008)
         return
 
-    await manager.connect(websocket)
+    await manager.connect(websocket, subprotocol=response_protocol)
     try:
         # Send initial setup on connection
         from backend.database import get_chat_history
