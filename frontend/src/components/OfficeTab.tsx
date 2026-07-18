@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Bot,
+  Boxes,
   BriefcaseBusiness,
   Check,
   ChevronDown,
@@ -30,11 +31,12 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentEvent, AgentModel } from '../types';
 import type { CanvasLiveTrace } from './officeCanvasEngine';
 import { HermesMark } from './HermesMark';
+import { IsoOfficeCanvas } from './IsoOfficeCanvas';
 import { OFFICE_THEMES, OFFICE_THEME_STORAGE_KEY, PixelOfficeCanvas, type OfficeThemeKey } from './PixelOfficeCanvas';
 
 export type OfficeLiveTrace = CanvasLiveTrace & { ts: number };
 
-type OfficeView = 'office' | 'command' | 'list';
+type OfficeView = 'office' | 'iso' | 'command' | 'list';
 type StatusKind = 'working' | 'waiting' | 'error' | 'paused' | 'offline';
 type ZoneKey = 'work' | 'lounge' | 'meeting' | 'project' | 'idle' | 'error';
 type GroupMode = 'project' | 'status';
@@ -84,7 +86,7 @@ const COPY = {
   ru: {
     subtitle: 'Живое состояние агентов в реальном времени', search: 'Поиск агента…', allProjects: 'Все проекты', allStatuses: 'Все статусы',
     total: 'Всего', working: 'Работают', waiting: 'Ожидают', errors: 'Ошибки', paused: 'На паузе', offline: 'Неактивны',
-    online: 'Онлайн', reconnecting: 'Переподключение', stale: 'Данные устарели', office: 'Pixel Office', command: 'Command Center', list: 'Список',
+    online: 'Онлайн', reconnecting: 'Переподключение', stale: 'Данные устарели', office: 'Pixel Office', iso: 'Изо-офис', command: 'Command Center', list: 'Список',
     zones: 'Зоны офиса', projects: 'Проекты', fit: 'Вписать в экран', filters: 'Фильтры', noResults: 'По заданным фильтрам ничего не найдено',
     noAgents: 'Офис пока пуст', retrying: 'Не удалось обновить данные. Повторяем попытку в фоне.', chat: 'Открыть чат', details: 'Сведения',
     currentTask: 'Текущая задача', lastActivity: 'Последняя активность', model: 'Модель', eventHistory: 'История событий', noEvents: 'Событий пока нет',
@@ -97,7 +99,7 @@ const COPY = {
   en: {
     subtitle: 'Live agent state in real time', search: 'Search agents…', allProjects: 'All projects', allStatuses: 'All statuses',
     total: 'Total', working: 'Working', waiting: 'Waiting', errors: 'Errors', paused: 'Paused', offline: 'Inactive',
-    online: 'Online', reconnecting: 'Reconnecting', stale: 'Stale data', office: 'Pixel Office', command: 'Command Center', list: 'List',
+    online: 'Online', reconnecting: 'Reconnecting', stale: 'Stale data', office: 'Pixel Office', iso: 'Iso Office', command: 'Command Center', list: 'List',
     zones: 'Office zones', projects: 'Projects', fit: 'Fit to screen', filters: 'Filters', noResults: 'No agents match the selected filters',
     noAgents: 'The office is empty', retrying: 'Could not refresh data. Retrying in the background.', chat: 'Open chat', details: 'Details',
     currentTask: 'Current task', lastActivity: 'Last activity', model: 'Model', eventHistory: 'Event history', noEvents: 'No events yet',
@@ -221,6 +223,11 @@ const InspectorPortrait = memo(function InspectorPortrait({ agent }: { agent: Of
 function PixelOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language, liveTrace, theme, onTheme }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru'; liveTrace?: OfficeLiveTrace | null; theme: OfficeThemeKey; onTheme: (theme: OfficeThemeKey) => void }) {
   const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
   return <PixelOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={onTheme} />;
+}
+
+function IsoOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language, liveTrace, theme, onTheme }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru'; liveTrace?: OfficeLiveTrace | null; theme: OfficeThemeKey; onTheme: (theme: OfficeThemeKey) => void }) {
+  const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
+  return <IsoOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={onTheme} />;
 }
 
 function ActivityOverlay({ projects }: { projects: OfficeProject[] }) {
@@ -355,7 +362,7 @@ function AgentInspector({ agent, copy, language, onClose, onChat, panelRef }: { 
 }
 
 function ViewSwitcher({ view, setView, copy }: { view: OfficeView; setView: (view: OfficeView) => void; copy: typeof COPY.ru | typeof COPY.en }) {
-  const views: { id: OfficeView; label: string; icon: React.ReactNode }[] = [{ id: 'office', label: copy.office, icon: <Grid2X2 size={15} /> }, { id: 'command', label: copy.command, icon: <Command size={15} /> }, { id: 'list', label: copy.list, icon: <List size={15} /> }];
+  const views: { id: OfficeView; label: string; icon: React.ReactNode }[] = [{ id: 'office', label: copy.office, icon: <Grid2X2 size={15} /> }, { id: 'iso', label: copy.iso, icon: <Boxes size={15} /> }, { id: 'command', label: copy.command, icon: <Command size={15} /> }, { id: 'list', label: copy.list, icon: <List size={15} /> }];
   return <div className="office-view-switcher" role="tablist" aria-label="Office view">{views.map(item => <button key={item.id} type="button" role="tab" aria-selected={view === item.id} className={view === item.id ? 'is-active' : ''} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span></button>)}</div>;
 }
 
@@ -373,7 +380,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [view, setViewState] = useState<OfficeView>(() => {
     const saved = localStorage.getItem(VIEW_STORAGE_KEY);
-    return saved === 'command' || saved === 'list' ? saved : 'office';
+    return saved === 'command' || saved === 'list' || saved === 'iso' ? saved : 'office';
   });
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState(() => localStorage.getItem(PROJECT_STORAGE_KEY) || '');
@@ -516,10 +523,10 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
           <aside className="office-context-sidebar">
             <div className="context-sidebar-title"><span>{view === 'command' ? copy.projects : copy.zones}</span>{refreshing && <Loader2 size={14} />}</div>
             {view === 'command' ? <nav>{projects.map(project => <button key={project.id} type="button" className={focusedProject === project.id ? 'is-active' : ''} onClick={() => setFocusedProject(focusedProject === project.id ? '' : project.id)}><i style={{ background: project.accent }}><BriefcaseBusiness size={13} /></i><span><strong title={project.name}>{project.name}</strong><small>{project.agents.length} {copy.agents}</small></span><em>{project.errors || ''}</em></button>)}</nav> : <nav>{zones.map(zone => <button key={zone.id} type="button" className={statusFilter && zone.agents.length ? 'has-filter' : ''} onClick={() => setStatusFilter(zone.id === 'error' ? 'error' : zone.id === 'work' ? 'working' : '')}><i><Monitor size={13} /></i><span><strong title={zone.label}>{zone.shortLabel}</strong><small>{zone.agents.length} {copy.agents}</small></span></button>)}</nav>}
-            {view === 'office' && <div className="office-zoom-controls"><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(value => Math.max(.75, value - .1))} aria-label="Zoom out"><Minus size={15} /></button><button type="button" onClick={() => setZoom(1)} aria-label={copy.fit}><Maximize2 size={14} /></button><button type="button" onClick={() => setZoom(value => Math.min(1.25, value + .1))} aria-label="Zoom in"><Plus size={15} /></button></div>}
+            {(view === 'office' || view === 'iso') && <div className="office-zoom-controls"><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(value => Math.max(.6, value - .1))} aria-label="Zoom out"><Minus size={15} /></button><button type="button" onClick={() => setZoom(1)} aria-label={copy.fit}><Maximize2 size={14} /></button><button type="button" onClick={() => setZoom(value => Math.min(1.8, value + .1))} aria-label="Zoom in"><Plus size={15} /></button></div>}
           </aside>
           <main className="office-stage">
-            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
+            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'iso' ? <IsoOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
           </main>
           {selectedAgent && <AgentInspector agent={selectedAgent} copy={copy} language={language} onClose={closeInspector} onChat={selectChat} panelRef={inspectorRef} />}
         </div>

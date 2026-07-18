@@ -1270,6 +1270,8 @@ def get_all_subagents() -> List[Dict[str, Any]]:
                    model_params, current_task, last_action, last_error, progress, updated_at
             FROM subagents ORDER BY id ASC
         """)
+        rows = cursor.fetchall()
+        conn.close()
         return [
             {
                 "id": r[0],
