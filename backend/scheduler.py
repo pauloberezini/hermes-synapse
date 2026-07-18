@@ -12,6 +12,23 @@ ACTIVE_ALARMS:    List['AlarmTask']         = []
 RUNNING_TASKS:    Dict[str, asyncio.Task]   = {}
 
 
+async def shutdown_scheduler_tasks() -> None:
+    """Cancel scheduler jobs and wait until their cleanup handlers finish."""
+    global RUNNING_TASKS
+    tasks = list(RUNNING_TASKS.values())
+    RUNNING_TASKS = {}
+    current_loop = asyncio.get_running_loop()
+    pending: List[asyncio.Task] = []
+    for task in tasks:
+        if task.done() or task.get_loop().is_closed():
+            continue
+        task.cancel()
+        if task.get_loop() is current_loop:
+            pending.append(task)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ONE-SHOT TIMER
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 import asyncio
 import time
 from datetime import datetime, timedelta
@@ -6,22 +7,17 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from zoneinfo import ZoneInfo
 from backend import scheduler
 
-@pytest.fixture(autouse=True)
-def clean_scheduler_state():
+@pytest_asyncio.fixture(autouse=True)
+async def clean_scheduler_state():
     scheduler.ACTIVE_TIMERS = []
     scheduler.ACTIVE_REMINDERS = []
     scheduler.ACTIVE_ALARMS = []
-    # Cancel any running background tasks from tests
-    for task in list(scheduler.RUNNING_TASKS.values()):
-        task.cancel()
-    scheduler.RUNNING_TASKS = {}
+    await scheduler.shutdown_scheduler_tasks()
     yield
-    for task in list(scheduler.RUNNING_TASKS.values()):
-        task.cancel()
+    await scheduler.shutdown_scheduler_tasks()
     scheduler.ACTIVE_TIMERS = []
     scheduler.ACTIVE_REMINDERS = []
     scheduler.ACTIVE_ALARMS = []
-    scheduler.RUNNING_TASKS = {}
 
 @pytest.mark.asyncio
 async def test_timer_lifecycle():

@@ -183,6 +183,10 @@ async def lifespan(app: FastAPI):
     # Stop price alert monitor background task
     price_monitor.stop()
 
+    # Stop timers, alarms and recurring reminders before the event loop closes.
+    from backend.scheduler import shutdown_scheduler_tasks
+    await shutdown_scheduler_tasks()
+
     # Shutdown MCP servers
     await shutdown_mcp_servers()
 
