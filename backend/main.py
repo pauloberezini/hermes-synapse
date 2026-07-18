@@ -141,7 +141,6 @@ async def lifespan(app: FastAPI):
     bot_app = await init_bot()
     
     # Background Obsidian vault sync (non-blocking)
-    import asyncio
     async def _obsidian_startup_sync():
         try:
             from backend.obsidian import is_reachable, sync_vault_to_rag
