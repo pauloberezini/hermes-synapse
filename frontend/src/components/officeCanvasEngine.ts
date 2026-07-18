@@ -51,6 +51,8 @@ export interface CanvasAgentData {
   current_task?: string;
   last_action?: string;
   parent_id?: string | null;
+  role?: string;
+  agent_type?: string;
 }
 
 export interface PlacedFurniture {

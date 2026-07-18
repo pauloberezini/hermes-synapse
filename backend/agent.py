@@ -517,6 +517,26 @@ def _format_memory_context(memories: List[Dict[str, Any]]) -> str:
         return ""
     return "\n\n[Долгосрочная память пользователя]:\n" + "\n".join(lines)
 
+
+def _project_memory_context(user_message: str) -> str:
+    if os.getenv("AUTONOMY_PROJECT_CONTEXT", "true").lower() not in {"1", "true", "yes", "on"}:
+        return ""
+    if not re.search(
+        r"\b(code|repo|project|frontend|backend|api|test|docker|deploy|"
+        r"код|репозитор|проект|фронт|бэк|тест|деплой|контейнер)\w*",
+        user_message,
+        flags=re.IGNORECASE,
+    ):
+        return ""
+    try:
+        from backend.autonomy import project_context
+
+        return project_context(user_message, limit=6)
+    except Exception as exc:
+        logger.debug("Project memory context unavailable: %s", exc)
+        return ""
+
+
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Backward-compatible wrapper around the centralized cost module."""
     from backend.cost import calculate_cost as _calculate_cost
@@ -1088,6 +1108,9 @@ class JarvisAgent:
                 )
                 if memory_context:
                     context_query = f"{context_query}\n{memory_context}"
+            project_memory = _project_memory_context(user_message)
+            if project_memory:
+                context_query = f"{context_query}\n\n{project_memory}"
                 
             start_time = time.time()
             try:
@@ -1194,6 +1217,9 @@ class JarvisAgent:
             )
             if memory_context:
                 user_content = f"{user_content}\n{memory_context}"
+        project_memory = _project_memory_context(user_message)
+        if project_memory:
+            user_content = f"{user_content}\n\n{project_memory}"
         
         # Build payload with system prompt + chat history + current message
         from datetime import datetime
@@ -1541,6 +1567,7 @@ class JarvisAgent:
         user_message: str,
         subagent: Dict[str, Any],
         parent_skills: Optional[str] = None,
+        chat_id: Optional[str] = None,
         current_user_msg_id: Optional[int] = None,
         stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> str:
@@ -1579,6 +1606,9 @@ class JarvisAgent:
             )
             if memory_context:
                 user_content = f"{user_content}\n{memory_context}"
+        project_memory = _project_memory_context(user_message)
+        if project_memory:
+            user_content = f"{user_content}\n\n{project_memory}"
         
         # Build payload with subagent prompt + chat history + current message
         from datetime import datetime

@@ -8,7 +8,7 @@ import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from backend.logging_config import configure_logging
 
 configure_logging()
@@ -89,6 +89,20 @@ class ScheduledTaskCreate(BaseModel):
 class ControlPlaneAction(BaseModel):
     reason: str = ""
 
+class AutonomyPlanRequest(BaseModel):
+    goal: str
+    root: Optional[str] = None
+
+class ProjectIndexRequest(BaseModel):
+    root: Optional[str] = None
+
+class ProjectMemoryEntryRequest(BaseModel):
+    kind: str
+    title: str
+    content: str
+    files: List[str] = Field(default_factory=list)
+    source: str = "owner"
+
 logger = logging.getLogger("hermes.main")
 
 # In-flight chat tasks keyed by opaque client run id. This is process-local by
@@ -104,6 +118,21 @@ async def lifespan(app: FastAPI):
     
     from backend.rag import init_rag
     init_rag()
+
+    if os.getenv("PROJECT_MEMORY_AUTO_INDEX", "true").lower() in {"1", "true", "yes", "on"}:
+        async def _index_project_memory():
+            try:
+                from backend.autonomy import index_project
+                result = await asyncio.to_thread(index_project)
+                logger.info(
+                    "Project memory indexed: %s files (%s changed)",
+                    result["files"],
+                    result["indexed"],
+                )
+            except Exception as exc:
+                logger.warning("Project memory indexing failed (non-fatal): %s", exc)
+
+        asyncio.create_task(_index_project_memory())
     
     # Start price alert monitor background task
     from backend.price_monitor import price_monitor
@@ -629,6 +658,64 @@ async def get_agent_events_api(agent_id: str, limit: int = 50):
 async def get_office_state_api():
     from backend.database import get_agent_office_state
     return get_agent_office_state()
+
+@app.get("/api/autonomy/summary")
+async def get_autonomy_summary_api():
+    from backend.autonomy import autonomy_summary
+    return await asyncio.to_thread(autonomy_summary)
+
+@app.get("/api/autonomy/capabilities")
+async def get_autonomy_capabilities_api():
+    from backend.autonomy import doctor_capabilities
+    return await asyncio.to_thread(doctor_capabilities)
+
+@app.post("/api/autonomy/capabilities/{capability_id}/propose")
+async def propose_autonomy_capability_api(capability_id: str):
+    from backend.autonomy import propose_capability
+    try:
+        return await asyncio.to_thread(propose_capability, capability_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown capability")
+
+@app.post("/api/autonomy/index")
+async def index_project_memory_api(request: ProjectIndexRequest):
+    from backend.autonomy import index_project
+    try:
+        return await asyncio.to_thread(index_project, request.root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@app.get("/api/autonomy/memory/search")
+async def search_project_memory_api(q: str, limit: int = 8):
+    from backend.autonomy import search_project_memory
+    return await asyncio.to_thread(search_project_memory, q, None, limit)
+
+@app.post("/api/autonomy/memory")
+async def save_project_memory_api(request: ProjectMemoryEntryRequest):
+    from backend.autonomy import remember_project_entry
+    return await asyncio.to_thread(
+        remember_project_entry,
+        request.kind,
+        request.title,
+        request.content,
+        request.files,
+        request.source,
+    )
+
+@app.post("/api/autonomy/plans")
+async def create_autonomy_plan_api(request: AutonomyPlanRequest):
+    from backend.autonomy import build_plan
+    if not request.goal.strip():
+        raise HTTPException(status_code=400, detail="Goal is required")
+    try:
+        return await asyncio.to_thread(build_plan, request.goal, request.root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@app.get("/api/autonomy/plans")
+async def list_autonomy_plans_api(limit: int = 30):
+    from backend.autonomy import list_plans
+    return await asyncio.to_thread(list_plans, limit)
 
 @app.get("/api/control-plane/summary")
 async def get_control_plane_summary_api(limit: int = 100):

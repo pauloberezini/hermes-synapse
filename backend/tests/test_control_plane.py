@@ -1,5 +1,7 @@
 import json
-from unittest.mock import patch
+import sys
+from types import ModuleType
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,7 +25,10 @@ def test_risk_policy_defaults_unknown_tools_to_r4(control_db):
 
 
 def test_r3_action_is_queued_until_approved(control_db):
-    with patch("backend.tools.execute_tool") as execute:
+    tools_module = ModuleType("backend.tools")
+    execute = MagicMock()
+    tools_module.execute_tool = execute
+    with patch.dict(sys.modules, {"backend.tools": tools_module}):
         result = json.loads(control_plane.execute_governed_tool(
             "add_calendar_event", {"title": "Review", "date": "2026-07-17"}, "dashboard"
         ))
@@ -73,3 +78,18 @@ def test_evidence_ledger_hashes_results_and_redacts_secret_fields(control_db):
     event = control_plane.list_events(limit=1)[0]
     assert event["evidence_id"].startswith("EV-")
     assert len(event["output_hash"]) == 64
+
+
+def test_capability_review_task_is_durable_but_not_executable(control_db):
+    task = control_plane.create_review_task(
+        "Review visual validator",
+        {"package": "playwright", "token": "must-not-leak"},
+        risk_class="R3",
+        acceptance=["Exact version and checksum verified"],
+    )
+
+    assert task["status"] == "awaiting_approval"
+    assert task["tool_name"] is None
+    assert task["tool_arguments"]["token"] == "[REDACTED]"
+    assert task["acceptance"] == ["Exact version and checksum verified"]
+    assert control_plane.approve_task(task["id"])["status"] == "approved"

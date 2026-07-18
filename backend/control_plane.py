@@ -192,6 +192,71 @@ def create_tool_task(tool_name: str, arguments: Dict[str, Any], chat_id: str) ->
     return _task_from_row(row)
 
 
+def create_review_task(
+    goal: str,
+    arguments: Dict[str, Any],
+    risk_class: str = "R3",
+    acceptance: Optional[list[str]] = None,
+    rollback: str = "",
+    requester: str = "autonomy",
+) -> Dict[str, Any]:
+    """Create a durable approval-only task with no executable tool attached."""
+    if risk_class not in RISK_ORDER:
+        raise ValueError(f"Unknown risk class: {risk_class}")
+    approvals_required = 1 if risk_class == "R3" else 2 if risk_class == "R4" else 0
+    status = "awaiting_approval" if approvals_required else "queued"
+    safe_arguments = _redact(arguments)
+    canonical = json.dumps(
+        ["review", requester, goal, safe_arguments],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    idempotency_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    now = _now()
+    with _connect() as conn:
+        existing = conn.execute(
+            f"SELECT * FROM workflow_tasks WHERE idempotency_key = ? "
+            f"AND status IN ({','.join('?' for _ in OPEN_STATUSES)}) ORDER BY created_at DESC LIMIT 1",
+            (idempotency_key, *OPEN_STATUSES),
+        ).fetchone()
+        if existing:
+            return _task_from_row(existing)
+        task_id = f"T-{uuid.uuid4().hex[:12]}"
+        conn.execute(
+            """INSERT INTO workflow_tasks
+               (id, origin, requester, goal, tool_name, tool_arguments, assignee, risk_class,
+                autonomy_level, status, approvals_required, acceptance, rollback,
+                idempotency_key, created_at, updated_at)
+               VALUES (?, 'autonomy', ?, ?, NULL, ?, 'jarvis', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                task_id,
+                requester[:120],
+                goal[:500],
+                _safe_json(safe_arguments),
+                risk_class,
+                _autonomy_for_risk(risk_class),
+                status,
+                approvals_required,
+                json.dumps(acceptance or [], ensure_ascii=False),
+                rollback[:1000],
+                idempotency_key,
+                now,
+                now,
+            ),
+        )
+        _event(
+            conn,
+            task_id,
+            "review_requested",
+            "autonomy",
+            f"Review request classified as {risk_class}",
+            risk_class,
+            metadata={"goal": goal[:180], "executable": False},
+        )
+        row = conn.execute("SELECT * FROM workflow_tasks WHERE id = ?", (task_id,)).fetchone()
+    return _task_from_row(row)
+
+
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM workflow_tasks WHERE id = ?", (task_id,)).fetchone()

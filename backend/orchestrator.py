@@ -40,6 +40,8 @@ class AgentState:
         self.results: List[Dict[str, Any]] = []
         self.traces: List[Dict[str, Any]] = []
         self.final_response = ""
+        self.plan_id: Optional[str] = None
+        self.has_failures = False
 
     def add_trace(self, agent: str, action: str, message: str, status: str = "success", token_cost: float = 0.0):
         from datetime import datetime
@@ -143,7 +145,13 @@ Available sub-agents:
 You must output the result EXCLUSIVELY in JSON format of the following structure:
 {
   "steps": [
-    {"agent": "agent_id", "instructions": "clear instructions for the agent in English"}
+    {
+      "id": "short-stable-id",
+      "agent": "agent_id",
+      "instructions": "clear instructions for the agent in English",
+      "expected_output": ["specific artifact or evidence"],
+      "acceptance": ["observable condition that proves this step succeeded"]
+    }
   ]
 }
 
@@ -157,6 +165,8 @@ Rules:
 - It is categorically forbidden to invent demo, fictitious, or test matches (e.g., Spartak vs Zenit, if they are not in today's schedule). All calculations and conclusions must rely solely on real matches and real teams found in search results.
 - If the request is simple and does not require sub-agents, return an empty list of steps: {"steps": []}.
 - Limit the number of steps to the minimum (maximum 3 steps).
+- Give every step a stable id, expected outputs, and testable acceptance criteria.
+- Later steps must consume evidence from earlier steps instead of repeating their work.
 - Do not write any explanations, preambles, or conclusions. Only clean JSON.
 - Specify only exact identifiers from the list of available sub-agents above in "agent"!
 """
@@ -226,9 +236,18 @@ Rules:
                         raise ValueError(f"Step at index {idx} is missing the required 'instructions' field.")
                     if step["agent"] not in allowed_agent_ids:
                         raise ValueError(f"Step at index {idx} has an invalid/unknown agent ID: '{step['agent']}'. Allowed agent IDs are: {sorted(list(allowed_agent_ids))}")
+                    step.setdefault("id", f"step-{idx + 1}")
+                    step.setdefault("expected_output", [])
+                    step.setdefault("acceptance", [])
                 
                 state.steps = plan_data.get("steps", [])
                 state.add_trace("Orchestrator", "Planning", f"Plan of {len(state.steps)} steps generated.", token_cost=plan_cost)
+                if state.steps:
+                    try:
+                        from backend.autonomy import save_runtime_plan
+                        state.plan_id = save_runtime_plan(query, state.steps)["id"]
+                    except Exception as memory_err:
+                        logger.warning("Could not persist orchestration plan: %s", memory_err)
                 parse_err = None
                 break
             except Exception as e:
@@ -241,11 +260,21 @@ Rules:
             
         # 2. ROUTER LOOP
         from backend.agent import agent_instance
+        step_attempts: Dict[int, int] = {}
+        correction_feedback: Dict[int, str] = {}
         
         while state.current_step_idx < len(state.steps):
             step = state.steps[state.current_step_idx]
             agent_type = step.get("agent")
             instructions = step.get("instructions")
+            step_attempts[state.current_step_idx] = step_attempts.get(state.current_step_idx, 0) + 1
+            attempt = step_attempts[state.current_step_idx]
+            if state.plan_id:
+                try:
+                    from backend.autonomy import update_runtime_step
+                    update_runtime_step(state.plan_id, state.current_step_idx, status="running")
+                except Exception as memory_err:
+                    logger.warning("Could not update runtime plan step: %s", memory_err)
             
             # Find agent config
             child_agent = next((c for c in children if c["id"] == agent_type), None)
@@ -255,6 +284,18 @@ Rules:
                 
             if not child_agent:
                 state.add_trace("Router", "Error", f"Unknown agent: {agent_type}", "error")
+                state.has_failures = True
+                if state.plan_id:
+                    try:
+                        from backend.autonomy import update_runtime_step
+                        update_runtime_step(
+                            state.plan_id,
+                            state.current_step_idx,
+                            status="failed",
+                            result_summary=f"Unknown agent: {agent_type}",
+                        )
+                    except Exception as memory_err:
+                        logger.warning("Could not persist routing failure: %s", memory_err)
                 state.current_step_idx += 1
                 continue
                 
@@ -277,9 +318,20 @@ Rules:
                 context_str = "\n\nData from previous steps:\n" + "\n---\n".join(context_parts)
 
             contextual_instructions = instructions + context_str
+            if correction_feedback.get(state.current_step_idx):
+                contextual_instructions += (
+                    "\n\nCorrection feedback from the verifier:\n"
+                    + correction_feedback[state.current_step_idx]
+                    + "\nCorrect the failure and return concrete, non-empty evidence."
+                )
             if file_context:
                 contextual_instructions = file_context + "\n\n" + contextual_instructions
-            state.add_trace("Router", "Route", f"Step {state.current_step_idx+1}/{len(state.steps)}: Delegating to agent '{child_agent['name']}' ({agent_type})")
+            state.add_trace(
+                "Router",
+                "Route",
+                f"Step {state.current_step_idx+1}/{len(state.steps)}, attempt {attempt}/3: "
+                f"delegating to agent '{child_agent['name']}' ({agent_type})",
+            )
             
             # Check node execution type
             is_sub_orch = child_agent.get("agent_type") in ("orchestrator", "sub-orchestrator")
@@ -342,7 +394,58 @@ Rules:
                 except Exception as e:
                     state.results.append({"step": state.current_step_idx, "agent": agent_type, "error": str(e)})
                     state.add_trace(child_agent["name"], "Error", f"Error: {str(e)}", "error")
-                    
+
+            latest = state.results[-1] if state.results else {
+                "step": state.current_step_idx,
+                "agent": agent_type,
+                "error": "Agent returned no result.",
+            }
+            failure = ""
+            if "error" in latest:
+                failure = str(latest["error"])
+            else:
+                output = latest.get("output")
+                if output is None or (isinstance(output, str) and not output.strip()):
+                    failure = "Agent returned an empty result."
+                elif isinstance(output, dict) and output.get("success") is False:
+                    failure = str(output.get("error") or output.get("stderr") or "Validation failed.")
+
+            if failure and attempt < 3:
+                state.results.pop()
+                correction_feedback[state.current_step_idx] = failure
+                state.add_trace(
+                    "Verifier",
+                    "Correct",
+                    f"Step {state.current_step_idx + 1} failed validation and will be retried: {failure[:240]}",
+                    "warning",
+                )
+                if state.plan_id:
+                    try:
+                        from backend.autonomy import update_runtime_step
+                        update_runtime_step(
+                            state.plan_id,
+                            state.current_step_idx,
+                            status="retrying",
+                            feedback=failure,
+                        )
+                    except Exception as memory_err:
+                        logger.warning("Could not persist correction feedback: %s", memory_err)
+                continue
+
+            if state.plan_id:
+                try:
+                    from backend.autonomy import update_runtime_step
+                    update_runtime_step(
+                        state.plan_id,
+                        state.current_step_idx,
+                        status="failed" if failure else "completed",
+                        result_summary=failure or str(latest.get("output", ""))[:1000],
+                        feedback=correction_feedback.get(state.current_step_idx, ""),
+                    )
+                except Exception as memory_err:
+                    logger.warning("Could not complete runtime plan step: %s", memory_err)
+            if failure:
+                state.has_failures = True
             state.current_step_idx += 1
             
         # 3. SYNTHESIZE NODE
@@ -396,13 +499,34 @@ Rules:
         synth_cost = calculate_cost(model, prompt_est, completion_est)
         
         state.add_trace("Orchestrator", "Finish", "Synthesis complete. Response sent to Creator.", token_cost=synth_cost)
+        if state.plan_id:
+            try:
+                from backend.autonomy import remember_project_entry, update_plan
+                failed = state.has_failures
+                update_plan(state.plan_id, status="failed" if failed else "completed")
+                remember_project_entry(
+                    "execution",
+                    f"Completed autonomous plan {state.plan_id}",
+                    f"Goal: {query[:500]}\nStatus: {'failed' if failed else 'completed'}\n"
+                    f"Steps: {len(state.steps)}; traces: {len(state.traces)}",
+                    source="orchestrator",
+                )
+            except Exception as memory_err:
+                logger.warning("Could not retain orchestration outcome: %s", memory_err)
         
     except Exception as general_err:
         state.add_trace("Orchestrator", "Error", f"Critical orchestrator failure: {str(general_err)}", "error")
         state.final_response = f"Apologies, Sir. A failure occurred while coordinating my sub-agents: {str(general_err)}"
+        if state.plan_id:
+            try:
+                from backend.autonomy import update_plan
+                update_plan(state.plan_id, status="failed")
+            except Exception:
+                pass
         
     return {
         "response": state.final_response,
         "traces": state.traces,
-        "steps": state.steps
+        "steps": state.steps,
+        "plan_id": state.plan_id,
     }

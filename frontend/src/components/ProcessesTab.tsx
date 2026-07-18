@@ -2,17 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Ban,
+  BrainCircuit,
   Check,
   CircleDot,
+  Database,
   FileCheck2,
   ListChecks,
   OctagonX,
   Play,
   RefreshCw,
   ShieldCheck,
+  Wrench,
   X,
 } from 'lucide-react';
-import type { ControlPlaneSummary, WorkflowTask } from '../types';
+import type { AutonomySummary, ControlPlaneSummary, WorkflowTask } from '../types';
 
 type Props = { language: 'ru' | 'en' };
 type Filter = 'all' | 'approval' | 'active' | 'finished';
@@ -29,6 +32,8 @@ const COPY = {
     result: 'Результат', error: 'Ошибка', evidence: 'Evidence Ledger', noEvidence: 'Событий пока нет', confidence: 'Подтверждено',
     confirmation: 'подтверждение', confirmations: 'подтверждения', stoppedReason: 'Причина остановки', failedLoad: 'Не удалось загрузить Control Plane.',
     stopConfirm: 'Немедленно остановить новые действия и активные запуски?', rejectConfirm: 'Отклонить эту задачу?', r4Confirm: 'Это действие класса R4. Подтвердить текущий этап?',
+    autonomyTitle: 'Контур автономности', indexed: 'Файлов в памяти', capabilities: 'Инструменты', plans: 'Активные планы',
+    proposals: 'На проверке', reindex: 'Обновить память', neverIndexed: 'Индекс ещё не создан', fresh: 'Обновлено',
   },
   en: {
     title: 'Processes & Control', subtitle: 'Tasks, approvals, limits and execution evidence',
@@ -41,6 +46,8 @@ const COPY = {
     result: 'Result', error: 'Error', evidence: 'Evidence Ledger', noEvidence: 'No events yet', confidence: 'Confirmed',
     confirmation: 'confirmation', confirmations: 'confirmations', stoppedReason: 'Stop reason', failedLoad: 'Could not load Control Plane.',
     stopConfirm: 'Immediately stop new actions and active runs?', rejectConfirm: 'Reject this task?', r4Confirm: 'This is an R4 action. Confirm the current stage?',
+    autonomyTitle: 'Autonomy Runtime', indexed: 'Files in memory', capabilities: 'Capabilities', plans: 'Active plans',
+    proposals: 'Under review', reindex: 'Refresh memory', neverIndexed: 'Index has not been created', fresh: 'Updated',
   },
 } as const;
 
@@ -66,6 +73,7 @@ function statusLabel(task: WorkflowTask, language: 'ru' | 'en') {
 export function ProcessesTab({ language }: Props) {
   const copy = COPY[language];
   const [summary, setSummary] = useState<ControlPlaneSummary | null>(null);
+  const [autonomy, setAutonomy] = useState<AutonomySummary | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [loading, setLoading] = useState(true);
@@ -75,10 +83,16 @@ export function ProcessesTab({ language }: Props) {
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const response = await fetch('/api/control-plane/summary?limit=120');
+      const [response, autonomyResponse] = await Promise.all([
+        fetch('/api/control-plane/summary?limit=120'),
+        fetch('/api/autonomy/summary'),
+      ]);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json() as ControlPlaneSummary;
       setSummary(data);
+      if (autonomyResponse.ok) {
+        setAutonomy(await autonomyResponse.json() as AutonomySummary);
+      }
       setError('');
       setSelectedId(current => current || data.pending_approvals[0]?.id || data.tasks[0]?.id || '');
     } catch (nextError) {
@@ -133,6 +147,22 @@ export function ProcessesTab({ language }: Props) {
     if (!window.confirm(copy.stopConfirm)) return;
     void post('/api/control-plane/kill', 'Emergency stop from web console');
   };
+  const reindex = async () => {
+    setBusy('autonomy-index');
+    try {
+      const response = await fetch('/api/autonomy/index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await load(true);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy('');
+    }
+  };
 
   if (loading && !summary) return <div className="control-loading"><RefreshCw className="spin-slow" size={20} />Control Plane</div>;
 
@@ -158,6 +188,21 @@ export function ProcessesTab({ language }: Props) {
         <div><span>{copy.active}</span><strong>{(summary?.counts.running || 0) + (summary?.counts.queued || 0)}</strong></div>
         <div><span>{copy.completed}</span><strong>{summary?.counts.done || 0}</strong></div>
         <div><span>{copy.blocked}</span><strong>{(summary?.counts.blocked || 0) + (summary?.counts.failed || 0) + (summary?.counts.killed || 0)}</strong></div>
+      </section>
+
+      <section className="control-autonomy" aria-labelledby="autonomy-runtime-title">
+        <div className="control-autonomy-head">
+          <div><BrainCircuit size={18} /><h3 id="autonomy-runtime-title">{copy.autonomyTitle}</h3></div>
+          <button type="button" onClick={() => void reindex()} disabled={Boolean(busy)} title={copy.reindex}>
+            <RefreshCw size={14} className={busy === 'autonomy-index' ? 'spin-slow' : ''} />{copy.reindex}
+          </button>
+        </div>
+        <div className="control-autonomy-grid">
+          <div><Database size={16} /><span>{copy.indexed}</span><strong>{autonomy?.memory.files ?? 0}</strong><small>{autonomy?.memory.fresh_at ? `${copy.fresh}: ${shortTime(autonomy.memory.fresh_at)}` : copy.neverIndexed}</small></div>
+          <div><Wrench size={16} /><span>{copy.capabilities}</span><strong>{autonomy ? `${autonomy.capabilities.ready}/${autonomy.capabilities.total}` : '—'}</strong><small>{autonomy?.capabilities.status || '—'}</small></div>
+          <div><ListChecks size={16} /><span>{copy.plans}</span><strong>{autonomy?.plans.filter(plan => plan.status === 'running').length ?? 0}</strong><small>{autonomy?.plans[0]?.goal || '—'}</small></div>
+          <div><ShieldCheck size={16} /><span>{copy.proposals}</span><strong>{autonomy?.proposals.filter(item => item.status === 'awaiting_approval').length ?? 0}</strong><small>{autonomy?.proposals[0]?.capability_id || '—'}</small></div>
+        </div>
       </section>
 
       <div className="control-workspace">

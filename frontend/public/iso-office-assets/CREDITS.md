@@ -1,7 +1,9 @@
-# Isometric character sprites
+# Isometric office artwork
 
-The isometric character sprites in `characters/` are from the **Claude-Office**
-project by **W17ANT**, used under the MIT License.
+The room backgrounds, character sprites, furniture, decorations and effects in
+this directory are adapted from the **Claude-Office** project by **W17ANT** and
+used under the MIT License. WebP files are resized and optimized derivatives of
+the upstream PNG artwork.
 
 - Source: https://github.com/W17ant/Claude-Office
 - License: MIT — Copyright (c) 2026 W17ANT

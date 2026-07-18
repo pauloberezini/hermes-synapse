@@ -18,6 +18,13 @@ const summary = {
   events: [{ id: 1, evidence_id: 'EV-000001', task_id: pendingTask.id, event_type: 'task_created', actor: 'control-plane', message: 'Tool request classified as R3', risk_class: 'R3', confidence: 'CONFIRMED', output_hash: '', created_at: '2026-07-16T10:00:00Z' }],
   policy: { risk_levels: ['R0', 'R1', 'R2', 'R3', 'R4'], unknown_tools: 'R4', r4_double_confirmation: true },
 };
+const autonomySummary = {
+  workspace: '/workspace',
+  capabilities: { status: 'ready', ready: 7, total: 8, checked_at: '2026-07-16T10:00:00Z', capabilities: [] },
+  memory: { files: 312, bytes: 9000, fresh_at: '2026-07-16T10:00:00Z', entries: 4 },
+  plans: [{ id: 'plan-1', goal: 'Ship office', tier: 'verify', status: 'running', capabilities: [], steps: [], updated_at: '2026-07-16T10:00:00Z' }],
+  proposals: [],
+};
 
 describe('ProcessesTab', () => {
   afterEach(() => {
@@ -26,14 +33,17 @@ describe('ProcessesTab', () => {
   });
 
   it('shows pending task contract and sends explicit approval', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => summary })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'done' }) })
-      .mockResolvedValue({ ok: true, json: async () => ({ ...summary, pending_approvals: [], counts: { done: 1 } }) });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/autonomy/summary') return { ok: true, json: async () => autonomySummary };
+      if (path.includes('/approve')) return { ok: true, json: async () => ({ status: 'done' }) };
+      return { ok: true, json: async () => summary };
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<ProcessesTab language="en" />);
     expect((await screen.findAllByText('add_calendar_event')).length).toBeGreaterThan(0);
+    expect(screen.getByText('312')).toBeInTheDocument();
     expect(screen.getByText('EV-000001')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
 
@@ -44,15 +54,17 @@ describe('ProcessesTab', () => {
   });
 
   it('requires confirmation before activating the kill switch', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => summary })
-      .mockResolvedValue({ ok: true, json: async () => summary });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => (
+      String(input) === '/api/autonomy/summary'
+        ? { ok: true, json: async () => autonomySummary }
+        : { ok: true, json: async () => summary }
+    ));
     vi.stubGlobal('fetch', fetchMock);
     vi.spyOn(window, 'confirm').mockReturnValue(false);
 
     render(<ProcessesTab language="en" />);
     fireEvent.click(await screen.findByRole('button', { name: /stop all/i }));
     expect(window.confirm).toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

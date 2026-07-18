@@ -29,9 +29,10 @@ import {
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentEvent, AgentModel } from '../types';
-import type { CanvasLiveTrace } from './officeCanvasEngine';
+import { inferSpecialist, type CanvasLiveTrace } from './officeCanvasEngine';
 import { HermesMark } from './HermesMark';
 import { IsoOfficeCanvas } from './IsoOfficeCanvas';
+import { isoCharacterAsset } from './isoOffice';
 import { OFFICE_THEMES, OFFICE_THEME_STORAGE_KEY, PixelOfficeCanvas, type OfficeThemeKey } from './PixelOfficeCanvas';
 
 export type OfficeLiveTrace = CanvasLiveTrace & { ts: number };
@@ -86,7 +87,7 @@ const COPY = {
   ru: {
     subtitle: 'Живое состояние агентов в реальном времени', search: 'Поиск агента…', allProjects: 'Все проекты', allStatuses: 'Все статусы',
     total: 'Всего', working: 'Работают', waiting: 'Ожидают', errors: 'Ошибки', paused: 'На паузе', offline: 'Неактивны',
-    online: 'Онлайн', reconnecting: 'Переподключение', stale: 'Данные устарели', office: 'Pixel Office', iso: 'Изо-офис', command: 'Command Center', list: 'Список',
+    online: 'Онлайн', reconnecting: 'Переподключение', stale: 'Данные устарели', office: '2D-план', iso: 'Живой офис', command: 'Command Center', list: 'Список',
     zones: 'Зоны офиса', projects: 'Проекты', fit: 'Вписать в экран', filters: 'Фильтры', noResults: 'По заданным фильтрам ничего не найдено',
     noAgents: 'Офис пока пуст', retrying: 'Не удалось обновить данные. Повторяем попытку в фоне.', chat: 'Открыть чат', details: 'Сведения',
     currentTask: 'Текущая задача', lastActivity: 'Последняя активность', model: 'Модель', eventHistory: 'История событий', noEvents: 'Событий пока нет',
@@ -99,7 +100,7 @@ const COPY = {
   en: {
     subtitle: 'Live agent state in real time', search: 'Search agents…', allProjects: 'All projects', allStatuses: 'All statuses',
     total: 'Total', working: 'Working', waiting: 'Waiting', errors: 'Errors', paused: 'Paused', offline: 'Inactive',
-    online: 'Online', reconnecting: 'Reconnecting', stale: 'Stale data', office: 'Pixel Office', iso: 'Iso Office', command: 'Command Center', list: 'List',
+    online: 'Online', reconnecting: 'Reconnecting', stale: 'Stale data', office: '2D plan', iso: 'Live Office', command: 'Command Center', list: 'List',
     zones: 'Office zones', projects: 'Projects', fit: 'Fit to screen', filters: 'Filters', noResults: 'No agents match the selected filters',
     noAgents: 'The office is empty', retrying: 'Could not refresh data. Retrying in the background.', chat: 'Open chat', details: 'Details',
     currentTask: 'Current task', lastActivity: 'Last activity', model: 'Model', eventHistory: 'Event history', noEvents: 'No events yet',
@@ -210,11 +211,11 @@ const PixelAvatar = memo(function PixelAvatar({ agent, size = 'md' }: { agent: O
 });
 
 const InspectorPortrait = memo(function InspectorPortrait({ agent }: { agent: OfficeAgent }) {
-  const palette = hashString(agent.id || agent.name) % 6;
+  const specialist = inferSpecialist(agent.current_task, agent.last_action, agent.role);
   return (
     <span className={`inspector-pixel-portrait is-${agent.statusKind}`} aria-hidden="true">
       <i className="inspector-portrait-floor" />
-      <i className="inspector-portrait-sprite" style={{ backgroundImage: `url(/pixel-agents-assets/characters/char_${palette}.png)` }} />
+      <i className="inspector-portrait-sprite is-isometric" style={{ backgroundImage: `url(${isoCharacterAsset(agent, 'down', specialist)})` }} />
       <i className="inspector-portrait-status" />
     </span>
   );
@@ -362,7 +363,7 @@ function AgentInspector({ agent, copy, language, onClose, onChat, panelRef }: { 
 }
 
 function ViewSwitcher({ view, setView, copy }: { view: OfficeView; setView: (view: OfficeView) => void; copy: typeof COPY.ru | typeof COPY.en }) {
-  const views: { id: OfficeView; label: string; icon: React.ReactNode }[] = [{ id: 'office', label: copy.office, icon: <Grid2X2 size={15} /> }, { id: 'iso', label: copy.iso, icon: <Boxes size={15} /> }, { id: 'command', label: copy.command, icon: <Command size={15} /> }, { id: 'list', label: copy.list, icon: <List size={15} /> }];
+  const views: { id: OfficeView; label: string; icon: React.ReactNode }[] = [{ id: 'iso', label: copy.iso, icon: <Boxes size={15} /> }, { id: 'command', label: copy.command, icon: <Command size={15} /> }, { id: 'list', label: copy.list, icon: <List size={15} /> }, { id: 'office', label: copy.office, icon: <Grid2X2 size={15} /> }];
   return <div className="office-view-switcher" role="tablist" aria-label="Office view">{views.map(item => <button key={item.id} type="button" role="tab" aria-selected={view === item.id} className={view === item.id ? 'is-active' : ''} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span></button>)}</div>;
 }
 
@@ -380,7 +381,8 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [view, setViewState] = useState<OfficeView>(() => {
     const saved = localStorage.getItem(VIEW_STORAGE_KEY);
-    return saved === 'command' || saved === 'list' || saved === 'iso' ? saved : 'office';
+    if (saved === 'command' || saved === 'list') return saved;
+    return 'iso';
   });
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState(() => localStorage.getItem(PROJECT_STORAGE_KEY) || '');
@@ -463,7 +465,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
 
   useEffect(() => {
     const isDesktop = typeof window.matchMedia !== 'function' || window.matchMedia('(min-width: 769px)').matches;
-    if (!isDesktop || loading || selectedAgentId || didAutoSelectRef.current || !agents.length || view !== 'office') return;
+    if (!isDesktop || loading || selectedAgentId || didAutoSelectRef.current || !agents.length || view !== 'iso') return;
     const preferred = agents.find(agent => agent.statusKind === 'working') || agents[0];
     didAutoSelectRef.current = true;
     setSelectedAgentId(preferred.id);
@@ -526,12 +528,12 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
             {(view === 'office' || view === 'iso') && <div className="office-zoom-controls"><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(value => Math.max(.6, value - .1))} aria-label="Zoom out"><Minus size={15} /></button><button type="button" onClick={() => setZoom(1)} aria-label={copy.fit}><Maximize2 size={14} /></button><button type="button" onClick={() => setZoom(value => Math.min(1.8, value + .1))} aria-label="Zoom in"><Plus size={15} /></button></div>}
           </aside>
           <main className="office-stage">
-            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'iso' ? <IsoOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
+            {filteredAgents.length === 0 ? <div className="office-no-results"><Search size={24} /><span>{copy.noResults}</span></div> : view === 'iso' ? <IsoOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'office' ? <PixelOfficeView agents={filteredAgents} selectedAgentId={selectedAgentId} onSelect={selectAgent} zoom={zoom} onZoom={setZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={setTheme} /> : view === 'command' ? <CommandCenterView projects={visibleProjects} focusedProject={focusedProject} onFocus={setFocusedProject} onSelectAgent={selectAgent} copy={copy} /> : <CompactListView agents={filteredAgents} onSelect={selectAgent} copy={copy} language={language} groupMode={groupMode} setGroupMode={setGroupMode} sortMode={sortMode} setSortMode={setSortMode} />}
           </main>
           {selectedAgent && <AgentInspector agent={selectedAgent} copy={copy} language={language} onClose={closeInspector} onChat={selectChat} panelRef={inspectorRef} />}
         </div>
       )}
-      <nav className="office-mobile-nav" aria-label="Office views"><button type="button" className={view === 'office' ? 'is-active' : ''} onClick={() => setView('office')}><Grid2X2 size={18} /><span>{copy.office}</span></button><button type="button" className={view === 'list' ? 'is-active' : ''} onClick={() => setView('list')}><Users size={18} /><span>{copy.list}</span></button><button type="button" className={view === 'command' ? 'is-active' : ''} onClick={() => setView('command')}><Command size={18} /><span>{copy.projects}</span></button></nav>
+      <nav className="office-mobile-nav" aria-label="Office views"><button type="button" className={view === 'iso' ? 'is-active' : ''} onClick={() => setView('iso')}><Boxes size={18} /><span>{copy.iso}</span></button><button type="button" className={view === 'list' ? 'is-active' : ''} onClick={() => setView('list')}><Users size={18} /><span>{copy.list}</span></button><button type="button" className={view === 'command' ? 'is-active' : ''} onClick={() => setView('command')}><Command size={18} /><span>{copy.projects}</span></button></nav>
     </div>
   );
 }

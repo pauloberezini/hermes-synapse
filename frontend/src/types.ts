@@ -199,6 +199,58 @@ export interface ControlPlaneSummary {
   };
 }
 
+export interface AutonomyCapability {
+  id: string;
+  label: string;
+  required: boolean;
+  status: 'ready' | 'missing';
+  active_provider?: string | null;
+  install_available: boolean;
+  providers: Array<{ id: string; status: 'ready' | 'missing' | 'broken'; detail: string }>;
+}
+
+export interface AutonomyPlan {
+  id: string;
+  goal: string;
+  tier: string;
+  status: 'planned' | 'running' | 'completed' | 'failed' | string;
+  capabilities: string[];
+  steps: Array<{
+    id: string;
+    agent: string;
+    title: string;
+    status: string;
+    attempts: number;
+  }>;
+  updated_at: string;
+}
+
+export interface AutonomySummary {
+  workspace: string;
+  capabilities: {
+    status: 'ready' | 'degraded';
+    ready: number;
+    total: number;
+    checked_at: string;
+    capabilities: AutonomyCapability[];
+  };
+  memory: {
+    files: number;
+    bytes: number;
+    fresh_at?: string | null;
+    entries: number;
+  };
+  plans: AutonomyPlan[];
+  proposals: Array<{
+    id: string;
+    capability_id: string;
+    status: string;
+    risk_class: string;
+    control_task_id?: string | null;
+    created_at: string;
+  }>;
+}
+
 export interface SystemStats {
   available?: boolean;
   cpu_load_percent?: number | null;
@@ -313,4 +365,3 @@ export interface ChatSession {
   title: string;
   agent_id?: string;
 }
-

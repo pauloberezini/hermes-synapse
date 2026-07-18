@@ -382,7 +382,19 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
     };
     frameId = requestAnimationFrame(render);
     return () => { cancelAnimationFrame(frameId); observer.disconnect(); };
-  }, [editorOpen, historyTick, language, selectedAgentId, theme, zoom]);
+  }, [
+    editorOpen,
+    historyTick,
+    language,
+    palette.accent,
+    palette.background,
+    palette.floorWash,
+    palette.grid,
+    palette.wallTint,
+    selectedAgentId,
+    theme,
+    zoom,
+  ]);
 
   useEffect(() => { tintedWallsRef.current = null; }, [theme]);
 
