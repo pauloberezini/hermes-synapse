@@ -31,9 +31,12 @@ def test_update_config():
     original_provider = agent_instance.provider
     
     try:
-        with patch(
-            "backend.ollama_client.OllamaClient.list_models",
-            new=AsyncMock(return_value=[{"name": "qwen-test:latest"}]),
+        with (
+            patch(
+                "backend.ollama_client.OllamaClient.list_models",
+                new=AsyncMock(return_value=[{"name": "qwen-test:latest"}]),
+            ),
+            patch("backend.database.save_app_settings"),
         ):
             response = client.post(
                 "/api/config",
