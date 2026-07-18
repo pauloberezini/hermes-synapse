@@ -42,7 +42,9 @@ RUN pip install --no-cache-dir \
     "pytest-asyncio==0.25.3" \
     "faster-whisper>=1.1.0"
 
-
+# Git is a required read-only workspace capability for planning and verification.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy source code and environment configuration
 COPY backend/ /app/backend/
