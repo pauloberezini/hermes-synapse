@@ -39,6 +39,7 @@ RUN pip install --no-cache-dir \
     "google-api-python-client>=2.95.0" \
     "todoist-api-python>=2.1.3" \
     "pytest==8.3.5" \
+    "pytest-asyncio==0.25.3" \
     "faster-whisper>=1.1.0"
 
 

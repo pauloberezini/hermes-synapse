@@ -487,6 +487,23 @@ def _init_sqlite_schema():
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO app_settings (key, value)
+        VALUES ('language', 'ru')
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session_metadata (
+            session_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            agent_id TEXT
+        )
+    """)
+    cursor.execute("PRAGMA table_info(session_metadata)")
+    if "agent_id" not in {row[1] for row in cursor.fetchall()}:
+        cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
 
     # Control Plane: durable tasks, approval decisions and an evidence ledger.
     cursor.execute("""
@@ -1220,9 +1237,7 @@ def save_subagent(
 def get_subagent(id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a subagent by its ID."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        rows = _execute("""
             SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills,
                    x, y, temperature, role, status, is_enabled, model_provider, model_type,
                    model_params, current_task, last_action, last_error, progress, updated_at
