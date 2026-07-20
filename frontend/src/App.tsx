@@ -17,7 +17,8 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronLeft,
-  BarChart3
+  BarChart3,
+  Building2
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -44,6 +45,7 @@ import { ObsidianTab } from './components/ObsidianTab';
 import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
 import { MetricsTab } from './components/MetricsTab';
+import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -54,7 +56,7 @@ const langToLocale: Record<string, string> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = localStorage.getItem('jarvis_active_tab');
     return (saved as any) || 'chat';
   });
@@ -166,6 +168,7 @@ export default function App() {
   const [editAgentTemperature, setEditAgentTemperature] = useState(0.7);
   const [isUpdatingAgent, setIsUpdatingAgent] = useState(false);
   const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [officeLiveTrace, setOfficeLiveTrace] = useState<OfficeLiveTrace | null>(null);
 
   useEffect(() => {
     currentChatIdRef.current = currentChatId;
@@ -647,6 +650,13 @@ export default function App() {
                 role: 'system',
                 content: `⚙️ [${data.trace.agent}] ${data.trace.action}: ${data.trace.message.split('\n')[0]}`
               }]);
+              setOfficeLiveTrace({
+                agent: data.trace.agent,
+                action: data.trace.action,
+                message: data.trace.message,
+                status: data.trace.status,
+                ts: Date.now(),
+              });
             }
           }
         } catch (err) {
@@ -1427,7 +1437,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-container scanlines">
+    <div className={`app-container scanlines${activeTab === 'office' ? ' is-office-mode' : ''}`}>
       {/* Mobile Menu Toggle Button */}
       <button 
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1542,6 +1552,19 @@ export default function App() {
           >
             <Clock size={18} />
             {!sidebarCollapsed && <span>Schedules & Automation</span>}
+          </button>
+
+          <button
+            style={{
+              ...styles.navBtn,
+              ...(activeTab === 'office' ? styles.navBtnActive : {}),
+              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
+            }}
+            onClick={() => { setActiveTab('office'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+            title={sidebarCollapsed ? 'Pixel Office' : undefined}
+          >
+            <Building2 size={18} />
+            {!sidebarCollapsed && <span>Pixel Office</span>}
           </button>
 
           <button 
@@ -1813,7 +1836,7 @@ export default function App() {
       </aside>
 
       {/* 2. Main Workspace */}
-      <main style={styles.mainContent}>
+      <main style={styles.mainContent} className={activeTab === 'office' ? 'office-main' : undefined}>
         {activeTab === 'chat' && (
           <ChatTab
             currentChatId={currentChatId}
@@ -1993,6 +2016,19 @@ export default function App() {
 
         {activeTab === 'mcp' && (
           <MCPTab />
+        )}
+
+        {activeTab === 'office' && (
+          <OfficeTab
+            t={(key: string) => key}
+            isConnected={isConnected}
+            language={appSettings.language as 'en' | 'ru'}
+            liveTrace={officeLiveTrace}
+            selectChat={(agentId) => {
+              selectChat(agentId);
+              setActiveTab('chat');
+            }}
+          />
         )}
       </main>
 

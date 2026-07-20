@@ -52,3 +52,44 @@ export interface ChatSession {
   agent_id?: string;
 }
 
+export interface AgentEvent {
+  id: number;
+  agent_id: string;
+  timestamp: string;
+  event_type: string;
+  message: string;
+  status: string;
+  task?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentModel {
+  id: string;
+  name: string;
+  system_prompt: string;
+  model: string;
+  created_at?: string;
+  agent_type?: string;
+  parent_id?: string | null;
+  project?: string;
+  project_id?: string;
+  project_name?: string;
+  workspace?: string;
+  skills?: string;
+  x?: number;
+  y?: number;
+  temperature?: number;
+  role?: string;
+  status?: 'idle' | 'working' | 'error' | 'disabled' | string;
+  is_enabled?: boolean;
+  model_provider?: string;
+  model_type?: 'local' | 'external' | string;
+  model_params?: Record<string, unknown>;
+  current_task?: string;
+  last_action?: string;
+  last_error?: string;
+  progress?: number;
+  updated_at?: string;
+  recent_events?: AgentEvent[];
+}
+
