@@ -496,3 +496,40 @@ async def _broadcast_ws(payload: Dict):
         await manager.broadcast(payload)
     except Exception as e:
         logger.error(f"WS broadcast error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SELF-IMPROVING SKILL DISTILLATION LOOP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def run_skill_distillation_loop(interval_seconds: int = 900):
+    """Background task that periodically checks decision logs and distills complex successful tasks."""
+    logger.info("Starting background skill distillation loop...")
+    while True:
+        try:
+            from backend.skill_loop import get_skill_distiller
+            distiller = get_skill_distiller()
+            distilled = distiller.process_undistilled_logs(min_steps=3, limit=5)
+            if distilled:
+                logger.info(f"Skill distillation loop: created {len(distilled)} new skills.")
+                await _broadcast_ws({
+                    "type": "skills_distilled",
+                    "skills": distilled
+                })
+        except asyncio.CancelledError:
+            logger.info("Skill distillation loop cancelled.")
+            break
+        except Exception as err:
+            logger.error(f"Skill distillation loop error: {err}")
+        
+        await asyncio.sleep(interval_seconds)
+
+
+def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[asyncio.Task]:
+    """Launches the skill distillation loop as a background asyncio task if not already running."""
+    if "skill_distillation_loop" not in RUNNING_TASKS or RUNNING_TASKS["skill_distillation_loop"].done():
+        task = asyncio.create_task(run_skill_distillation_loop(interval_seconds=interval_seconds))
+        RUNNING_TASKS["skill_distillation_loop"] = task
+        return task
+    return RUNNING_TASKS["skill_distillation_loop"]
+
