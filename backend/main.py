@@ -465,6 +465,11 @@ async def get_subagents_api():
     from backend.database import get_all_subagents
     return get_all_subagents()
 
+@app.get("/api/office/state")
+async def get_office_state_api():
+    from backend.database import get_agent_office_state
+    return get_agent_office_state()
+
 @app.post("/api/subagents")
 async def save_subagent_api(subagent: SubagentUpdate):
     from backend.database import save_subagent

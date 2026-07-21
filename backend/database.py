@@ -370,6 +370,23 @@ def _init_sqlite_schema():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT DEFAULT 'info',
+            task TEXT DEFAULT '',
+            metadata TEXT DEFAULT '{}'
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_events_agent_id ON agent_events (agent_id, id DESC)
+    """)
+
     # Global app settings (KV store)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS app_settings (
@@ -551,6 +568,23 @@ def _init_postgres_schema():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (subagent_id, key)
             )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_events (
+                id SERIAL PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT DEFAULT 'info',
+                task TEXT DEFAULT '',
+                metadata TEXT DEFAULT '{}'
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agent_events_agent_id ON agent_events (agent_id, id DESC)
         """)
 
         # Global app settings (KV store)
@@ -955,6 +989,84 @@ def delete_subagent(id: str) -> bool:
     except Exception as e:
         logger.error(f"Error deleting subagent {id}: {e}")
         return False
+
+def _json_or_empty(val: Optional[str]) -> Dict[str, Any]:
+    if not val:
+        return {}
+    try:
+        return json.loads(val)
+    except Exception:
+        return {}
+
+def log_agent_event(
+    agent_id: str,
+    event_type: str,
+    message: str,
+    status: str = "info",
+    task: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+):
+    """Stores a visible agent action for the office/admin screens."""
+    try:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _execute("""
+            INSERT INTO agent_events (agent_id, timestamp, event_type, message, status, task, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            agent_id,
+            timestamp,
+            event_type,
+            message,
+            status,
+            task,
+            json.dumps(metadata or {}, ensure_ascii=False)
+        ))
+    except Exception as e:
+        logger.error(f"Error logging agent event for {agent_id}: {e}")
+
+def get_agent_events(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    try:
+        rows = _execute("""
+            SELECT id, agent_id, timestamp, event_type, message, status, task, metadata
+            FROM agent_events
+            WHERE agent_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        """, (agent_id, limit))
+        return [
+            {
+                "id": r[0],
+                "agent_id": r[1],
+                "timestamp": r[2],
+                "event_type": r[3],
+                "message": r[4],
+                "status": r[5],
+                "task": r[6] or "",
+                "metadata": _json_or_empty(r[7]),
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching agent events for {agent_id}: {e}")
+        return []
+
+def get_agent_office_state() -> Dict[str, Any]:
+    """Returns agents with their latest visible events for the live office screen."""
+    agents = get_all_subagents()
+    if not agents:
+        logger.warning("Office state requested with no subagents present. Re-running DB initialization.")
+        init_db()
+        agents = get_all_subagents()
+    return {
+        "agents": [
+            {
+                **agent,
+                "recent_events": get_agent_events(agent["id"], limit=5),
+            }
+            for agent in agents
+        ]
+    }
 
 def db_save_subagent_memory(subagent_id: str, key: str, value: str):
     """Saves or updates a memory fact (key-value pair) for a specific subagent."""
