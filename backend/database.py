@@ -330,6 +330,21 @@ def _init_sqlite_schema():
         )
     """)
 
+    # Create distilled skills table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS distilled_skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            decision_log_id INTEGER,
+            session_id TEXT NOT NULL,
+            skill_name TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            trigger_conditions TEXT NOT NULL,
+            content TEXT NOT NULL
+        )
+    """)
+
     # Run migrations for dynamic agent network
     for col, definition in [
         ("agent_type", "TEXT DEFAULT 'agent'"),
@@ -525,6 +540,21 @@ def _init_postgres_schema():
                 x INTEGER DEFAULT 100,
                 y INTEGER DEFAULT 100,
                 temperature REAL DEFAULT 0.7
+            )
+        """)
+
+        # Create distilled skills table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS distilled_skills (
+                id SERIAL PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                decision_log_id INTEGER,
+                session_id TEXT NOT NULL,
+                skill_name TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                trigger_conditions TEXT NOT NULL,
+                content TEXT NOT NULL
             )
         """)
 
@@ -818,7 +848,7 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
     """Retrieves the last N decision logs from the database, sorted by new first."""
     try:
         rows = _execute("""
-            SELECT timestamp, session_id, model, latency_ms, success,
+            SELECT id, timestamp, session_id, model, latency_ms, success,
                    error, prompt_tokens_estimate, user_message, assistant_response, traces,
                    agent_id, completion_tokens_estimate, cost_usd
             FROM decision_logs
@@ -827,23 +857,24 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
         logs = []
         for r in rows:
             try:
-                traces = json.loads(r[9])
+                traces = json.loads(r[10]) if isinstance(r[10], str) else r[10]
             except Exception:
                 traces = []
             logs.append({
-                "timestamp": r[0],
-                "session_id": r[1],
-                "model": r[2],
-                "latency_ms": r[3],
-                "success": bool(r[4]),
-                "error": r[5],
-                "prompt_tokens_estimate": r[6],
-                "user_message": r[7],
-                "assistant_response": r[8],
+                "id": r[0],
+                "timestamp": r[1],
+                "session_id": r[2],
+                "model": r[3],
+                "latency_ms": r[4],
+                "success": bool(r[5]),
+                "error": r[6],
+                "prompt_tokens_estimate": r[7],
+                "user_message": r[8],
+                "assistant_response": r[9],
                 "traces": traces,
-                "agent_id": r[10] if len(r) > 10 else "jarvis",
-                "completion_tokens_estimate": r[11] if len(r) > 11 else 0,
-                "cost_usd": r[12] if len(r) > 12 else 0.0,
+                "agent_id": r[11] if len(r) > 11 else "jarvis",
+                "completion_tokens_estimate": r[12] if len(r) > 12 else 0,
+                "cost_usd": r[13] if len(r) > 13 else 0.0,
             })
         return logs
     except Exception as e:
@@ -1353,6 +1384,112 @@ def db_get_aggregated_metrics() -> Dict[str, Any]:
             "by_agent": [],
             "by_model": []
         }
+
+def db_save_distilled_skill(skill_data: Dict[str, Any]) -> int:
+    """Saves or updates a distilled skill entry in the database."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now_str = datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S")
+        _execute("""
+            INSERT OR REPLACE INTO distilled_skills (
+                created_at, decision_log_id, session_id, skill_name,
+                title, file_path, trigger_conditions, content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            skill_data.get("created_at", now_str),
+            skill_data.get("decision_log_id"),
+            skill_data.get("session_id", "default"),
+            skill_data["skill_name"],
+            skill_data["title"],
+            skill_data["file_path"],
+            skill_data.get("trigger_conditions", ""),
+            skill_data["content"]
+        ))
+        rows = _execute("SELECT id FROM distilled_skills WHERE skill_name = ?", (skill_data["skill_name"],))
+        return rows[0][0] if rows else 1
+    except Exception as e:
+        logger.error(f"Error saving distilled skill to database: {e}")
+        return -1
+
+def db_get_distilled_skills(limit: int = 50) -> List[Dict[str, Any]]:
+    """Retrieves distilled skills from database ordered by newest first."""
+    try:
+        rows = _execute("""
+            SELECT id, created_at, decision_log_id, session_id, skill_name, title, file_path, trigger_conditions, content
+            FROM distilled_skills
+            ORDER BY id DESC LIMIT ?
+        """, (limit,))
+        skills = []
+        for r in rows:
+            skills.append({
+                "id": r[0],
+                "created_at": r[1],
+                "decision_log_id": r[2],
+                "session_id": r[3],
+                "skill_name": r[4],
+                "title": r[5],
+                "file_path": r[6],
+                "trigger_conditions": r[7],
+                "content": r[8]
+            })
+        return skills
+    except Exception as e:
+        logger.error(f"Error fetching distilled skills: {e}")
+        return []
+
+def db_is_log_distilled(decision_log_id: int) -> bool:
+    """Returns True if a decision log ID has already been distilled into a skill."""
+    try:
+        rows = _execute("SELECT id FROM distilled_skills WHERE decision_log_id = ?", (decision_log_id,))
+        return len(rows) > 0
+    except Exception as e:
+        logger.error(f"Error checking if decision log is distilled: {e}")
+        return False
+
+def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> List[Dict[str, Any]]:
+    """Retrieves successful decision logs with at least min_steps execution traces that haven't been distilled yet."""
+    try:
+        rows = _execute("""
+            SELECT id, timestamp, session_id, model, latency_ms, success,
+                   error, prompt_tokens_estimate, user_message, assistant_response, traces,
+                   agent_id, completion_tokens_estimate, cost_usd
+            FROM decision_logs
+            WHERE success = 1
+              AND id NOT IN (SELECT decision_log_id FROM distilled_skills WHERE decision_log_id IS NOT NULL)
+            ORDER BY id DESC LIMIT ?
+        """, (limit * 3,))
+        
+        candidates = []
+        for r in rows:
+            try:
+                traces = json.loads(r[10]) if isinstance(r[10], str) else r[10]
+            except Exception:
+                traces = []
+            
+            if isinstance(traces, list) and len(traces) >= min_steps:
+                candidates.append({
+                    "id": r[0],
+                    "timestamp": r[1],
+                    "session_id": r[2],
+                    "model": r[3],
+                    "latency_ms": r[4],
+                    "success": bool(r[5]),
+                    "error": r[6],
+                    "prompt_tokens_estimate": r[7],
+                    "user_message": r[8],
+                    "assistant_response": r[9],
+                    "traces": traces,
+                    "agent_id": r[11],
+                    "completion_tokens_estimate": r[12],
+                    "cost_usd": r[13]
+                })
+                if len(candidates) >= limit:
+                    break
+        return candidates
+    except Exception as e:
+        logger.error(f"Error fetching undistilled logs: {e}")
+        return []
 
 # Auto-initialize database schema on import to prevent missing tables
 init_db()

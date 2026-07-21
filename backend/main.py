@@ -104,6 +104,13 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(60)
     asyncio.create_task(_bcm_session_scheduler_task())
 
+    # Start background self-improving skill distillation loop
+    try:
+        from backend.scheduler import start_skill_distillation_loop
+        start_skill_distillation_loop(interval_seconds=900)
+    except Exception as e:
+        logger.warning(f"Failed to start skill distillation loop: {e}")
+
     yield
     # Shutdown: Stop Telegram bot
     await shutdown_bot()
@@ -533,6 +540,45 @@ async def get_skills_api():
         if name not in skill_to_tools:
             skill_to_tools[name] = [f"MCP: {name}"]
     return skill_to_tools
+
+
+@app.get("/api/skills/distilled")
+async def get_distilled_skills_api(limit: int = 50):
+    """Returns all automatically distilled skills from the database."""
+    from backend.database import db_get_distilled_skills
+    return db_get_distilled_skills(limit=limit)
+
+
+@app.post("/api/skills/distill/auto")
+async def trigger_auto_distillation_api(min_steps: int = 3, limit: int = 10):
+    """Triggers an automatic distillation scan over recent successful multi-step decision logs."""
+    from backend.skill_loop import get_skill_distiller
+    distiller = get_skill_distiller()
+    distilled = distiller.process_undistilled_logs(min_steps=min_steps, limit=limit)
+    return {
+        "status": "success",
+        "distilled_count": len(distilled),
+        "skills": distilled
+    }
+
+
+@app.post("/api/skills/distill/{log_id}")
+async def trigger_single_log_distillation_api(log_id: int):
+    """Distills a specific decision log entry by ID into a reusable SKILL.md file."""
+    from backend.database import get_decision_logs, db_is_log_distilled
+    logs = get_decision_logs(limit=200)
+    target_log = next((l for l in logs if l.get("id") == log_id), None)
+    if not target_log:
+        raise HTTPException(status_code=404, detail=f"Decision log #{log_id} not found")
+    
+    if db_is_log_distilled(log_id):
+        return {"status": "already_distilled", "message": f"Log #{log_id} has already been distilled."}
+
+    from backend.skill_loop import get_skill_distiller
+    distiller = get_skill_distiller()
+    skill_dict = distiller.distill_log_entry(target_log)
+    saved_skill = distiller.save_and_index_skill(skill_dict)
+    return {"status": "success", "skill": saved_skill}
 
 _models_cache = {"data": None, "timestamp": 0}
 
