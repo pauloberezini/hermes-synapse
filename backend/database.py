@@ -809,6 +809,59 @@ def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         logger.error(f"Error retrieving chat history: {e}")
         return []
 
+def get_session_trajectory_data(session_id: str) -> Dict[str, Any]:
+    """Retrieves full chronological message history and associated decision logs for a session."""
+    try:
+        rows = _execute("""
+            SELECT id, role, content, cost_usd, timestamp FROM messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+        """, (session_id,))
+        messages = [
+            {"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3], "timestamp": r[4]}
+            for r in rows
+        ]
+
+        dec_rows = _execute("""
+            SELECT id, timestamp, session_id, model, latency_ms, success,
+                   error, prompt_tokens_estimate, user_message, assistant_response, traces,
+                   agent_id, completion_tokens_estimate, cost_usd
+            FROM decision_logs
+            WHERE session_id = ?
+            ORDER BY id ASC
+        """, (session_id,))
+        decision_logs = []
+        for r in dec_rows:
+            try:
+                traces = json.loads(r[10]) if isinstance(r[10], str) else r[10]
+            except Exception:
+                traces = []
+            decision_logs.append({
+                "id": r[0],
+                "timestamp": r[1],
+                "session_id": r[2],
+                "model": r[3],
+                "latency_ms": r[4],
+                "success": bool(r[5]),
+                "error": r[6],
+                "prompt_tokens_estimate": r[7],
+                "user_message": r[8],
+                "assistant_response": r[9],
+                "traces": traces,
+                "agent_id": r[11] if len(r) > 11 else "jarvis",
+                "completion_tokens_estimate": r[12] if len(r) > 12 else 0,
+                "cost_usd": r[13] if len(r) > 13 else 0.0,
+            })
+        return {
+            "session_id": session_id,
+            "messages": messages,
+            "decision_logs": decision_logs
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving session trajectory data for {session_id}: {e}")
+        return {"session_id": session_id, "messages": [], "decision_logs": []}
+
+
 def clear_chat_history(session_id: str):
     """Deletes all messages in the database for a session."""
     try:

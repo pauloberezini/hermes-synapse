@@ -18,6 +18,7 @@ import {
   Lock,
   Edit2,
   FileText,
+  Download,
   X as XIcon
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig, ChatSession } from '../types';
@@ -113,6 +114,11 @@ export function ChatTab({
     } catch (err) {
       console.error('Error renaming session:', err);
     }
+  };
+
+  const handleExportTrajectory = (sessionId: string, format: string = 'sharegpt', extension: string = 'jsonl') => {
+    const url = `http://localhost:8000/api/sessions/${sessionId}/export-trajectory?format=${format}&extension=${extension}&download=true`;
+    window.open(url, '_blank');
   };
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -442,27 +448,49 @@ export function ChatTab({
                         ><Copy size={12}/> Fork</button>
                         
                         {s === 'dashboard' ? (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              setActiveMenu(null);
-                              if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
-                                try {
-                                  const res = await fetchWithAuth(`http://localhost:8000/api/history/dashboard`, {
-                                    method: 'DELETE'
-                                  });
-                                  if (res.ok) {
-                                    selectChat('dashboard');
-                                  }
-                                } catch(err) { console.error(err); }
-                              }
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'}
-                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: 'rgba(239,68,68,0.9)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
-                          ><Trash2 size={12}/> Purge</button>
+                          <>
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setActiveMenu(null);
+                                if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
+                                  try {
+                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/dashboard`, {
+                                      method: 'DELETE'
+                                    });
+                                    if (res.ok) {
+                                      selectChat('dashboard');
+                                    }
+                                  } catch(err) { console.error(err); }
+                                }
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: 'rgba(239,68,68,0.9)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                            ><Trash2 size={12}/> Purge</button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenu(null);
+                                handleExportTrajectory(s, 'sharegpt', 'jsonl');
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: '#00f0ff', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                            ><Download size={12}/> Export (ShareGPT)</button>
+                          </>
                         ) : (
                           <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenu(null);
+                                handleExportTrajectory(s, 'sharegpt', 'jsonl');
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', color: '#00f0ff', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderRadius: '4px', fontSize: '0.75rem', transition: 'background-color 0.2s' }}
+                            ><Download size={12}/> Export (ShareGPT)</button>
                             <button
                               onClick={async (e) => {
                                 e.stopPropagation();

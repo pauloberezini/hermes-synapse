@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -853,6 +853,55 @@ async def delete_history_api(chat_id: str):
     if chat_id in agent_instance.last_costs:
         agent_instance.last_costs[chat_id] = 0.0
     return {"status": "success"}
+
+@app.get("/api/sessions/{session_id}/export-trajectory")
+@app.get("/api/history/{session_id}/export")
+async def export_session_trajectory(
+    session_id: str,
+    format: str = Query("sharegpt", description="Export dataset format: sharegpt, openai, or alpaca"),
+    extension: str = Query("jsonl", description="Export file extension: jsonl or json"),
+    download: bool = Query(True, description="Whether to trigger file download attachment response")
+):
+    """Exports session execution trajectory in specified format (ShareGPT, OpenAI, or Alpaca)."""
+    import json
+    from backend.database import get_session_trajectory_data
+    from backend.exporters import get_exporter
+
+    data = get_session_trajectory_data(session_id)
+    exporter = get_exporter(format)
+
+    ext = extension.lower().strip()
+    if ext not in ("jsonl", "json"):
+        ext = "jsonl"
+
+    result = exporter.export(
+        session_id=session_id,
+        messages=data.get("messages", []),
+        decision_logs=data.get("decision_logs", []),
+        extension=ext
+    )
+
+    filename = f"trajectory_{session_id}_{format}.{ext}"
+
+    if download:
+        if isinstance(result, (dict, list)):
+            content_str = json.dumps(result, indent=2, ensure_ascii=False)
+        else:
+            content_str = str(result)
+
+        media_type = "application/x-jsonlines" if ext == "jsonl" else "application/json"
+        return Response(
+            content=content_str,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+
+    if isinstance(result, str) and ext == "jsonl":
+        return Response(content=result, media_type="application/x-jsonlines")
+    return result
+
 
 @app.post("/api/history/{session_id}/archive")
 async def archive_history_session(session_id: str):
