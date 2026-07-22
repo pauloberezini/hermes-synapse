@@ -56,3 +56,23 @@ def test_export_history_alias_endpoint_openai_json(client):
     assert data["messages"][0]["role"] == "user"
     assert data["messages"][1]["role"] == "assistant"
     clear_chat_history(session_id)
+
+
+def test_export_trajectory_unknown_format_falls_back_to_sharegpt(client):
+    session_id = "test_export_unknown_format"
+    clear_chat_history(session_id)
+    save_message(session_id, "user", "Test message")
+    save_message(session_id, "assistant", "Test response")
+
+    response = client.get(f"/api/sessions/{session_id}/export-trajectory?format=unknown_format&extension=unknown_ext")
+    assert response.status_code == 200
+
+    # Extension defaults to jsonl for invalid extensions
+    assert "trajectory_test_export_unknown_format_unknown_format.jsonl" in response.headers.get("content-disposition", "")
+    lines = response.text.strip().split("\n")
+    assert len(lines) == 1
+    data = json.loads(lines[0])
+    assert data["id"] == session_id
+    assert "conversations" in data
+    clear_chat_history(session_id)
+
