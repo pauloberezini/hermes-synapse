@@ -1,8 +1,16 @@
-"""
-Unit tests for backend.bcm package (ComplianceOfficer risk limits & trading safety checks).
-"""
 import pytest
-from backend.bcm.compliance_officer import ComplianceOfficer
+
+try:
+    from backend.bcm.compliance_officer import ComplianceOfficer
+    HAS_BCM = True
+except ModuleNotFoundError:
+    try:
+        from bcm.compliance_officer import ComplianceOfficer
+        HAS_BCM = True
+    except ModuleNotFoundError:
+        HAS_BCM = False
+
+pytestmark = pytest.mark.skipif(not HAS_BCM, reason="BCM module is a private component ignored in git")
 
 
 def test_compliance_hard_limits_approved():
