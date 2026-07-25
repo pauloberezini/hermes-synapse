@@ -101,3 +101,9 @@ class SkillManifest:
             "tool_schemas": [t.to_openai_schema() for t in self.tools],
             "tags": self.tags,
         }
+
+    def to_dict(self) -> dict:
+        """Serialize complete manifest to dict."""
+        entry = self.to_registry_entry()
+        entry["name"] = self.name
+        return entry

@@ -558,6 +558,57 @@ async def get_distilled_skills_api(limit: int = 50):
     return db_get_distilled_skills(limit=limit)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 14: COMMUNITY SKILLS MARKETPLACE & PLUGIN REGISTRY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/marketplace/skills")
+async def get_marketplace_skills_api():
+    """
+    Returns all registered community skills authored using `hermes_sdk`.
+    Includes manifests, tools, required environment variables, and tags.
+    """
+    from hermes_sdk.skill import get_registry
+    registry = get_registry()
+    manifests = [manifest.to_dict() for manifest in registry.values()]
+    return {
+        "status": "success",
+        "count": len(manifests),
+        "skills": manifests
+    }
+
+
+class SkillRegistrationPayload(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    tools: List[str] = []
+    author: str = "community"
+
+
+@app.post("/api/marketplace/register")
+async def register_marketplace_skill_api(payload: SkillRegistrationPayload):
+    """Dynamically registers a community skill into the Hermes Marketplace registry."""
+    from hermes_sdk.types import SkillManifest, ToolSchema
+    from hermes_sdk.skill import get_registry
+    
+    registry = get_registry()
+    tools_schemas = [ToolSchema(name=t, description=f"Tool: {t}") for t in payload.tools]
+    manifest = SkillManifest(
+        name=payload.name,
+        display_name=payload.display_name,
+        description=payload.description,
+        author=payload.author,
+        tools=tools_schemas
+    )
+    registry[payload.name] = manifest
+    return {
+        "status": "success",
+        "message": f"Skill '{payload.name}' registered in Hermes Marketplace.",
+        "skill": manifest.to_dict()
+    }
+
+
 @app.post("/api/skills/distill/auto")
 async def trigger_auto_distillation_api(min_steps: int = 3, limit: int = 10):
     """Triggers an automatic distillation scan over recent successful multi-step decision logs."""
