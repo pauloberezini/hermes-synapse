@@ -259,10 +259,10 @@ class SQLiteGraphMemoryEngine(MemoryEngine):
 # Factory
 # ---------------------------------------------------------------------------
 
-def get_memory_engine() -> MemoryEngine:
+def get_memory_engine(engine_override: Optional[str] = None) -> MemoryEngine:
     """Return the configured MemoryEngine implementation."""
-    engine_name = os.getenv("MEMORY_ENGINE", "qdrant").strip().lower()
-    if engine_name == "graph":
+    engine_name = (engine_override or os.getenv("MEMORY_ENGINE", "qdrant")).strip().lower()
+    if engine_name in ("graph", "graphrag"):
         logger.info("Memory engine: using SQLiteGraphMemoryEngine (Local GraphRAG)")
         return SQLiteGraphMemoryEngine()
     logger.info("Memory engine: using QdrantMemoryEngine (Flat Vectors)")

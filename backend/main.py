@@ -539,6 +539,15 @@ async def get_skills_api():
     for name in mcp_clients:
         if name not in skill_to_tools:
             skill_to_tools[name] = [f"MCP: {name}"]
+
+    # Append automatically distilled skills
+    from backend.database import db_get_distilled_skills
+    distilled_list = db_get_distilled_skills(limit=100)
+    for ds in distilled_list:
+        name = ds.get("skill_name")
+        if name and name not in skill_to_tools:
+            skill_to_tools[name] = [f"Distilled: {ds.get('title', name)}"]
+
     return skill_to_tools
 
 
