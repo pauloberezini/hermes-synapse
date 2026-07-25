@@ -88,6 +88,10 @@ class SkillBase:
 
     _manifest: SkillManifest  # injected by @skill decorator
 
+    def get_manifest(self) -> SkillManifest:
+        """Returns the SkillManifest metadata for this skill."""
+        return getattr(self, "_manifest", None)
+
     def get_env(self, key: str, required: bool = True, default: str = "") -> str:
         """
         Safely read an environment variable.
