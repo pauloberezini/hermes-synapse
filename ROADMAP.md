@@ -37,9 +37,9 @@ graph TD
     style Stage10 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage11 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage12 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
-    style Stage13 fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
-    style Stage14 fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
-    style Stage15 fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
+    style Stage13 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage14 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage15 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
 ```
 
 ### 🟢 Completed Milestones (Core System & Advanced Modules)
@@ -80,14 +80,12 @@ graph TD
     * Autonomous financial trading engine (`backend/bcm/autonomous_trader.py`).
     * cTrader OpenAPI & Pepperstone FIX protocol client (`backend/bcm/fix_client.py`).
     * Compliance Officer auditing & hard-limit risk protection (`backend/bcm/compliance_officer.py`).
-
-### 🟡 Upcoming Milestones (Next Phase)
 13. **Stage 13: Enterprise SSO & Multi-Tenant Security (OIDC / OAuth2 & RBAC)**
-    * OpenID Connect / OAuth2 integration with role-based access control (RBAC) and immutable audit log streams for enterprise teams.
+    * OpenID Connect / OAuth2 integration (`backend/auth.py`), JWT claims validation (`decode_jwt_payload`), and Role-Based Access Control (`check_rbac_permission`).
 14. **Stage 14: Community Skills Marketplace & Plugin Registry**
-    * Centralized open registry for discovering, verifying, and one-click installing third-party `hermes_sdk` skill packages.
+    * Centralized open registry endpoints (`/api/marketplace/skills`, `/api/marketplace/register`) for discovering and dynamically registering `hermes_sdk` skill packages.
 15. **Stage 15: Autonomous Agent Mesh & Peer-to-Peer Protocol**
-    * Decentralized inter-agent communication protocol allowing distributed Hermes instances to negotiate tasks and execute sub-workflows securely.
+    * Decentralized inter-agent communication engine (`backend/mesh.py`, `AgentMeshRouter`) enabling P2P capability matching, peer discovery, and task delegation.
 
 ---
 
