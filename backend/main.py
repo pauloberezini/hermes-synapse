@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query
 from fastapi.responses import JSONResponse
@@ -607,6 +607,46 @@ async def register_marketplace_skill_api(payload: SkillRegistrationPayload):
         "message": f"Skill '{payload.name}' registered in Hermes Marketplace.",
         "skill": manifest.to_dict()
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGE 15: AUTONOMOUS AGENT MESH & PEER-TO-PEER PROTOCOL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/mesh/peers")
+async def get_mesh_peers_api(active_only: bool = True):
+    """Returns all registered P2P agent nodes in the Hermes Mesh network."""
+    from backend.mesh import get_mesh_router
+    router = get_mesh_router()
+    peers = router.list_peers(active_only=active_only)
+    return {
+        "status": "success",
+        "count": len(peers),
+        "peers": [p.model_dump() if hasattr(p, "model_dump") else p.dict() for p in peers]
+    }
+
+
+@app.post("/api/mesh/peers/register")
+async def register_mesh_peer_api(peer_data: Dict[str, Any]):
+    """Registers or updates a P2P agent node in the Hermes Mesh network."""
+    from backend.mesh import get_mesh_router, MeshPeerManifest
+    router = get_mesh_router()
+    manifest = MeshPeerManifest(**peer_data)
+    registered = router.register_peer(manifest)
+    return {
+        "status": "success",
+        "peer": registered.model_dump() if hasattr(registered, "model_dump") else registered.dict()
+    }
+
+
+@app.post("/api/mesh/dispatch")
+async def dispatch_mesh_task_api(task_data: Dict[str, Any]):
+    """Dispatches a task payload to a target peer node in the P2P agent mesh network."""
+    from backend.mesh import get_mesh_router, MeshTaskPayload
+    router = get_mesh_router()
+    payload = MeshTaskPayload(**task_data)
+    result = router.dispatch_mesh_task(payload)
+    return result
 
 
 @app.post("/api/skills/distill/auto")
