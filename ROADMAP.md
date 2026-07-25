@@ -21,6 +21,9 @@ graph TD
     Stage9 --> Stage10["Stage 10: Pluggable Memory & Enterprise DB (GraphRAG, Postgres, WAL)"]
     Stage10 --> Stage11["Stage 11: Developer SDK & Fine-Tuning Exporters (hermes_sdk, ShareGPT/OpenAI)"]
     Stage11 --> Stage12["Stage 12: BCM Engine (cTrader / FIX Protocol & Compliance Auditing)"]
+    Stage12 --> Stage13["Stage 13: Enterprise SSO & RBAC (OIDC/OAuth2, Audit Logs)"]
+    Stage13 --> Stage14["Stage 14: Community Skills Marketplace (hermes_sdk Registry)"]
+    Stage14 --> Stage15["Stage 15: Autonomous Agent Mesh (P2P Inter-Agent Protocol)"]
     
     style Stage1 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage2 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
@@ -34,6 +37,9 @@ graph TD
     style Stage10 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage11 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage12 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage13 fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
+    style Stage14 fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
+    style Stage15 fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
 ```
 
 ### 🟢 Completed Milestones (Core System & Advanced Modules)
@@ -74,6 +80,14 @@ graph TD
     * Autonomous financial trading engine (`backend/bcm/autonomous_trader.py`).
     * cTrader OpenAPI & Pepperstone FIX protocol client (`backend/bcm/fix_client.py`).
     * Compliance Officer auditing & hard-limit risk protection (`backend/bcm/compliance_officer.py`).
+
+### 🟡 Upcoming Milestones (Next Phase)
+13. **Stage 13: Enterprise SSO & Multi-Tenant Security (OIDC / OAuth2 & RBAC)**
+    * OpenID Connect / OAuth2 integration with role-based access control (RBAC) and immutable audit log streams for enterprise teams.
+14. **Stage 14: Community Skills Marketplace & Plugin Registry**
+    * Centralized open registry for discovering, verifying, and one-click installing third-party `hermes_sdk` skill packages.
+15. **Stage 15: Autonomous Agent Mesh & Peer-to-Peer Protocol**
+    * Decentralized inter-agent communication protocol allowing distributed Hermes instances to negotiate tasks and execute sub-workflows securely.
 
 ---
 
@@ -138,6 +152,9 @@ CREATE TABLE IF NOT EXISTS subagents (
 | **`timers_alarms`** | Timers & Alarms | `set_timer`, `set_alarm`, `cancel_timer_or_alarm` |
 | **`shell_execution`**| Shell Execution | `get_system_stats`, `execute_command` |
 | **`python_sandbox`** | Python Sandbox | `execute_command` |
+| **`bcm`** | BCM Trading | `bcm tools (Pepperstone FIX, cTrader OpenAPI, trading risk checks)` |
+| **`mcp_all`** | MCP Servers | `All connected Model Context Protocol server tools` |
+| **`distilled_skill`**| Distilled Skills | `Dynamic procedures distilled into .agents/skills/ from successful traces` |
 
 > [!NOTE]
 > System memory utilities `save_subagent_memory` and `get_subagent_memory` are always enabled for all sub-agents.
