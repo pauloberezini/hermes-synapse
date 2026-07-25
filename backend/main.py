@@ -142,6 +142,10 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
         
+    # Public auth endpoints do not require Bearer header
+    if path in ["/api/auth/request-code", "/api/auth/verify-code"]:
+        return await call_next(request)
+        
     # Check authorization header
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
