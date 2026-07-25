@@ -7,7 +7,9 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("hermes.skill_loop")
 
-SKILLS_DIR = os.getenv("DISTILLED_SKILLS_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "skills"))
+workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+default_skills_dir = os.path.join(workspace_root, ".agents", "skills")
+SKILLS_DIR = os.getenv("DISTILLED_SKILLS_DIR", default_skills_dir)
 
 
 def slugify(text: str) -> str:

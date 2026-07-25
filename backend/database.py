@@ -353,6 +353,7 @@ def _init_sqlite_schema():
         ("x", "INTEGER DEFAULT 100"),
         ("y", "INTEGER DEFAULT 100"),
         ("temperature", "REAL DEFAULT 0.7"),
+        ("memory_engine", "TEXT DEFAULT 'default'"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")

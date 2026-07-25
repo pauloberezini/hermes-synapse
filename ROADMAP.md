@@ -16,6 +16,11 @@ graph TD
     Stage4 --> Stage5["Stage 5: Voice & Speech (Whisper STT, TTS)"]
     Stage5 --> Stage6["Stage 6: Integrations & Utilities (Spotify, Search, Markets, RSS)"]
     Stage6 --> Stage7["Stage 7: Public Release & Promo (Packaging, Docs, HN/Reddit)"]
+    Stage7 --> Stage8["Stage 8: Visual Operations (Pixel Office & Telemetry)"]
+    Stage8 --> Stage9["Stage 9: Self-Improving Skill Loop (Markdown Distillation)"]
+    Stage9 --> Stage10["Stage 10: Pluggable Memory & Enterprise DB (GraphRAG, Postgres, WAL)"]
+    Stage10 --> Stage11["Stage 11: Developer SDK & Fine-Tuning Exporters (hermes_sdk, ShareGPT/OpenAI)"]
+    Stage11 --> Stage12["Stage 12: BCM Engine (cTrader / FIX Protocol & Compliance Auditing)"]
     
     style Stage1 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage2 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
@@ -24,9 +29,14 @@ graph TD
     style Stage5 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage6 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
     style Stage7 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage8 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage9 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage10 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage11 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    style Stage12 fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
 ```
 
-### 🟢 Completed Milestones (Core System)
+### 🟢 Completed Milestones (Core System & Advanced Modules)
 1. **Stage 1: Heart & Voice (LLM + Telegram + Web UI)**
    * OpenRouter model integration (`google/gemini-2.5-flash` by default).
    * Async FastAPI backend and Telegram bot handlers.
@@ -49,6 +59,21 @@ graph TD
 7. **Stage 7: Public Release & Promo**
    * Codebase cleaned and licensed under MIT on GitHub (`hermes-synapse`).
    * Marketing campaigns and posts launched on LinkedIn, Facebook, Medium, Reddit, X (Twitter), and Telegram.
+8. **Stage 8: Visual Operations & Telemetry (Pixel Office & Agent Lounge)**
+   * Interactive 2.5D Isometric Pixel Office canvas rendering active agent nodes as sprites, lounge zones, and real-time backend telemetry events (`PixelOfficeCanvas.tsx`, `isoOffice.ts`).
+9. **Stage 9: Self-Improving Skill Loop & Trajectory Distillation**
+   * Trajectory recorder and skill distiller (`backend/skills/distiller.py`, `backend/skills/loop.py`).
+   * Automated distillation of successful multi-step execution traces into reusable Markdown SKILL files for continuous self-learning.
+10. **Stage 10: Pluggable Memory Architecture & Enterprise Database Layer**
+    * GraphRAG support (`backend/graphrag.py`) for knowledge graph indexing and entity extraction.
+    * Dual backend adapter (`backend/database.py`) supporting SQLite WAL mode and enterprise PostgreSQL.
+11. **Stage 11: Developer SDK & Fine-Tuning Exporters (`hermes_sdk`)**
+    * Multi-format fine-tuning dataset exporters (ShareGPT, OpenAI, Alpaca formats) via `/api/exporters`.
+    * Programmatic Python package (`hermes_sdk`) for embedding and executing Hermes agent networks inside external python applications.
+12. **Stage 12: BCM Engine (cTrader / FIX Protocol & Compliance Auditing)**
+    * Autonomous financial trading engine (`backend/bcm/autonomous_trader.py`).
+    * cTrader OpenAPI & Pepperstone FIX protocol client (`backend/bcm/fix_client.py`).
+    * Compliance Officer auditing & hard-limit risk protection (`backend/bcm/compliance_officer.py`).
 
 ---
 
