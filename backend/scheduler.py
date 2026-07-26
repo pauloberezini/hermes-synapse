@@ -266,6 +266,108 @@ def cancel_recurring_reminder(reminder_id: str) -> bool:
     return True
 
 
+def update_timer(
+    item_id: str,
+    label: str,
+    task_type: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+    duration_seconds: Optional[int] = None,
+    time_str: Optional[str] = None,
+    interval_hours: Optional[float] = None,
+) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+
+    chat_id = job.kwargs.get("chat_id", "dashboard")
+    created_at = _timer_meta.get(item_id, {}).get("created_at", datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S"))
+
+    job.remove()
+    _timer_meta.pop(item_id, None)
+
+    if task_type == "one-shot":
+        if duration_seconds is None:
+            raise ValueError("duration_seconds is required for one-shot timer")
+        run_at = datetime.now(scheduler.timezone) + timedelta(seconds=duration_seconds)
+        scheduler.add_job(
+            _job_one_shot,
+            trigger=DateTrigger(run_date=run_at),
+            kwargs={"job_id": item_id, "label": label, "duration": duration_seconds,
+                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+            id=item_id, name=label, replace_existing=True,
+        )
+        _timer_meta[item_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds}
+    elif task_type == "alarm":
+        if not time_str:
+            raise ValueError("time_str is required for alarm timer")
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Jerusalem")
+        now = datetime.now(tz)
+        time_str_clean = time_str.strip()
+        target_dt = None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                target_dt = datetime.strptime(time_str_clean, fmt).replace(tzinfo=tz)
+                break
+            except ValueError:
+                continue
+        if target_dt is None:
+            for fmt in ("%H:%M:%S", "%H:%M"):
+                try:
+                    t = datetime.strptime(time_str_clean, fmt).time()
+                    target_dt = datetime.combine(now.date(), t).replace(tzinfo=tz)
+                    if target_dt < now:
+                        target_dt += timedelta(days=1)
+                    break
+                except ValueError:
+                    continue
+        if target_dt is None:
+            raise ValueError(f"Could not parse time format: '{time_str}'. Use HH:MM or YYYY-MM-DD HH:MM.")
+
+        target_time_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
+        scheduler.add_job(
+            _job_alarm,
+            trigger=DateTrigger(run_date=target_dt),
+            kwargs={"job_id": item_id, "label": label, "chat_id": chat_id,
+                    "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt},
+            id=item_id, name=label, replace_existing=True,
+        )
+        _timer_meta[item_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str}
+    elif task_type == "recurring":
+        if interval_hours is None:
+            raise ValueError("interval_hours is required for recurring timer")
+        scheduler.add_job(
+            _job_recurring,
+            trigger=IntervalTrigger(hours=interval_hours),
+            kwargs={"job_id": item_id, "label": label, "interval_hours": interval_hours,
+                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+            id=item_id, name=label, replace_existing=True,
+        )
+        _timer_meta[item_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours}
+    else:
+        raise ValueError(f"Invalid task type: '{task_type}'")
+
+    logger.info(f"Updated task {item_id}: label='{label}', type={task_type}")
+    return True
+
+
+def trigger_timer_now(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    kwargs = job.kwargs or {}
+    agent_id = kwargs.get("agent_id") or "jarvis"
+    prompt = kwargs.get("prompt")
+    chat_id = kwargs.get("chat_id", "dashboard")
+    if not prompt:
+        raise ValueError("Task has no prompt to execute.")
+    asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+    logger.info(f"Manually triggered task {item_id} (agent={agent_id})")
+    return True
+
+
+
 def _infer_type(job) -> str:
     func = getattr(job, "func", None)
     name = getattr(func, "__name__", "")

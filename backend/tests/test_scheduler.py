@@ -138,3 +138,22 @@ async def test_error_handling():
          
         await scheduler._send_telegram_alert("123", "Hello")
         await scheduler._broadcast_ws({"msg": "hi"})
+
+@pytest.mark.asyncio
+async def test_update_timer_and_trigger_now():
+    timer_id = scheduler.add_timer("Initial Timer", 120, "123", prompt="Initial prompt")
+    assert scheduler.update_timer(timer_id, "Updated Timer", "one-shot", duration_seconds=300, prompt="Updated prompt") is True
+    
+    timers = scheduler.get_all_timers()
+    assert len(timers) == 1
+    assert timers[0]["label"] == "Updated Timer"
+    
+    with patch("backend.scheduler._trigger_agent_task", new_callable=AsyncMock) as mock_trigger:
+        triggered = scheduler.trigger_timer_now(timer_id)
+        assert triggered is True
+        await asyncio.sleep(0.01)
+        mock_trigger.assert_called_once_with("jarvis", "Updated prompt", "123")
+
+    assert scheduler.update_timer("non_existent_id", "Label", "one-shot", duration_seconds=60) is False
+    assert scheduler.trigger_timer_now("non_existent_id") is False
+
