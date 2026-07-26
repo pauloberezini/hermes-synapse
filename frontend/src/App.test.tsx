@@ -85,4 +85,34 @@ describe('App Component', () => {
       expect(screen.getByText('Core Parameters')).toBeInTheDocument();
     });
   });
+
+  it('persists mic and voice (TTS) toggle states in localStorage', async () => {
+    localStorage.setItem('jarvis_auth_token', 'mock_token');
+    localStorage.setItem('jarvis_mic_enabled', 'true');
+    localStorage.setItem('jarvis_tts_enabled', 'false');
+
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve([])
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Communication Link')).toBeInTheDocument();
+    });
+
+    // Check that pre-set localStorage values were loaded into UI
+    expect(screen.getByText('Mic on')).toBeInTheDocument();
+    expect(screen.getByText('Voice off')).toBeInTheDocument();
+
+    // Toggle voice on
+    const voiceBtn = screen.getByRole('button', { name: /voice off/i });
+    fireEvent.click(voiceBtn);
+
+    expect(localStorage.getItem('jarvis_tts_enabled')).toBe('true');
+  });
 });

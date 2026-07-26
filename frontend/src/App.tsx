@@ -105,10 +105,15 @@ export default function App() {
   // File attached to the current chat message (text context, not dataset upload)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isTTSEnabled, setIsTTSEnabled] = useState(true);
+  const [isTTSEnabled, setIsTTSEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('jarvis_tts_enabled');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [playingMsgIndex, setPlayingMsgIndex] = useState<number | null>(null);
-  const [micEnabled, setMicEnabled] = useState(false);
+  const [micEnabled, setMicEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('jarvis_mic_enabled') === 'true';
+  });
   const [micState, setMicState] = useState<'off' | 'listening' | 'capturing'>('off');
   
   const [inputValue, setInputValue] = useState('');
@@ -125,7 +130,7 @@ export default function App() {
   const mainChatEndRef = useRef<HTMLDivElement | null>(null);
   const subagentChatEndRef = useRef<HTMLDivElement | null>(null);
   const lastSentTimeRef = useRef<number>(0);
-  const ttsEnabledRef = useRef(true);       // ref so WS handler always sees current value
+  const ttsEnabledRef = useRef(isTTSEnabled);       // ref so WS handler always sees current value
   const recognitionRef = useRef<any>(null); // SpeechRecognition instance
   const micStateRef = useRef<'off' | 'listening' | 'capturing'>('off');
   const captureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -179,8 +184,15 @@ export default function App() {
     localStorage.setItem('jarvis_active_tab', activeTab);
   }, [activeTab]);
 
-  // Keep ttsEnabledRef in sync with its state
-  useEffect(() => { ttsEnabledRef.current = isTTSEnabled; }, [isTTSEnabled]);
+  // Keep ttsEnabledRef in sync with its state and save to localStorage
+  useEffect(() => { 
+    ttsEnabledRef.current = isTTSEnabled; 
+    localStorage.setItem('jarvis_tts_enabled', String(isTTSEnabled));
+  }, [isTTSEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('jarvis_mic_enabled', String(micEnabled));
+  }, [micEnabled]);
   useEffect(() => { appSettingsRef.current = appSettings; }, [appSettings]);
 
   // Open Settings dropdown automatically if a settings sub-tab is active
