@@ -456,6 +456,8 @@ async def _trigger_agent_task(agent_id: str, prompt: str, chat_id: str) -> None:
 
 async def _send_telegram_alert(chat_id: str, text: str) -> None:
     """Send a Telegram message. Also imported by price_monitor.py."""
+    if not chat_id or chat_id == "dashboard" or not (chat_id.lstrip('-').isdigit() or chat_id.startswith('@')):
+        return
     try:
         from backend.bot import telegram_app
         if telegram_app:

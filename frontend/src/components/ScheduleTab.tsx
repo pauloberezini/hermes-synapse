@@ -1,23 +1,25 @@
 import { useState } from 'react';
-import { Clock, Trash2 } from 'lucide-react';
+import { Clock, Trash2, Info, Edit3, Play, X, Check } from 'lucide-react';
 import { styles } from '../styles';
 import { formatTimeLeft } from '../utils';
 
+export interface TimerItem {
+  id: string;
+  label: string;
+  duration?: number;
+  time_left: number;
+  status: string;
+  created_at: string;
+  type?: string;
+  target_time?: string;
+  interval_hours?: number;
+  fire_count?: number;
+  agent_id?: string;
+  prompt?: string;
+}
+
 interface ScheduleTabProps {
-  timers: { 
-    id: string; 
-    label: string; 
-    duration?: number; 
-    time_left: number; 
-    status: string; 
-    created_at: string; 
-    type?: string; 
-    target_time?: string; 
-    interval_hours?: number;
-    fire_count?: number;
-    agent_id?: string;
-    prompt?: string;
-  }[];
+  timers: TimerItem[];
   subagents: { 
     id: string; 
     name: string; 
@@ -33,6 +35,7 @@ export function ScheduleTab({
   handleCancelTimer,
   fetchWithAuth,
 }: ScheduleTabProps) {
+  // Create Form State
   const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
   const [taskLabel, setTaskLabel] = useState('');
   const [targetAgent, setTargetAgent] = useState('jarvis');
@@ -41,6 +44,21 @@ export function ScheduleTab({
   const [taskTimeStr, setTaskTimeStr] = useState('');
   const [taskInterval, setTaskInterval] = useState(1);
 
+  // Info Modal State
+  const [infoTimer, setInfoTimer] = useState<TimerItem | null>(null);
+  const [runMessage, setRunMessage] = useState<string | null>(null);
+
+  // Edit Modal State
+  const [editTimer, setEditTimer] = useState<TimerItem | null>(null);
+  const [editType, setEditType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
+  const [editLabel, setEditLabel] = useState('');
+  const [editTargetAgent, setEditTargetAgent] = useState('jarvis');
+  const [editPrompt, setEditPrompt] = useState('');
+  const [editDuration, setEditDuration] = useState(60);
+  const [editTimeStr, setEditTimeStr] = useState('');
+  const [editInterval, setEditInterval] = useState(1);
+  const [editSaving, setEditSaving] = useState(false);
+
   const safeSubagents = Array.isArray(subagents) ? subagents : [];
   const safeTimers = Array.isArray(timers) ? timers : [];
 
@@ -48,6 +66,8 @@ export function ScheduleTab({
     { id: 'jarvis', name: 'Jarvis (Main Orchestrator)' },
     ...safeSubagents.map(a => ({ id: a.id, name: a.name }))
   ];
+
+  const doFetch = fetchWithAuth || ((url: string, opts?: RequestInit) => fetch(url, opts));
 
   const handleScheduleTask = () => {
     if (!taskLabel || !taskPrompt) {
@@ -68,7 +88,6 @@ export function ScheduleTab({
       payload.interval_hours = taskInterval;
     }
 
-    const doFetch = fetchWithAuth || ((url: string, opts?: RequestInit) => fetch(url, opts));
     doFetch('http://localhost:8000/api/timers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -84,6 +103,80 @@ export function ScheduleTab({
         }
       })
       .catch(err => console.error('Error scheduling task:', err));
+  };
+
+  const handleOpenEdit = (timer: TimerItem) => {
+    setEditTimer(timer);
+    setEditType((timer.type as any) || 'one-shot');
+    setEditLabel(timer.label || '');
+    setEditTargetAgent(timer.agent_id || 'jarvis');
+    setEditPrompt(timer.prompt || '');
+    setEditDuration(timer.duration || 60);
+    setEditTimeStr(timer.target_time || '');
+    setEditInterval(timer.interval_hours || 1);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editTimer) return;
+    if (!editLabel || !editPrompt) {
+      alert("Label and Prompt are required!");
+      return;
+    }
+
+    setEditSaving(true);
+    const payload: any = {
+      type: editType,
+      label: editLabel,
+      agent_id: editTargetAgent,
+      prompt: editPrompt,
+    };
+    if (editType === 'one-shot') {
+      payload.duration_seconds = editDuration;
+    } else if (editType === 'alarm') {
+      payload.time_str = editTimeStr;
+    } else if (editType === 'recurring') {
+      payload.interval_hours = editInterval;
+    }
+
+    doFetch(`http://localhost:8000/api/timers/${editTimer.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(res => res.json())
+      .then(data => {
+        setEditSaving(false);
+        if (data.status === 'success') {
+          setEditTimer(null);
+        } else {
+          alert("Error updating task: " + (data.error || "Failed to save changes"));
+        }
+      })
+      .catch(err => {
+        setEditSaving(false);
+        console.error('Error saving task edit:', err);
+        alert("Error saving task edit");
+      });
+  };
+
+  const handleRunNow = (timerId: string) => {
+    setRunMessage(null);
+    doFetch(`http://localhost:8000/api/timers/${timerId}/run`, {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'triggered') {
+          setRunMessage("⚡ Task triggered successfully! Agent is executing instructions...");
+          setTimeout(() => setRunMessage(null), 4000);
+        } else {
+          alert("Error running task: " + (data.error || "Failed to trigger task"));
+        }
+      })
+      .catch(err => {
+        console.error("Error triggering task:", err);
+        alert("Failed to trigger task execution");
+      });
   };
 
   return (
@@ -234,36 +327,97 @@ export function ScheduleTab({
                   }}
                 >
                   <div style={styles.timerHeader}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <span style={styles.timerLabel}>{timer.label}</span>
-                      <button 
-                        onClick={() => handleCancelTimer(timer.id)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: 'rgba(239, 68, 68, 0.65)',
-                          cursor: 'pointer',
-                          padding: '4px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderRadius: '4px',
-                          transition: 'all 0.2s',
-                          marginLeft: '8px',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.color = '#ef4444';
-                          e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.color = 'rgba(239, 68, 68, 0.65)';
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        }}
-                        title={timer.status === 'running' ? 'Cancel' : 'Dismiss'}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      
+                      {/* Action buttons: Info, Edit, Delete */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: '6px' }}>
+                        {/* Info Button */}
+                        <button 
+                          onClick={() => setInfoTimer(timer)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'rgba(0, 240, 255, 0.7)',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = 'var(--accent-cyan)';
+                            e.currentTarget.style.backgroundColor = 'rgba(0, 240, 255, 0.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = 'rgba(0, 240, 255, 0.7)';
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                          title="View Info & Preview Prompt"
+                        >
+                          <Info size={14} />
+                        </button>
+
+                        {/* Edit Button */}
+                        <button 
+                          onClick={() => handleOpenEdit(timer)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'rgba(234, 179, 8, 0.7)',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#eab308';
+                            e.currentTarget.style.backgroundColor = 'rgba(234, 179, 8, 0.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = 'rgba(234, 179, 8, 0.7)';
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                          title="Edit Task Configuration"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+
+                        {/* Delete Button */}
+                        <button 
+                          onClick={() => handleCancelTimer(timer.id)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'rgba(239, 68, 68, 0.65)',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#ef4444';
+                            e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = 'rgba(239, 68, 68, 0.65)';
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                          title={timer.status === 'running' ? 'Cancel Task' : 'Dismiss'}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
+
                     <span style={{
                       ...styles.timerStatusBadge,
                       color: timer.status === 'running' 
@@ -318,6 +472,288 @@ export function ScheduleTab({
           </div>
         </div>
       </div>
+
+      {/* INFO / PREVIEW MODAL */}
+      {infoTimer && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{
+            width: '100%',
+            maxWidth: '560px',
+            padding: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            border: '1px solid rgba(0, 240, 255, 0.3)',
+            boxShadow: '0 0 30px rgba(0, 240, 255, 0.15)',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Info size={20} style={{ color: 'var(--accent-cyan)' }} />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#fff', fontWeight: 700 }}>
+                  Task Details & Preview
+                </h3>
+              </div>
+              <button 
+                onClick={() => { setInfoTimer(null); setRunMessage(null); }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Notification message */}
+            {runMessage && (
+              <div style={{ padding: '10px 14px', borderRadius: '6px', backgroundColor: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.4)', color: '#10b981', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Check size={16} />
+                <span>{runMessage}</span>
+              </div>
+            )}
+
+            {/* Task Info Body */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>TASK NAME / LABEL</label>
+                <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff' }}>{infoTimer.label}</div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block' }}>TARGET AGENT</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>🤖 {infoTimer.agent_id || 'jarvis'}</span>
+                </div>
+                <div style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block' }}>TYPE</span>
+                  <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 600, textTransform: 'capitalize' }}>{infoTimer.type || 'one-shot'}</span>
+                </div>
+                <div style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block' }}>SCHEDULE PARAMETER</span>
+                  <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 600 }}>
+                    {infoTimer.type === 'recurring' ? `Every ${infoTimer.interval_hours} hrs` : (infoTimer.type === 'alarm' ? infoTimer.target_time : `${infoTimer.duration || 0}s`)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>FULL PREPROMPT / INSTRUCTIONS RUN BY AGENT</label>
+                <div style={{
+                  padding: '12px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(6, 9, 19, 0.9)',
+                  border: '1px solid rgba(0, 240, 255, 0.2)',
+                  color: '#e2e8f0',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.8rem',
+                  lineHeight: '1.4',
+                  whiteSpace: 'pre-wrap',
+                  maxHeight: '180px',
+                  overflowY: 'auto'
+                }}>
+                  {infoTimer.prompt || '(No prompt defined)'}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '16px', fontSize: '0.75rem', color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px' }}>
+                <div>Created: <span style={{ color: '#fff' }}>{infoTimer.created_at || 'N/A'}</span></div>
+                {infoTimer.type === 'recurring' && (
+                  <div>Total Fired: <span style={{ color: 'var(--accent-cyan)' }}>{infoTimer.fire_count || 0} times</span></div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '8px' }}>
+              <button
+                onClick={() => handleRunNow(infoTimer.id)}
+                className="btn-primary"
+                style={{ padding: '8px 16px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: '#10b981', color: '#10b981' }}
+              >
+                <Play size={14} />
+                <span>Run Now</span>
+              </button>
+
+              <button
+                onClick={() => { setInfoTimer(null); setRunMessage(null); }}
+                style={{ padding: '8px 16px', fontSize: '0.8rem', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT TASK MODAL */}
+      {editTimer && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{
+            width: '100%',
+            maxWidth: '540px',
+            padding: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            border: '1px solid rgba(234, 179, 8, 0.3)',
+            boxShadow: '0 0 30px rgba(234, 179, 8, 0.15)',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }}>
+            {/* Edit Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Edit3 size={20} style={{ color: '#eab308' }} />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#fff', fontWeight: 700 }}>
+                  Edit Scheduled Task
+                </h3>
+              </div>
+              <button 
+                onClick={() => setEditTimer(null)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Edit Form */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>TASK TYPE</label>
+                  <select 
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as any)}
+                    className="form-input"
+                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                  >
+                    <option value="one-shot">One-Shot (Timer)</option>
+                    <option value="alarm">Alarm (Specific Time)</option>
+                    <option value="recurring">Recurring (Interval)</option>
+                  </select>
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>TARGET AGENT</label>
+                  <select 
+                    value={editTargetAgent}
+                    onChange={(e) => setEditTargetAgent(e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                  >
+                    {availableAgents.map(agent => (
+                      <option key={agent.id} value={agent.id}>{agent.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 2 }}>
+                  <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>TASK LABEL</label>
+                  <input 
+                    type="text" 
+                    value={editLabel}
+                    onChange={(e) => setEditLabel(e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                  />
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>
+                    {editType === 'one-shot' ? 'DELAY (SECS)' : (editType === 'alarm' ? 'TIME (HH:MM)' : 'INTERVAL (HRS)')}
+                  </label>
+                  {editType === 'one-shot' && (
+                    <input 
+                      type="number" 
+                      value={editDuration}
+                      onChange={(e) => setEditDuration(parseInt(e.target.value) || 0)}
+                      className="form-input"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                    />
+                  )}
+                  {editType === 'alarm' && (
+                    <input 
+                      type="text" 
+                      value={editTimeStr}
+                      onChange={(e) => setEditTimeStr(e.target.value)}
+                      className="form-input"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                    />
+                  )}
+                  {editType === 'recurring' && (
+                    <input 
+                      type="number" 
+                      step="0.1"
+                      value={editInterval}
+                      onChange={(e) => setEditInterval(parseFloat(e.target.value) || 0)}
+                      className="form-input"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>PREPROMPT / INSTRUCTIONS</label>
+                <textarea 
+                  value={editPrompt}
+                  onChange={(e) => setEditPrompt(e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '0.8rem', height: '100px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff', resize: 'vertical' }}
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <button
+                onClick={() => setEditTimer(null)}
+                style={{ padding: '8px 16px', fontSize: '0.8rem', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={handleSaveEdit}
+                disabled={editSaving}
+                className="btn-primary"
+                style={{ padding: '8px 18px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#eab308', borderColor: '#eab308', color: '#000', fontWeight: 600 }}
+              >
+                <Check size={14} />
+                <span>{editSaving ? 'Saving...' : 'Save Changes'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
