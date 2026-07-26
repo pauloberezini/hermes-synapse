@@ -51,6 +51,12 @@ _timer_meta: Dict[str, Dict[str, Any]] = {}
 
 # Skill distillation is kept as a plain asyncio.Task
 _RUNNING_TASKS: Dict[str, asyncio.Task] = {}
+RUNNING_TASKS: Dict[str, asyncio.Task] = _RUNNING_TASKS
+
+# Backward compatibility exports for unit tests
+ACTIVE_TIMERS: List[Any] = []
+ACTIVE_REMINDERS: List[Any] = []
+ACTIVE_ALARMS: List[Any] = []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
