@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, Trash2, Info, Edit3, Play, X, Check } from 'lucide-react';
+import { Clock, Trash2, Info, Edit3, Play, Pause, RotateCcw, X, Check } from 'lucide-react';
 import { styles } from '../styles';
 import { formatTimeLeft } from '../utils';
 
@@ -179,6 +179,40 @@ export function ScheduleTab({
       });
   };
 
+  const handleTogglePause = (timer: TimerItem) => {
+    const isPaused = timer.status === 'paused';
+    const endpoint = isPaused ? 'resume' : 'pause';
+    doFetch(`http://localhost:8000/api/timers/${timer.id}/${endpoint}`, {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status !== 'paused' && data.status !== 'resumed') {
+          alert("Error: " + (data.error || "Failed to toggle pause/resume"));
+        }
+      })
+      .catch(err => {
+        console.error("Error toggling pause/resume:", err);
+        alert("Failed to update timer pause state");
+      });
+  };
+
+  const handleRestart = (timerId: string) => {
+    doFetch(`http://localhost:8000/api/timers/${timerId}/restart`, {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status !== 'restarted') {
+          alert("Error: " + (data.error || "Failed to restart task"));
+        }
+      })
+      .catch(err => {
+        console.error("Error restarting task:", err);
+        alert("Failed to restart task");
+      });
+  };
+
   return (
     <div style={styles.tabWrapper}>
       <div style={styles.tabHeader}>
@@ -315,12 +349,16 @@ export function ScheduleTab({
                   key={timer.id} 
                   style={{
                     ...styles.timerCard,
-                    borderColor: timer.status === 'running' 
-                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.2)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(0, 240, 255, 0.2)')) 
-                      : 'rgba(255, 255, 255, 0.05)',
-                    backgroundColor: timer.status === 'running' 
-                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.02)' : 'rgba(0, 240, 255, 0.02)')) 
-                      : 'rgba(255, 255, 255, 0.01)',
+                    borderColor: timer.status === 'paused'
+                      ? 'rgba(234, 179, 8, 0.3)'
+                      : (timer.status === 'running' 
+                          ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.2)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(0, 240, 255, 0.2)')) 
+                          : 'rgba(255, 255, 255, 0.05)'),
+                    backgroundColor: timer.status === 'paused'
+                      ? 'rgba(234, 179, 8, 0.03)'
+                      : (timer.status === 'running' 
+                          ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.02)' : 'rgba(0, 240, 255, 0.02)')) 
+                          : 'rgba(255, 255, 255, 0.01)'),
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '8px'
@@ -330,8 +368,64 @@ export function ScheduleTab({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <span style={styles.timerLabel}>{timer.label}</span>
                       
-                      {/* Action buttons: Info, Edit, Delete */}
+                      {/* Action buttons: Pause/Resume, Restart, Info, Edit, Delete */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: '6px' }}>
+                        {/* Pause / Resume Button */}
+                        <button 
+                          onClick={() => handleTogglePause(timer)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: timer.status === 'paused' ? '#eab308' : 'rgba(59, 130, 246, 0.85)',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = timer.status === 'paused' ? '#facc15' : '#60a5fa';
+                            e.currentTarget.style.backgroundColor = timer.status === 'paused' ? 'rgba(234, 179, 8, 0.15)' : 'rgba(59, 130, 246, 0.15)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = timer.status === 'paused' ? '#eab308' : 'rgba(59, 130, 246, 0.85)';
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                          title={timer.status === 'paused' ? 'Resume Schedule' : 'Pause Schedule'}
+                        >
+                          {timer.status === 'paused' ? <Play size={14} /> : <Pause size={14} />}
+                        </button>
+
+                        {/* Restart Button */}
+                        <button 
+                          onClick={() => handleRestart(timer.id)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'rgba(16, 185, 129, 0.85)',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#34d399';
+                            e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.15)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = 'rgba(16, 185, 129, 0.85)';
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                          title="Restart Schedule (Reset Timer)"
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+
                         {/* Info Button */}
                         <button 
                           onClick={() => setInfoTimer(timer)}
@@ -411,7 +505,7 @@ export function ScheduleTab({
                             e.currentTarget.style.color = 'rgba(239, 68, 68, 0.65)';
                             e.currentTarget.style.backgroundColor = 'transparent';
                           }}
-                          title={timer.status === 'running' ? 'Cancel Task' : 'Dismiss'}
+                          title={timer.status === 'running' || timer.status === 'paused' ? 'Cancel Task' : 'Dismiss'}
                         >
                           <Trash2 size={13} />
                         </button>
@@ -420,26 +514,32 @@ export function ScheduleTab({
 
                     <span style={{
                       ...styles.timerStatusBadge,
-                      color: timer.status === 'running' 
-                          ? (timer.type === 'alarm' ? '#f97316' : (timer.type === 'recurring' ? '#10b981' : 'var(--accent-cyan)')) 
-                          : 'var(--success)',
-                      borderColor: timer.status === 'running' 
-                          ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.3)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(0, 240, 255, 0.3)')) 
-                          : 'rgba(16, 185, 129, 0.3)'
+                      color: timer.status === 'paused'
+                        ? '#eab308'
+                        : (timer.status === 'running' 
+                            ? (timer.type === 'alarm' ? '#f97316' : (timer.type === 'recurring' ? '#10b981' : 'var(--accent-cyan)')) 
+                            : 'var(--success)'),
+                      borderColor: timer.status === 'paused'
+                        ? 'rgba(234, 179, 8, 0.3)'
+                        : (timer.status === 'running' 
+                            ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.3)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(0, 240, 255, 0.3)')) 
+                            : 'rgba(16, 185, 129, 0.3)')
                     }}>
-                      {timer.status === 'running' 
-                        ? (timer.type === 'alarm' ? 'WAITING' : (timer.type === 'recurring' ? 'RECURRING' : 'COUNTDOWN')) 
-                        : 'COMPLETED'}
+                      {timer.status === 'paused'
+                        ? 'PAUSED'
+                        : (timer.status === 'running' 
+                            ? (timer.type === 'alarm' ? 'WAITING' : (timer.type === 'recurring' ? 'RECURRING' : 'COUNTDOWN')) 
+                            : 'COMPLETED')}
                     </span>
                   </div>
 
                   <div style={styles.timerBody}>
                     <div style={styles.countdownBox}>
                       <span style={styles.countdownVal}>
-                        {timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
+                        {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
                       </span>
                       <span style={styles.countdownUnit}>
-                        {timer.type === 'recurring' ? 'until next' : (timer.type === 'alarm' ? 'until ring' : 'remaining')}
+                        {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'until next' : (timer.type === 'alarm' ? 'until ring' : 'remaining'))}
                       </span>
                     </div>
                     <div style={styles.timerMeta}>

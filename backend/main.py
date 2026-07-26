@@ -513,6 +513,42 @@ async def run_timer_now_api(timer_id: str):
     except Exception as e:
         return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
 
+@app.post("/api/timers/{timer_id}/pause")
+async def pause_timer_api(timer_id: str):
+    from backend.scheduler import pause_timer
+    try:
+        ok = pause_timer(timer_id)
+        if ok:
+            return {"status": "paused", "id": timer_id}
+        else:
+            return JSONResponse(status_code=404, content={"status": "failed", "error": f"Timer '{timer_id}' not found"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
+
+@app.post("/api/timers/{timer_id}/resume")
+async def resume_timer_api(timer_id: str):
+    from backend.scheduler import resume_timer
+    try:
+        ok = resume_timer(timer_id)
+        if ok:
+            return {"status": "resumed", "id": timer_id}
+        else:
+            return JSONResponse(status_code=404, content={"status": "failed", "error": f"Timer '{timer_id}' not found"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
+
+@app.post("/api/timers/{timer_id}/restart")
+async def restart_timer_api(timer_id: str):
+    from backend.scheduler import restart_timer
+    try:
+        ok = restart_timer(timer_id)
+        if ok:
+            return {"status": "restarted", "id": timer_id}
+        else:
+            return JSONResponse(status_code=404, content={"status": "failed", "error": f"Timer '{timer_id}' not found"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
+
 @app.get("/api/subagents")
 async def get_subagents_api():
     from backend.database import get_all_subagents

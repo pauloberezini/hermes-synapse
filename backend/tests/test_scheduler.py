@@ -157,3 +157,37 @@ async def test_update_timer_and_trigger_now():
     assert scheduler.update_timer("non_existent_id", "Label", "one-shot", duration_seconds=60) is False
     assert scheduler.trigger_timer_now("non_existent_id") is False
 
+
+@pytest.mark.asyncio
+async def test_pause_and_resume_timer():
+    timer_id = scheduler.add_timer("Pausable Timer", 100, "123")
+    timers = scheduler.get_all_timers()
+    assert timers[0]["status"] == "running"
+    
+    # Pause
+    assert scheduler.pause_timer(timer_id) is True
+    timers_paused = scheduler.get_all_timers()
+    assert timers_paused[0]["status"] == "paused"
+    
+    # Resume
+    assert scheduler.resume_timer(timer_id) is True
+    timers_resumed = scheduler.get_all_timers()
+    assert timers_resumed[0]["status"] == "running"
+    
+    assert scheduler.pause_timer("invalid_id") is False
+    assert scheduler.resume_timer("invalid_id") is False
+
+
+@pytest.mark.asyncio
+async def test_restart_timer():
+    timer_id = scheduler.add_timer("Timer to Restart", 60, "123")
+    assert scheduler.pause_timer(timer_id) is True
+    
+    # Restart should reset schedule and set status back to running
+    assert scheduler.restart_timer(timer_id) is True
+    timers = scheduler.get_all_timers()
+    assert len(timers) == 1
+    assert timers[0]["status"] == "running"
+    assert scheduler.restart_timer("invalid_id") is False
+
+

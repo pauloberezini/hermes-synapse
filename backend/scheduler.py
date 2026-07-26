@@ -352,6 +352,57 @@ def update_timer(
     return True
 
 
+def pause_timer(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    job.pause()
+    if item_id not in _timer_meta:
+        _timer_meta[item_id] = {"type": _infer_type(job), "created_at": ""}
+    _timer_meta[item_id]["status"] = "paused"
+    logger.info(f"Timer {item_id} paused")
+    return True
+
+
+def resume_timer(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    job.resume()
+    if item_id not in _timer_meta:
+        _timer_meta[item_id] = {"type": _infer_type(job), "created_at": ""}
+    _timer_meta[item_id]["status"] = "running"
+    logger.info(f"Timer {item_id} resumed")
+    return True
+
+
+def restart_timer(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    
+    meta = _timer_meta.get(item_id, {})
+    task_type = meta.get("type") or _infer_type(job)
+    kwargs = job.kwargs or {}
+    label = kwargs.get("label", job.name or item_id)
+    agent_id = kwargs.get("agent_id")
+    prompt = kwargs.get("prompt")
+    duration_seconds = kwargs.get("duration") or meta.get("duration") or 60
+    time_str = kwargs.get("target_time_str") or meta.get("target_time")
+    interval_hours = kwargs.get("interval_hours") or meta.get("interval_hours") or 1.0
+
+    return update_timer(
+        item_id=item_id,
+        label=label,
+        task_type=task_type,
+        agent_id=agent_id,
+        prompt=prompt,
+        duration_seconds=duration_seconds,
+        time_str=time_str,
+        interval_hours=interval_hours,
+    )
+
+
 def trigger_timer_now(item_id: str) -> bool:
     job = scheduler.get_job(item_id)
     if job is None:
@@ -394,10 +445,12 @@ def get_all_timers() -> List[Dict[str, Any]]:
         next_run = getattr(job, "next_run_time", None)
         time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
 
+        status = meta.get("status", "running")
+
         entry: Dict[str, Any] = {
             "id": job_id,
             "label": label,
-            "status": "running",
+            "status": status,
             "time_left": time_left,
             "type": job_type,
             "created_at": created_at,
