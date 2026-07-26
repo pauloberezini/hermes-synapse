@@ -24,12 +24,14 @@ interface ScheduleTabProps {
     agent_type?: string;
   }[];
   handleCancelTimer: (id: string) => void;
+  fetchWithAuth?: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
 export function ScheduleTab({
   timers,
   subagents,
-  handleCancelTimer
+  handleCancelTimer,
+  fetchWithAuth,
 }: ScheduleTabProps) {
   const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
   const [taskLabel, setTaskLabel] = useState('');
@@ -39,9 +41,12 @@ export function ScheduleTab({
   const [taskTimeStr, setTaskTimeStr] = useState('');
   const [taskInterval, setTaskInterval] = useState(1);
 
+  const safeSubagents = Array.isArray(subagents) ? subagents : [];
+  const safeTimers = Array.isArray(timers) ? timers : [];
+
   const availableAgents = [
     { id: 'jarvis', name: 'Jarvis (Main Orchestrator)' },
-    ...subagents.map(a => ({ id: a.id, name: a.name }))
+    ...safeSubagents.map(a => ({ id: a.id, name: a.name }))
   ];
 
   const handleScheduleTask = () => {
@@ -63,7 +68,8 @@ export function ScheduleTab({
       payload.interval_hours = taskInterval;
     }
 
-    fetch('http://localhost:8000/api/timers', {
+    const doFetch = fetchWithAuth || ((url: string, opts?: RequestInit) => fetch(url, opts));
+    doFetch('http://localhost:8000/api/timers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -206,12 +212,12 @@ export function ScheduleTab({
           </h3>
           
           <div style={styles.timersList}>
-            {timers.length === 0 ? (
+            {safeTimers.length === 0 ? (
               <div style={styles.emptyTimersMsg}>
                 No active timers or scheduled tasks found, Sir.
               </div>
             ) : (
-              timers.map((timer) => (
+              safeTimers.map((timer) => (
                 <div 
                   key={timer.id} 
                   style={{

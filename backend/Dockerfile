@@ -35,7 +35,9 @@ RUN pip install --no-cache-dir \
     google-auth-httplib2>=0.2.0 \
     google-api-python-client>=2.95.0 \
     todoist-api-python>=2.1.3 \
-    pypdf>=4.0.0
+    pypdf>=4.0.0 \
+    apscheduler>=3.10.0 \
+    sqlalchemy>=2.0.0
 
 
 

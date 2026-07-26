@@ -104,14 +104,23 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(60)
     asyncio.create_task(_bcm_session_scheduler_task())
 
-    # Start background self-improving skill distillation loop
+    # Start background APScheduler & self-improving skill distillation loop
     try:
-        from backend.scheduler import start_skill_distillation_loop
+        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop
+        scheduler.start()
+        restore_state()
         start_skill_distillation_loop(interval_seconds=900)
     except Exception as e:
-        logger.warning(f"Failed to start skill distillation loop: {e}")
+        logger.warning(f"Failed to start scheduler or skill distillation loop: {e}")
 
     yield
+    # Shutdown: Stop APScheduler
+    try:
+        from backend.scheduler import scheduler
+        scheduler.shutdown(wait=False)
+    except Exception as e:
+        logger.warning(f"Failed to shutdown scheduler cleanly: {e}")
+
     # Shutdown: Stop Telegram bot
     await shutdown_bot()
     

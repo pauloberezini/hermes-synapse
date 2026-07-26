@@ -1,509 +1,374 @@
-import time
-import uuid
+"""
+backend/scheduler.py — APScheduler 3.x + SQLiteJobStore
+
+All scheduled jobs are persisted automatically to backend/data/hermes.db
+and restored on every process startup — no manual save/restore needed.
+
+Public API (unchanged from previous implementation):
+  add_timer(label, duration_seconds, chat_id, agent_id, prompt) -> str
+  add_alarm(time_str, label, chat_id, agent_id, prompt) -> str
+  add_recurring_reminder(label, interval_hours, chat_id, agent_id, prompt) -> str
+  cancel_timer_or_alarm(item_id) -> bool
+  cancel_recurring_reminder(reminder_id) -> bool
+  get_all_timers() -> List[Dict]
+  get_all_reminders() -> List[Dict]
+  start_skill_distillation_loop(interval_seconds) -> asyncio.Task
+  _send_telegram_alert(chat_id, text)   # used by price_monitor.py
+"""
+
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+import os
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger("hermes.scheduler")
 
-ACTIVE_TIMERS:    List['TimerTask']         = []
-ACTIVE_REMINDERS: List['RecurringReminder'] = []
-ACTIVE_ALARMS:    List['AlarmTask']         = []
-RUNNING_TASKS:    Dict[str, asyncio.Task]   = {}
+# ─── Scheduler singleton ────────────────────────────────────────────────────────
+_DB_URL = os.environ.get(
+    "SCHEDULER_DB_URL",
+    "sqlite:////app/backend/data/hermes.db",
+)
+
+_jobstore = SQLAlchemyJobStore(url=_DB_URL, tablename="apscheduler_jobs")
+scheduler = AsyncIOScheduler(
+    jobstores={"default": _jobstore},
+    job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
+    timezone="Asia/Jerusalem",
+)
+
+# Fire-count is cosmetic and session-local (acceptable to reset on restart)
+_fire_counts: Dict[str, int] = {}
+
+# Supplementary in-memory metadata dict rebuilt on startup from job kwargs
+_timer_meta: Dict[str, Dict[str, Any]] = {}
+
+# Skill distillation is kept as a plain asyncio.Task
+_RUNNING_TASKS: Dict[str, asyncio.Task] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ONE-SHOT TIMER
+# JOB FUNCTIONS — module-level so APScheduler can pickle/restore them
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class TimerTask:
-    def __init__(self, timer_id: str, label: str, duration_seconds: int, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None):
-        self.id           = timer_id
-        self.label        = label
-        self.duration     = duration_seconds
-        self.chat_id      = chat_id
-        self.agent_id     = agent_id
-        self.prompt       = prompt
-        self.start_time   = time.time()
-        self.status       = "running"
-        self.created_at   = time.strftime("%Y-%m-%d %H:%M:%S")
-
-    def get_time_left(self) -> int:
-        if self.status != "running":
-            return 0
-        return max(0, int(self.duration - (time.time() - self.start_time)))
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id":         self.id,
-            "label":      self.label,
-            "duration":   self.duration,
-            "time_left":  self.get_time_left(),
-            "status":     self.status,
-            "created_at": self.created_at,
-            "type":       "one-shot",
-            "agent_id":   self.agent_id,
-            "prompt":     self.prompt,
-        }
-
-async def _trigger_agent_task(agent_id: str, prompt: str, chat_id: str):
-    try:
-        from backend.agent import agent_instance
-        from backend.websocket_manager import manager
-        
-        # 1. Broadcast user message
-        await manager.broadcast({
-            "type": "chat_message",
-            "role": "user",
-            "content": f"[Scheduled Task] {prompt}",
-            "chat_id": agent_id
-        })
-        
-        # 2. Call agent
-        response_text = await agent_instance.respond(prompt, session_id=agent_id)
-        cost_usd = agent_instance.last_costs.get(agent_id, 0.0)
-        suppress_tts = agent_instance.check_and_clear_suppress_tts(agent_id)
-        saved_ids = agent_instance.last_saved_ids.get(agent_id, {})
-        user_msg_id = saved_ids.get("user")
-        assistant_msg_id = saved_ids.get("assistant")
-        
-        # 3. Broadcast assistant response
-        await manager.broadcast({
-            "type": "chat_message",
-            "role": "assistant",
-            "content": response_text,
-            "chat_id": agent_id,
-            "cost_usd": cost_usd,
-            "suppress_tts": suppress_tts,
-            "id": assistant_msg_id
-        })
-        
-        # Update user message ID
-        if user_msg_id:
-            await manager.broadcast({
-                "type": "user_message_id_update",
-                "chat_id": agent_id,
-                "content": prompt,
-                "id": user_msg_id
-            })
-            
-        # Update logs
-        from backend.agent import DECISION_LOGS
-        await manager.broadcast({
-            "type": "logs_update",
-            "logs": DECISION_LOGS[:20]
-        })
-
-        # Send Telegram notification with result
+async def _job_one_shot(
+    *,
+    job_id: str,
+    label: str,
+    duration: int,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> None:
+    logger.info(f"One-shot timer fired: '{label}' ({duration}s)")
+    from backend.activity_logger import log_activity
+    if agent_id and prompt:
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+    else:
+        log_activity("idle", "Scheduler", f"✅ Timer complete: '{label}'")
         await _send_telegram_alert(
             chat_id,
-            f"🤖 **SCHEDULED TASK RESULT**\n\n"
-            f"• **Agent**: `{agent_id}`\n"
-            f"• **Task**: {prompt}\n\n"
-            f"📝 **Result**:\n{response_text}"
+            f"🏛️ **ATTENTION, SIR**\n\nTimer complete:\n"
+            f"• Event: **{label}**\n• Duration: {duration} sec\n• Status: ✅ Completed",
         )
-    except Exception as e:
-        logger.error(f"Error executing scheduled agent task: {e}")
+    await _broadcast_ws({"type": "timer_completed", "timer": {"id": job_id, "label": label, "status": "completed"}})
 
 
-async def run_timer(task: TimerTask):
-    logger.info(f"Timer {task.id} started — {task.duration}s: '{task.label}'")
+async def _job_alarm(
+    *,
+    job_id: str,
+    label: str,
+    chat_id: str,
+    target_time_str: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> None:
+    logger.info(f"Alarm fired: '{label}'")
     from backend.activity_logger import log_activity
-    log_activity(
-        activity_type="idle",
-        source="Scheduler",
-        message=f"⏲️ Timer started for {task.duration} sec: '{task.label}'"
-    )
-    try:
-        await asyncio.sleep(task.duration)
-        task.status = "completed"
-        logger.info(f"Timer {task.id} completed.")
-
-        if task.agent_id and task.prompt:
-            # Just do the work and send the result, do not trigger normal alarm signals
-            asyncio.create_task(_trigger_agent_task(task.agent_id, task.prompt, task.chat_id))
-        else:
-            log_activity(
-                activity_type="idle",
-                source="Scheduler",
-                message=f"✅ Timer complete: '{task.label}'"
-            )
-            await _send_telegram_alert(
-                task.chat_id,
-                f"🏛️ **ATTENTION, SIR**\n\n"
-                f"Timer complete:\n"
-                f"• Event: **{task.label}**\n"
-                f"• Duration: {task.duration} sec\n"
-                f"• Status: ✅ Completed"
-            )
-            
-        await _broadcast_ws({
-            "type":    "timer_completed",
-            "timer":   task.to_dict(),
-        })
-    except asyncio.CancelledError:
-        task.status = "cancelled"
-        logger.info(f"Timer {task.id} cancelled.")
-    except Exception as e:
-        task.status = "failed"
-        logger.error(f"Timer {task.id} error: {e}")
-    finally:
-        if task.id in RUNNING_TASKS:
-            del RUNNING_TASKS[task.id]
+    if agent_id and prompt:
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+    else:
+        log_activity("idle", "Scheduler", f"🔔 Alarm triggered: '{label}'")
+        await _send_telegram_alert(
+            chat_id,
+            f"⏰ **ALARM, SIR**\n\n"
+            f"• Event: **{label}**\n• Trigger time: {target_time_str}\n• Status: ✅ Completed",
+        )
+    await _broadcast_ws({"type": "alarm_fired", "alarm": {"id": job_id, "label": label, "status": "completed"}})
 
 
-def add_timer(label: str, duration_seconds: int, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None) -> str:
+async def _job_recurring(
+    *,
+    job_id: str,
+    label: str,
+    interval_hours: float,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> None:
+    _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
+    count = _fire_counts[job_id]
+    logger.info(f"Recurring reminder fired #{count}: '{label}'")
+    from backend.activity_logger import log_activity
+    if agent_id and prompt:
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+    else:
+        hours_str = (
+            f"{int(interval_hours)} h" if interval_hours >= 1
+            else f"{int(interval_hours * 60)} min"
+        )
+        log_activity("idle", "Scheduler", f"🔔 Recurring reminder #{count} triggered: '{label}'")
+        await _send_telegram_alert(
+            chat_id,
+            f"🔔 **REMINDER, SIR** (#{count})\n\n• {label}\n"
+            f"• Repeat every: {hours_str}\n\n_Next trigger in {hours_str}._",
+        )
+    job = scheduler.get_job(job_id)
+    next_run = getattr(job, "next_run_time", None) if job else None
+    now_tz = datetime.now(scheduler.timezone)
+    time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
+    await _broadcast_ws({
+        "type": "reminder_fired",
+        "reminder": {
+            "id": job_id, "label": label, "interval_hours": interval_hours,
+            "fire_count": count, "status": "running", "time_left": time_left, "type": "recurring",
+        },
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PUBLIC API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def add_timer(
+    label: str,
+    duration_seconds: int,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> str:
     timer_id = str(uuid.uuid4())
-    task = TimerTask(timer_id, label, duration_seconds, chat_id, agent_id, prompt)
-    ACTIVE_TIMERS.append(task)
-    task_handle = asyncio.create_task(run_timer(task))
-    RUNNING_TASKS[timer_id] = task_handle
+    run_at = datetime.now(scheduler.timezone) + timedelta(seconds=duration_seconds)
+    created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+    scheduler.add_job(
+        _job_one_shot,
+        trigger=DateTrigger(run_date=run_at),
+        kwargs={"job_id": timer_id, "label": label, "duration": duration_seconds,
+                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+        id=timer_id, name=label, replace_existing=True,
+    )
+    _timer_meta[timer_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds}
+    logger.info(f"One-shot timer scheduled: '{label}' in {duration_seconds}s (id={timer_id})")
     return timer_id
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ALARM CLOCK (BUDILNIK)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class AlarmTask:
-    def __init__(self, alarm_id: str, label: str, target_time: float, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None):
-        self.id          = alarm_id
-        self.label       = label
-        self.target_time = target_time  # epoch timestamp when it should fire
-        self.chat_id     = chat_id
-        self.agent_id     = agent_id
-        self.prompt       = prompt
-        self.status      = "running"
-        
-        # created_at in Israel local time
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        now_local = datetime.fromtimestamp(time.time(), ZoneInfo("Asia/Jerusalem"))
-        self.created_at  = now_local.strftime("%Y-%m-%d %H:%M:%S")
-
-    def get_time_left(self) -> int:
-        if self.status != "running":
-            return 0
-        return max(0, int(self.target_time - time.time()))
-
-    def to_dict(self) -> Dict[str, Any]:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        target_dt = datetime.fromtimestamp(self.target_time, ZoneInfo("Asia/Jerusalem"))
-        return {
-            "id":          self.id,
-            "label":       self.label,
-            "target_time": target_dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "time_left":   self.get_time_left(),
-            "status":      self.status,
-            "created_at":  self.created_at,
-            "type":        "alarm",
-            "agent_id":    self.agent_id,
-            "prompt":      self.prompt,
-        }
-
-
-async def run_alarm(task: AlarmTask):
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    target_dt = datetime.fromtimestamp(task.target_time, ZoneInfo("Asia/Jerusalem"))
-    target_time_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
-    
-    logger.info(f"Alarm {task.id} scheduled to fire at {task.target_time} (in {task.get_time_left()}s): '{task.label}'")
-    from backend.activity_logger import log_activity
-    log_activity(
-        activity_type="idle",
-        source="Scheduler",
-        message=f"⏰ Alarm set for {target_time_str}: '{task.label}'"
-    )
-    try:
-        delay = task.get_time_left()
-        await asyncio.sleep(delay)
-        task.status = "completed"
-        logger.info(f"Alarm {task.id} completed.")
-
-        if task.agent_id and task.prompt:
-            # Just do the work and send the result
-            asyncio.create_task(_trigger_agent_task(task.agent_id, task.prompt, task.chat_id))
-        else:
-            log_activity(
-                activity_type="idle",
-                source="Scheduler",
-                message=f"🔔 Alarm triggered: '{task.label}'"
-            )
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            target_dt = datetime.fromtimestamp(task.target_time, ZoneInfo("Asia/Jerusalem"))
-            target_time_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-            await _send_telegram_alert(
-                task.chat_id,
-                f"⏰ **ALARM, SIR**\n\n"
-                f"• Event: **{task.label}**\n"
-                f"• Trigger time: {target_time_str}\n"
-                f"• Status: ✅ Completed"
-            )
-            
-        await _broadcast_ws({
-            "type":    "alarm_fired",
-            "alarm":   task.to_dict(),
-        })
-    except asyncio.CancelledError:
-        task.status = "cancelled"
-        logger.info(f"Alarm {task.id} cancelled.")
-    except Exception as e:
-        task.status = "failed"
-        logger.error(f"Alarm {task.id} error: {e}")
-    finally:
-        if task.id in RUNNING_TASKS:
-            del RUNNING_TASKS[task.id]
-
-
-def add_alarm(time_str: str, label: str, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None) -> str:
-    from datetime import datetime, timedelta
+def add_alarm(
+    time_str: str,
+    label: str,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> str:
     from zoneinfo import ZoneInfo
     tz = ZoneInfo("Asia/Jerusalem")
     now = datetime.now(tz)
     time_str = time_str.strip()
-    
-    target_timestamp = None
-    
-    # Try YYYY-MM-DD HH:MM:SS / YYYY-MM-DD HH:MM
+    target_dt = None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
-            dt = datetime.strptime(time_str, fmt).replace(tzinfo=tz)
-            target_timestamp = dt.timestamp()
+            target_dt = datetime.strptime(time_str, fmt).replace(tzinfo=tz)
             break
         except ValueError:
             continue
-            
-    # Try HH:MM:SS / HH:MM
-    if not target_timestamp:
+    if target_dt is None:
         for fmt in ("%H:%M:%S", "%H:%M"):
             try:
                 t = datetime.strptime(time_str, fmt).time()
-                dt = datetime.combine(now.date(), t).replace(tzinfo=tz)
-                if dt < now:
-                    dt += timedelta(days=1)
-                target_timestamp = dt.timestamp()
+                target_dt = datetime.combine(now.date(), t).replace(tzinfo=tz)
+                if target_dt < now:
+                    target_dt += timedelta(days=1)
                 break
             except ValueError:
                 continue
-                
-    if not target_timestamp:
+    if target_dt is None:
         raise ValueError(f"Could not parse time format: '{time_str}'. Use HH:MM or YYYY-MM-DD HH:MM.")
-        
+
     alarm_id = str(uuid.uuid4())
-    task = AlarmTask(alarm_id, label, target_timestamp, chat_id, agent_id, prompt)
-    ACTIVE_ALARMS.append(task)
-    
-    task_handle = asyncio.create_task(run_alarm(task))
-    RUNNING_TASKS[alarm_id] = task_handle
+    target_time_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
+    created_at = now.strftime("%Y-%m-%d %H:%M:%S")
+    scheduler.add_job(
+        _job_alarm,
+        trigger=DateTrigger(run_date=target_dt),
+        kwargs={"job_id": alarm_id, "label": label, "chat_id": chat_id,
+                "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt},
+        id=alarm_id, name=label, replace_existing=True,
+    )
+    _timer_meta[alarm_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str}
+    logger.info(f"Alarm scheduled: '{label}' at {target_time_str} (id={alarm_id})")
     return alarm_id
 
 
-def cancel_timer_or_alarm(item_id: str) -> bool:
-    # Check timers
-    for t in ACTIVE_TIMERS:
-        if t.id == item_id:
-            if t.status == "running":
-                t.status = "cancelled"
-                if item_id in RUNNING_TASKS:
-                    RUNNING_TASKS[item_id].cancel()
-            else:
-                t.status = "dismissed"
-            return True
-            
-    # Check alarms
-    for a in ACTIVE_ALARMS:
-        if a.id == item_id:
-            if a.status == "running":
-                a.status = "cancelled"
-                if item_id in RUNNING_TASKS:
-                    RUNNING_TASKS[item_id].cancel()
-            else:
-                a.status = "dismissed"
-            return True
-            
-    return False
-
-
-def get_all_timers() -> List[Dict[str, Any]]:
-    global ACTIVE_TIMERS, ACTIVE_ALARMS, ACTIVE_REMINDERS
-    cutoff = time.time()
-    
-    # Keep running timers and completed ones for up to 5 min
-    ACTIVE_TIMERS = [
-        t for t in ACTIVE_TIMERS
-        if t.status == "running" or (cutoff - (t.start_time + t.duration)) < 300
-    ]
-    
-    # Keep running alarms and completed ones for up to 5 min
-    ACTIVE_ALARMS = [
-        a for a in ACTIVE_ALARMS
-        if a.status == "running" or (cutoff - a.target_time) < 300
-    ]
-    
-    res = []
-    res.extend([t.to_dict() for t in ACTIVE_TIMERS if t.status != "dismissed"])
-    res.extend([a.to_dict() for a in ACTIVE_ALARMS if a.status != "dismissed"])
-    res.extend([r.to_dict() for r in ACTIVE_REMINDERS if r.status != "cancelled" and r.status != "dismissed"])
-    
-    # Sort: running first, then sort by time left
-    res.sort(key=lambda x: (x["status"] != "running", x.get("time_left", 0)))
-    return res
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# RECURRING REMINDER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class RecurringReminder:
-    def __init__(self, reminder_id: str, label: str, interval_hours: float, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None):
-        self.id             = reminder_id
-        self.label          = label
-        self.interval_hours = interval_hours
-        self.interval_secs  = interval_hours * 3600
-        self.chat_id        = chat_id
-        self.agent_id       = agent_id
-        self.prompt         = prompt
-        self.status         = "running"
-        self.created_at     = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.fire_count     = 0
-        self.next_fire_at   = time.time() + self.interval_secs
-
-    def get_time_left(self) -> int:
-        return max(0, int(self.next_fire_at - time.time()))
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id":             self.id,
-            "label":          self.label,
-            "interval_hours": self.interval_hours,
-            "time_left":      self.get_time_left(),
-            "fire_count":     self.fire_count,
-            "status":         self.status,
-            "created_at":     self.created_at,
-            "type":           "recurring",
-            "agent_id":       self.agent_id,
-            "prompt":         self.prompt,
-        }
-
-
-async def run_recurring_reminder(reminder: RecurringReminder):
-    logger.info(
-        f"Recurring reminder {reminder.id} started — "
-        f"every {reminder.interval_hours}h: '{reminder.label}'"
-    )
-    from backend.activity_logger import log_activity
-    log_activity(
-        activity_type="idle",
-        source="Scheduler",
-        message=f"🔔 Recurring reminder started every {reminder.interval_hours}h: '{reminder.label}'"
-    )
-    try:
-        while reminder.status == "running":
-            await asyncio.sleep(reminder.interval_secs)
-            if reminder.status != "running":
-                break
-
-            reminder.fire_count  += 1
-            reminder.next_fire_at = time.time() + reminder.interval_secs
-            logger.info(f"Recurring reminder {reminder.id} fired #{reminder.fire_count}")
-
-            if reminder.agent_id and reminder.prompt:
-                # Just do the work and send the result
-                asyncio.create_task(_trigger_agent_task(reminder.agent_id, reminder.prompt, reminder.chat_id))
-            else:
-                hours_str = (
-                    f"{int(reminder.interval_hours)} h"
-                    if reminder.interval_hours >= 1
-                    else f"{int(reminder.interval_hours * 60)} min"
-                )
-                log_activity(
-                    activity_type="idle",
-                    source="Scheduler",
-                    message=f"🔔 Recurring reminder #{reminder.fire_count} triggered: '{reminder.label}'"
-                )
-                await _send_telegram_alert(
-                    reminder.chat_id,
-                    f"🔔 **REMINDER, SIR** (#{reminder.fire_count})\n\n"
-                    f"• {reminder.label}\n"
-                    f"• Repeat every: {hours_str}\n\n"
-                    f"_Next trigger in {hours_str}._"
-                )
-                
-            await _broadcast_ws({
-                "type":     "reminder_fired",
-                "reminder": reminder.to_dict(),
-            })
-    except asyncio.CancelledError:
-        reminder.status = "cancelled"
-        logger.info(f"Recurring reminder {reminder.id} cancelled.")
-    except Exception as e:
-        reminder.status = "failed"
-        logger.error(f"Recurring reminder {reminder.id} error: {e}")
-    finally:
-        if reminder.id in RUNNING_TASKS:
-            del RUNNING_TASKS[reminder.id]
-
-
-def add_recurring_reminder(label: str, interval_hours: float, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None) -> str:
+def add_recurring_reminder(
+    label: str,
+    interval_hours: float,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> str:
     reminder_id = str(uuid.uuid4())
-    reminder = RecurringReminder(reminder_id, label, interval_hours, chat_id, agent_id, prompt)
-    ACTIVE_REMINDERS.append(reminder)
-    task_handle = asyncio.create_task(run_recurring_reminder(reminder))
-    RUNNING_TASKS[reminder_id] = task_handle
+    created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+    scheduler.add_job(
+        _job_recurring,
+        trigger=IntervalTrigger(hours=interval_hours),
+        kwargs={"job_id": reminder_id, "label": label, "interval_hours": interval_hours,
+                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+        id=reminder_id, name=label, replace_existing=True,
+    )
+    _timer_meta[reminder_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours}
+
+    from backend.activity_logger import log_activity
+    log_activity("idle", "Scheduler", f"🔔 Recurring reminder started every {interval_hours}h: '{label}'")
+    logger.info(f"Recurring reminder scheduled: '{label}' every {interval_hours}h (id={reminder_id})")
     return reminder_id
 
 
+def cancel_timer_or_alarm(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    job.remove()
+    _timer_meta.pop(item_id, None)
+    _fire_counts.pop(item_id, None)
+    logger.info(f"Timer/alarm cancelled: {item_id}")
+    return True
+
+
 def cancel_recurring_reminder(reminder_id: str) -> bool:
-    for r in ACTIVE_REMINDERS:
-        if r.id == reminder_id:
-            if r.status == "cancelled" or r.status == "dismissed":
-                return False
-            r.status = "cancelled"
-            if reminder_id in RUNNING_TASKS:
-                RUNNING_TASKS[reminder_id].cancel()
-            return True
-    return False
+    job = scheduler.get_job(reminder_id)
+    if job is None:
+        return False
+    job.remove()
+    _timer_meta.pop(reminder_id, None)
+    _fire_counts.pop(reminder_id, None)
+    logger.info(f"Recurring reminder cancelled: {reminder_id}")
+    return True
+
+
+def _infer_type(job) -> str:
+    func = getattr(job, "func", None)
+    name = getattr(func, "__name__", "")
+    if "recurring" in name:
+        return "recurring"
+    if "alarm" in name:
+        return "alarm"
+    return "one-shot"
+
+
+def get_all_timers() -> List[Dict[str, Any]]:
+    jobs = scheduler.get_jobs()
+    now_tz = datetime.now(scheduler.timezone)
+    result = []
+    for job in jobs:
+        if job.id == "skill_distillation":
+            continue
+        kwargs = job.kwargs or {}
+        job_id = job.id
+        label = kwargs.get("label", job.name or job_id)
+        meta = _timer_meta.get(job_id, {})
+        job_type = meta.get("type") or _infer_type(job)
+        created_at = meta.get("created_at", "")
+        next_run = getattr(job, "next_run_time", None)
+        time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
+
+        entry: Dict[str, Any] = {
+            "id": job_id,
+            "label": label,
+            "status": "running",
+            "time_left": time_left,
+            "type": job_type,
+            "created_at": created_at,
+            "agent_id": kwargs.get("agent_id"),
+            "prompt": kwargs.get("prompt"),
+        }
+        if job_type == "recurring":
+            entry["interval_hours"] = kwargs.get("interval_hours") or meta.get("interval_hours")
+            entry["fire_count"] = _fire_counts.get(job_id, 0)
+        elif job_type == "alarm":
+            entry["target_time"] = kwargs.get("target_time_str") or meta.get("target_time")
+        elif job_type == "one-shot":
+            entry["duration"] = kwargs.get("duration") or meta.get("duration")
+
+        result.append(entry)
+
+    result.sort(key=lambda x: x.get("time_left", 0))
+    return result
 
 
 def get_all_reminders() -> List[Dict[str, Any]]:
-    return [r.to_dict() for r in ACTIVE_REMINDERS if r.status == "running"]
+    return [t for t in get_all_timers() if t.get("type") == "recurring"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SHARED HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _send_telegram_alert(chat_id: str, text: str):
+async def _trigger_agent_task(agent_id: str, prompt: str, chat_id: str) -> None:
+    try:
+        from backend.agent import agent_instance, DECISION_LOGS
+        from backend.websocket_manager import manager
+        await manager.broadcast({"type": "chat_message", "role": "user",
+                                 "content": f"[Scheduled Task] {prompt}", "chat_id": agent_id})
+        response_text = await agent_instance.respond(prompt, session_id=agent_id)
+        cost_usd = agent_instance.last_costs.get(agent_id, 0.0)
+        suppress_tts = agent_instance.check_and_clear_suppress_tts(agent_id)
+        saved_ids = agent_instance.last_saved_ids.get(agent_id, {})
+        user_msg_id = saved_ids.get("user")
+        assistant_msg_id = saved_ids.get("assistant")
+        await manager.broadcast({"type": "chat_message", "role": "assistant", "content": response_text,
+                                 "chat_id": agent_id, "cost_usd": cost_usd,
+                                 "suppress_tts": suppress_tts, "id": assistant_msg_id})
+        if user_msg_id:
+            await manager.broadcast({"type": "user_message_id_update", "chat_id": agent_id,
+                                     "content": prompt, "id": user_msg_id})
+        await manager.broadcast({"type": "logs_update", "logs": DECISION_LOGS[:20]})
+        await _send_telegram_alert(
+            chat_id,
+            f"🤖 **SCHEDULED TASK RESULT**\n\n• **Agent**: `{agent_id}`\n"
+            f"• **Task**: {prompt}\n\n📝 **Result**:\n{response_text}",
+        )
+    except Exception as exc:
+        logger.error(f"Error executing scheduled agent task: {exc}")
+
+
+async def _send_telegram_alert(chat_id: str, text: str) -> None:
+    """Send a Telegram message. Also imported by price_monitor.py."""
     try:
         from backend.bot import telegram_app
         if telegram_app:
-            await telegram_app.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="Markdown"
-            )
-    except Exception as e:
-        logger.error(f"Telegram alert error: {e}")
+            await telegram_app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+    except Exception as exc:
+        logger.error(f"Telegram alert error: {exc}")
 
 
-async def _broadcast_ws(payload: Dict):
+async def _broadcast_ws(payload: Dict) -> None:
     try:
         from backend.websocket_manager import manager
         await manager.broadcast(payload)
-    except Exception as e:
-        logger.error(f"WS broadcast error: {e}")
+    except Exception as exc:
+        logger.error(f"WS broadcast error: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SELF-IMPROVING SKILL DISTILLATION LOOP
+# SKILL DISTILLATION — plain asyncio.Task, NOT an APScheduler job
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def run_skill_distillation_loop(interval_seconds: int = 900):
-    """Background task that periodically checks decision logs and distills complex successful tasks."""
+async def _run_skill_distillation_loop(interval_seconds: int = 900) -> None:
     logger.info("Starting background skill distillation loop...")
     while True:
         try:
@@ -512,24 +377,42 @@ async def run_skill_distillation_loop(interval_seconds: int = 900):
             distilled = distiller.process_undistilled_logs(min_steps=3, limit=5)
             if distilled:
                 logger.info(f"Skill distillation loop: created {len(distilled)} new skills.")
-                await _broadcast_ws({
-                    "type": "skills_distilled",
-                    "skills": distilled
-                })
+                await _broadcast_ws({"type": "skills_distilled", "skills": distilled})
         except asyncio.CancelledError:
             logger.info("Skill distillation loop cancelled.")
             break
         except Exception as err:
             logger.error(f"Skill distillation loop error: {err}")
-        
         await asyncio.sleep(interval_seconds)
 
 
 def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[asyncio.Task]:
-    """Launches the skill distillation loop as a background asyncio task if not already running."""
-    if "skill_distillation_loop" not in RUNNING_TASKS or RUNNING_TASKS["skill_distillation_loop"].done():
-        task = asyncio.create_task(run_skill_distillation_loop(interval_seconds=interval_seconds))
-        RUNNING_TASKS["skill_distillation_loop"] = task
+    key = "skill_distillation_loop"
+    if key not in _RUNNING_TASKS or _RUNNING_TASKS[key].done():
+        task = asyncio.create_task(_run_skill_distillation_loop(interval_seconds=interval_seconds))
+        _RUNNING_TASKS[key] = task
         return task
-    return RUNNING_TASKS["skill_distillation_loop"]
+    return _RUNNING_TASKS[key]
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPATIBILITY SHIMS — no-ops now, kept so main.py imports don't break
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def restore_state() -> None:
+    """No-op: APScheduler auto-restores from SQLite on scheduler.start()."""
+    for job in scheduler.get_jobs():
+        if job.id not in _timer_meta:
+            _timer_meta[job.id] = {
+                "type": _infer_type(job),
+                "created_at": "",
+                "interval_hours": (job.kwargs or {}).get("interval_hours"),
+                "duration": (job.kwargs or {}).get("duration"),
+                "target_time": (job.kwargs or {}).get("target_time_str"),
+            }
+    logger.info(f"Scheduler: {len(scheduler.get_jobs())} jobs loaded from DB")
+
+
+async def _start_restored_tasks() -> None:
+    """No-op: APScheduler auto-starts restored jobs."""
+    pass

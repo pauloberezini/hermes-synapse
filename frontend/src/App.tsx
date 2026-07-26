@@ -681,16 +681,18 @@ export default function App() {
   }, [isAuthenticated]);
 
   const fetchDocuments = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/documents')
-      .then(res => res.json())
-      .then(data => setDocuments(data))
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => { if (Array.isArray(data)) setDocuments(data); })
       .catch(err => console.log('Error fetching documents:', err));
   };
 
   const fetchMetrics = () => {
+    if (!isAuthenticated) return;
     setIsMetricsLoading(true);
     fetchWithAuth('http://localhost:8000/api/metrics')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         setMetrics(data);
         setIsMetricsLoading(false);
@@ -702,21 +704,23 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'metrics') {
+    if (isAuthenticated && activeTab === 'metrics') {
       fetchMetrics();
     }
-  }, [activeTab]);
+  }, [activeTab, isAuthenticated]);
 
   const fetchUploads = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/uploads')
-      .then(res => res.json())
-      .then(data => setUploads(data))
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => { if (Array.isArray(data)) setUploads(data); })
       .catch(err => console.log('Error fetching uploads:', err));
   };
 
   const fetchChatSessions = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/history/sessions')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data)) {
           setChatSessions(data);
@@ -805,20 +809,21 @@ export default function App() {
   };
 
   const fetchSubagents = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/subagents')
-      .then(res => res.json())
-      .then(data => setSubagents(data))
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => { if (Array.isArray(data)) setSubagents(data); })
       .catch(err => console.log('Error fetching subagents:', err));
   };
 
   const selectChat = (chatId: string, currentSubagentsList?: any[]) => {
-    const listToSearch = currentSubagentsList || subagents;
+    const listToSearch = Array.isArray(currentSubagentsList) ? currentSubagentsList : (Array.isArray(subagents) ? subagents : []);
     setCurrentChatId(chatId);
     setMessages([]); // clear temporarily
     fetchWithAuth(`http://localhost:8000/api/history/${chatId}`)
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
-        if (data && data.length > 0) {
+        if (Array.isArray(data) && data.length > 0) {
           setMessages(data);
         } else {
           if (chatId === 'dashboard') {
@@ -958,19 +963,21 @@ export default function App() {
   };
 
   const fetchMarketAlerts = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/market/alerts')
-      .then(res => res.json())
-      .then(data => setPriceAlerts(data))
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => { if (Array.isArray(data)) setPriceAlerts(data); })
       .catch(err => console.log('Error fetching market alerts:', err));
   };
 
   const handleClearActivityLogs = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/activity/logs', {
       method: 'DELETE'
     })
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
-        if (data.status === 'success') {
+        if (data && data.status === 'success') {
           setActivityLogs([]);
         }
       })
@@ -978,8 +985,9 @@ export default function App() {
   };
 
   const fetchModels = () => {
+    if (!isAuthenticated) return;
     fetchWithAuth('http://localhost:8000/api/models')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data)) {
           setModels(data);
@@ -993,7 +1001,7 @@ export default function App() {
     if (!isAuthenticated) return;
 
     fetchWithAuth('http://localhost:8000/api/config')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (data && data.system_prompt !== undefined) {
           setConfig(data);
@@ -1004,7 +1012,7 @@ export default function App() {
       .catch(() => console.log('REST config fetch skipped/failed (using WS instead)'));
 
     fetchWithAuth('http://localhost:8000/api/logs')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data)) {
           setLogs(data);
@@ -1021,7 +1029,7 @@ export default function App() {
     fetchModels();
 
     fetchWithAuth('http://localhost:8000/api/settings')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (data?.language) setAppSettings({ language: data.language }); })
       .catch(() => {});
     
@@ -1031,21 +1039,37 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Fetch system stats and timers when the "tools" tab is active
+  // Fetch timers whenever the 'schedule' tab is active
   useEffect(() => {
-    if (activeTab !== 'tools') return;
+    if (!isAuthenticated || activeTab !== 'schedule') return;
+
+    const fetchTimersData = () => {
+      fetchWithAuth('http://localhost:8000/api/timers')
+        .then(res => res.ok ? res.json() : Promise.reject(res))
+        .then(data => { if (Array.isArray(data)) setTimers(data); })
+        .catch(err => console.log('Error fetching timers:', err));
+    };
+
+    fetchTimersData();
+    const timersInterval = setInterval(fetchTimersData, 3000);
+    return () => clearInterval(timersInterval);
+  }, [activeTab, isAuthenticated]);
+
+  // Fetch system stats, uploads, and market data when the "tools" tab is active
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'tools') return;
 
     const fetchStats = () => {
       fetchWithAuth('http://localhost:8000/api/system/stats')
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : Promise.reject(res))
         .then(data => setSystemStats(data))
         .catch(err => console.log('Error fetching system stats:', err));
     };
 
     const fetchTimersData = () => {
       fetchWithAuth('http://localhost:8000/api/timers')
-        .then(res => res.json())
-        .then(data => setTimers(data))
+        .then(res => res.ok ? res.json() : Promise.reject(res))
+        .then(data => { if (Array.isArray(data)) setTimers(data); })
         .catch(err => console.log('Error fetching timers:', err));
     };
 
@@ -1944,6 +1968,7 @@ export default function App() {
             timers={timers}
             subagents={subagents}
             handleCancelTimer={handleCancelTimer}
+            fetchWithAuth={fetchWithAuth}
           />
         )}
 
