@@ -108,7 +108,7 @@ export function MemoryTab({
           
           <div style={styles.logsList}>
             {memorySearchResults !== null ? (
-              memorySearchResults.length === 0 ? (
+              (!Array.isArray(memorySearchResults) || memorySearchResults.length === 0) ? (
                 <div style={styles.emptyLogs}>Nothing found for your query, Sir.</div>
               ) : (
                 memorySearchResults.map((match, idx) => (
@@ -157,7 +157,7 @@ export function MemoryTab({
                 ))
               )
             ) : (
-              documents.length === 0 ? (
+              (!Array.isArray(documents) || documents.length === 0) ? (
                 <div style={styles.emptyLogs}>Jarvis's memory is empty, Sir. Add a note on the left.</div>
               ) : (
                 documents.map((doc, idx) => (

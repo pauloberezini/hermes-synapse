@@ -136,25 +136,31 @@ export function ToolsTab({
               <span>Active Datasets</span>
             </h3>
             
-            {uploads.length === 0 ? (
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
-                No loaded datasets, Sir. Attach a CSV/Excel file in the chat.
-              </div>
-            ) : (
-              <div style={styles.datasetList}>
-                {uploads.map((upload, idx) => (
-                  <div key={idx} style={styles.datasetItem}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                      <span style={styles.datasetName} title={upload.name}>{upload.name}</span>
-                      <span style={styles.datasetSize}>
-                        {(upload.size_bytes / 1024).toFixed(1)} KB
-                      </span>
-                    </div>
-                    <Database size={14} style={{ color: 'var(--accent-cyan)', flexShrink: 0 }} />
+            {(() => {
+              const safeUploads = Array.isArray(uploads) ? uploads : [];
+              if (safeUploads.length === 0) {
+                return (
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
+                    No loaded datasets, Sir. Attach a CSV/Excel file in the chat.
                   </div>
-                ))}
-              </div>
-            )}
+                );
+              }
+              return (
+                <div style={styles.datasetList}>
+                  {safeUploads.map((upload, idx) => (
+                    <div key={idx} style={styles.datasetItem}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                        <span style={styles.datasetName} title={upload.name}>{upload.name}</span>
+                        <span style={styles.datasetSize}>
+                          {(upload.size_bytes / 1024).toFixed(1)} KB
+                        </span>
+                      </div>
+                      <Database size={14} style={{ color: 'var(--accent-cyan)', flexShrink: 0 }} />
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
         </div>

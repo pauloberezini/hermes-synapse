@@ -50,9 +50,10 @@ graph TD
 2. **Stage 2: Memory Mark I (SQLite + Qdrant RAG)**
    * SQLite database for message history and dynamic agent configurations.
    * Qdrant vector database for document storage, splitting, indexing, and semantic lookup.
-3. **Stage 3: Tools & Actions (Function Calling & Alerts)**
+3. **Stage 3: Tools & Actions (Function Calling & Automation Scheduler)**
    * Function calling parsing loop (API Tools).
    * Local command execution (weather, RSS parsing, system metrics).
+   * Persistent automation scheduler using `APScheduler` + `SQLiteJobStore` (`apscheduler_jobs` table in `hermes.db`), preserving recurring reminders, alarms, and timers across container restarts. Authenticated dashboard polling & dispatch via `ScheduleTab.tsx`.
 4. **Stage 4: Agentic Orchestration**
    * Migrated to hierarchical task planning using a Directed Acyclic Graph (DAG) model.
    * Parent orchestrators dynamically coordinate execution and delegate steps to sub-agents.
@@ -67,6 +68,7 @@ graph TD
    * Marketing campaigns and posts launched on LinkedIn, Facebook, Medium, Reddit, X (Twitter), and Telegram.
 8. **Stage 8: Visual Operations & Telemetry (Pixel Office & Agent Lounge)**
    * Interactive 2.5D Isometric Pixel Office canvas rendering active agent nodes as sprites, lounge zones, and real-time backend telemetry events (`PixelOfficeCanvas.tsx`, `isoOffice.ts`).
+   * Intelligent Office Zone routing for `scheduled` / `waiting` agent tasks into dedicated meeting/queue zones.
 9. **Stage 9: Self-Improving Skill Loop & Trajectory Distillation**
    * Trajectory recorder and skill distiller (`backend/skills/distiller.py`, `backend/skills/loop.py`).
    * Automated distillation of successful multi-step execution traces into reusable Markdown SKILL files for continuous self-learning.

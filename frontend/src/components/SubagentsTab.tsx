@@ -324,7 +324,7 @@ export function SubagentsTab({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
-            {subagents.map(agent => (
+            {(Array.isArray(subagents) ? subagents : []).map(agent => (
               <div
                 key={agent.id}
                 style={{

@@ -104,14 +104,23 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(60)
     asyncio.create_task(_bcm_session_scheduler_task())
 
-    # Start background self-improving skill distillation loop
+    # Start background APScheduler & self-improving skill distillation loop
     try:
-        from backend.scheduler import start_skill_distillation_loop
+        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop
+        scheduler.start()
+        restore_state()
         start_skill_distillation_loop(interval_seconds=900)
     except Exception as e:
-        logger.warning(f"Failed to start skill distillation loop: {e}")
+        logger.warning(f"Failed to start scheduler or skill distillation loop: {e}")
 
     yield
+    # Shutdown: Stop APScheduler
+    try:
+        from backend.scheduler import scheduler
+        scheduler.shutdown(wait=False)
+    except Exception as e:
+        logger.warning(f"Failed to shutdown scheduler cleanly: {e}")
+
     # Shutdown: Stop Telegram bot
     await shutdown_bot()
     
@@ -470,6 +479,39 @@ async def cancel_timer_api(timer_id: str):
     if not ok:
         ok = cancel_recurring_reminder(timer_id)
     return {"status": "cancelled" if ok else "not_found", "timer_id": timer_id}
+
+@app.put("/api/timers/{timer_id}")
+async def update_timer_api(timer_id: str, task: ScheduledTaskCreate):
+    from backend.scheduler import update_timer
+    try:
+        ok = update_timer(
+            item_id=timer_id,
+            label=task.label,
+            task_type=task.type,
+            agent_id=task.agent_id,
+            prompt=task.prompt,
+            duration_seconds=task.duration_seconds,
+            time_str=task.time_str,
+            interval_hours=task.interval_hours,
+        )
+        if ok:
+            return {"status": "success", "id": timer_id}
+        else:
+            return JSONResponse(status_code=404, content={"status": "failed", "error": f"Timer '{timer_id}' not found"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
+
+@app.post("/api/timers/{timer_id}/run")
+async def run_timer_now_api(timer_id: str):
+    from backend.scheduler import trigger_timer_now
+    try:
+        ok = trigger_timer_now(timer_id)
+        if ok:
+            return {"status": "triggered", "id": timer_id}
+        else:
+            return JSONResponse(status_code=404, content={"status": "failed", "error": f"Timer '{timer_id}' not found"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "error": str(e)})
 
 @app.get("/api/subagents")
 async def get_subagents_api():

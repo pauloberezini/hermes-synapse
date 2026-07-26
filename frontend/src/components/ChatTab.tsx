@@ -165,7 +165,7 @@ export function ChatTab({
                 }}
               >
                 <option value="jarvis" style={{ background: '#0b0f19', color: '#fff' }}>Jarvis (Main)</option>
-                {subagents.map(a => (
+                {(Array.isArray(subagents) ? subagents : []).map(a => (
                   <option key={a.id} value={a.id} style={{ background: '#0b0f19', color: '#fff' }}>
                     {a.name} ({a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator' ? 'Orchestrator' : 'Agent'})
                   </option>
@@ -291,7 +291,7 @@ export function ChatTab({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
-            {chatSessions.map(session => {
+            {(Array.isArray(chatSessions) ? chatSessions : []).map(session => {
               const s = session.id;
               const isActive = currentChatId === s;
               const label = session.title || getSessionLabel(s);

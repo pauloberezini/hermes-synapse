@@ -125,7 +125,7 @@ export function normalizeOfficeStatus(agent: AgentModel): StatusKind {
   if (agent.is_enabled === false) return 'offline';
   const status = (agent.status || 'idle').trim().toLowerCase();
   if (['active', 'working', 'running', 'processing', 'busy'].includes(status)) return 'working';
-  if (['waiting', 'queued', 'pending', 'done', 'completed', 'complete', 'success'].includes(status)) return 'waiting';
+  if (['waiting', 'queued', 'pending', 'scheduled', 'done', 'completed', 'complete', 'success'].includes(status)) return 'waiting';
   if (['error', 'failed', 'failure'].includes(status) || agent.last_error) return 'error';
   if (['paused', 'idle'].includes(status)) return 'paused';
   if (['offline', 'disabled', 'sleeping', 'sleep', 'inactive'].includes(status)) return 'offline';
@@ -134,9 +134,11 @@ export function normalizeOfficeStatus(agent: AgentModel): StatusKind {
 
 export function assignOfficeZone(agent: AgentModel, statusKind = normalizeOfficeStatus(agent)): ZoneKey {
   if (statusKind === 'error') return 'error';
-  if (statusKind === 'offline' || statusKind === 'paused' || statusKind === 'waiting') return 'lounge';
-  if (agent.parent_id || (agent.agent_type || '').includes('orchestrator')) return 'meeting';
-  if (['running', 'processing'].includes((agent.status || '').toLowerCase())) return 'project';
+  if (statusKind === 'offline' || statusKind === 'paused') return 'lounge';
+  // Agents waiting for a task / scheduled / queued go to meeting room (waiting room)
+  if (statusKind === 'waiting') return 'meeting';
+  if (agent.parent_id || (agent.agent_type || '').includes('orchestrator')) return 'project';
+  if (['running', 'processing', 'active', 'working'].includes((agent.status || '').toLowerCase())) return 'work';
   return 'work';
 }
 

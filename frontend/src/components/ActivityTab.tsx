@@ -15,6 +15,9 @@ export function ActivityTab({
   activityLogs,
   handleClearActivityLogs
 }: ActivityTabProps) {
+  const safePriceAlerts = Array.isArray(priceAlerts) ? priceAlerts : [];
+  const safeActivityLogs = Array.isArray(activityLogs) ? activityLogs : [];
+
   return (
     <div style={styles.tabWrapper}>
       <div style={styles.tabHeader}>
@@ -35,7 +38,7 @@ export function ActivityTab({
           <div style={{ ...styles.detailStatBox, minWidth: '140px' }}>
             <span style={styles.detailStatLabel}>Active Alerts</span>
             <span style={styles.detailStatValue}>
-              {priceAlerts.length} alerts
+              {safePriceAlerts.length} alerts
             </span>
           </div>
         </div>
@@ -60,16 +63,16 @@ export function ActivityTab({
               onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
               onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-dim)')}
             >
-              <Trash2 size={14} />
-              <span>Clear Log</span>
+              <Trash2 size={12} />
+              Clear Logs
             </button>
           </div>
           
-          <div style={{ ...styles.logsList, maxHeight: 'calc(100vh - 290px)' }}>
-            {activityLogs.length === 0 ? (
+          <div style={styles.logsListContent}>
+            {safeActivityLogs.length === 0 ? (
               <div style={styles.emptyLogs}>Activity feed is empty. Core is idle or waiting for background scanning, Sir.</div>
             ) : (
-              activityLogs.map((log, index) => (
+              safeActivityLogs.map((log, index) => (
                 <div 
                   key={index} 
                   style={{
