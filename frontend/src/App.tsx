@@ -471,9 +471,13 @@ export default function App() {
     setAuthStatus('sending');
     setAuthError('');
     try {
-      const res = await fetch('http://localhost:8000/api/auth/request-code', {
-        method: 'POST'
-      });
+      let res: Response;
+      try {
+        res = await fetch('/api/auth/request-code', { method: 'POST' });
+        if (!res.ok && res.status === 404) throw new Error('404');
+      } catch (firstErr) {
+        res = await fetch('http://localhost:8000/api/auth/request-code', { method: 'POST' });
+      }
       const data = await res.json();
       if (data.status === 'success') {
         setAuthStatus('sent');
@@ -492,11 +496,21 @@ export default function App() {
     setAuthStatus('verifying');
     setAuthError('');
     try {
-      const res = await fetch('http://localhost:8000/api/auth/verify-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
-      });
+      let res: Response;
+      try {
+        res = await fetch('/api/auth/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+        if (!res.ok && res.status === 404) throw new Error('404');
+      } catch (firstErr) {
+        res = await fetch('http://localhost:8000/api/auth/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+      }
       if (res.ok) {
         const data = await res.json();
         localStorage.setItem('jarvis_auth_token', data.token);

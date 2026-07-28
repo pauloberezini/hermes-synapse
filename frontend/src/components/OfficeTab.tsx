@@ -428,7 +428,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
           response = fetchWithAuth
             ? await fetchWithAuth(fallbackUrl, { signal: controller.signal })
             : await fetch(fallbackUrl, { headers, signal: controller.signal });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`, { cause: firstErr });
         }
         const data = await response.json() as { agents?: AgentModel[] };
         if (cancelled) return;

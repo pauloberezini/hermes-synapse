@@ -16,6 +16,26 @@ DB_PATH = os.path.join(DB_DIR, "hermes.db")
 # WAL-mode connection factory (SQLite)
 # ---------------------------------------------------------------------------
 
+def _recover_malformed_db():
+    """Backs up a corrupt SQLite database file and cleans WAL/SHM sidecars."""
+    import shutil
+    import time
+    if os.path.exists(DB_PATH):
+        timestamp = int(time.time())
+        backup_path = f"{DB_PATH}.corrupt.{timestamp}"
+        try:
+            shutil.move(DB_PATH, backup_path)
+            logger.warning(f"Backed up corrupt database from {DB_PATH} to {backup_path}")
+        except Exception as e:
+            logger.error(f"Failed to move corrupt database file: {e}")
+    for sidecar in [f"{DB_PATH}-wal", f"{DB_PATH}-shm"]:
+        if os.path.exists(sidecar):
+            try:
+                os.remove(sidecar)
+            except Exception as e:
+                logger.error(f"Failed to remove sidecar file {sidecar}: {e}")
+
+
 def _get_conn() -> sqlite3.Connection:
     """Open a SQLite connection with WAL journal mode and safe PRAGMA settings.
 
@@ -24,12 +44,24 @@ def _get_conn() -> sqlite3.Connection:
     - A single writer never blocks readers
     - busy_timeout prevents 'database is locked' exceptions under load
     """
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")       # enable WAL mode
-    conn.execute("PRAGMA synchronous=NORMAL")      # safe & fast (vs FULL)
-    conn.execute("PRAGMA busy_timeout=5000")       # wait 5s before giving up
-    conn.execute("PRAGMA foreign_keys=ON")         # enforce FK constraints
-    return conn
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")       # enable WAL mode
+        conn.execute("PRAGMA synchronous=NORMAL")      # safe & fast (vs FULL)
+        conn.execute("PRAGMA busy_timeout=5000")       # wait 5s before giving up
+        conn.execute("PRAGMA foreign_keys=ON")         # enforce FK constraints
+        return conn
+    except sqlite3.DatabaseError as e:
+        if "malformed" in str(e).lower() or "disk image" in str(e).lower():
+            logger.error(f"Database file at {DB_PATH} is malformed ({e}). Resetting DB file.")
+            _recover_malformed_db()
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            return conn
+        raise
 
 
 # ---------------------------------------------------------------------------
