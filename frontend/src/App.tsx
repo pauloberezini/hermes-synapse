@@ -581,7 +581,8 @@ export default function App() {
                 role: data.role,
                 content: data.content,
                 chat_id: msgChatId,
-                cost_usd: data.cost_usd
+                cost_usd: data.cost_usd,
+                timestamp: data.timestamp || new Date().toISOString()
               }]);
             }
             if (data.role === 'assistant') {
@@ -1981,6 +1982,10 @@ export default function App() {
             subagents={subagents}
             handleCancelTimer={handleCancelTimer}
             fetchWithAuth={fetchWithAuth}
+            onOpenChat={(sessionId) => {
+              selectChat(sessionId);
+              setActiveTab('chat');
+            }}
           />
         )}
 

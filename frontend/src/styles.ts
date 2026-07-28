@@ -511,53 +511,68 @@ export const styles: Record<string, any> = {
     backgroundColor: 'rgba(12, 17, 34, 0.5)'
   },
   timersList: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+    display: 'flex',
+    flexDirection: 'column' as const,
     gap: '16px'
   },
   emptyTimersMsg: {
     fontSize: '0.9rem',
     color: 'var(--text-muted)',
-    gridColumn: '1 / -1',
     textAlign: 'center' as const,
-    padding: '32px 0',
-    lineHeight: 1.6
+    padding: '48px 24px',
+    lineHeight: 1.6,
+    background: 'rgba(6, 9, 19, 0.3)',
+    borderRadius: '10px',
+    border: '1px dashed rgba(255, 255, 255, 0.08)'
   },
   timerCard: {
     border: '1px solid',
-    borderRadius: '10px',
-    padding: '16px',
+    borderRadius: '12px',
+    padding: '18px 20px',
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '12px',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-    transition: 'all 0.3s ease'
+    gap: '14px',
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+    transition: 'all 0.3s ease',
+    backdropFilter: 'blur(12px)',
+    width: '100%'
   },
   timerHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    gap: '12px',
+    flexWrap: 'wrap' as const,
+    borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+    paddingBottom: '12px'
   },
   timerLabel: {
-    fontWeight: 600,
-    fontSize: '0.95rem',
+    fontWeight: 700,
+    fontSize: '1rem',
     color: 'var(--text-primary)',
+    letterSpacing: '0.2px',
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    maxWidth: '160px'
+    maxWidth: '240px'
   },
   timerStatusBadge: {
     fontSize: '0.7rem',
-    fontWeight: 600,
-    padding: '2px 6px',
-    borderRadius: '4px',
-    border: '1px solid'
+    fontWeight: 700,
+    letterSpacing: '0.5px',
+    padding: '3px 8px',
+    borderRadius: '6px',
+    border: '1px solid',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px'
   },
   timerBody: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    gap: '16px',
+    flexWrap: 'wrap' as const
   },
   countdownBox: {
     display: 'flex',
@@ -565,25 +580,28 @@ export const styles: Record<string, any> = {
     alignItems: 'flex-start'
   },
   countdownVal: {
-    fontSize: '1.8rem',
+    fontSize: '2.2rem',
     fontWeight: 700,
     color: 'var(--accent-cyan)',
     fontFamily: 'var(--font-mono)',
-    lineHeight: 1.1,
-    textShadow: '0 0 10px rgba(0, 240, 255, 0.3)'
+    lineHeight: 1.0,
+    letterSpacing: '-0.5px',
+    textShadow: '0 0 15px rgba(0, 240, 255, 0.4)'
   },
   countdownUnit: {
-    fontSize: '0.7rem',
-    color: 'var(--text-dim)'
+    fontSize: '0.72rem',
+    color: 'var(--text-dim)',
+    fontWeight: 500,
+    marginTop: '4px'
   },
   timerMeta: {
     display: 'flex',
     flexDirection: 'column' as const,
     alignItems: 'flex-end',
-    fontSize: '0.75rem',
+    fontSize: '0.78rem',
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
-    gap: '2px'
+    gap: '4px'
   },
   toolsRegistryWrapper: {
     padding: '24px',

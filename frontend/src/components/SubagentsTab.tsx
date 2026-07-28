@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig } from '../types';
 import { styles } from '../styles';
-import { renderMarkdown } from '../utils';
+import { renderMarkdown, formatMessageTimestamp } from '../utils';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -529,6 +529,9 @@ export function SubagentsTab({
                                   {playingMsgIndex === index ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
                                 </button>
                               )}
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', opacity: 0.85, letterSpacing: '0.3px' }}>
+                                {formatMessageTimestamp(msg.timestamp || msg.created_at)}
+                              </span>
                             </div>
                           </div>
                           <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>

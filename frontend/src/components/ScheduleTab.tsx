@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, Trash2, Info, Edit3, Play, Pause, RotateCcw, X, Check } from 'lucide-react';
+import { Clock, Trash2, Info, Edit3, Play, Pause, RotateCcw, X, Check, MessageSquare } from 'lucide-react';
 import { styles } from '../styles';
 import { formatTimeLeft } from '../utils';
 
@@ -27,6 +27,20 @@ interface ScheduleTabProps {
   }[];
   handleCancelTimer: (id: string) => void;
   fetchWithAuth?: (url: string, options?: RequestInit) => Promise<Response>;
+  onOpenChat?: (sessionId: string) => void;
+}
+
+function formatCreatedDate(dateStr?: string) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const datePart = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const timePart = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return `${datePart}, ${timePart}`;
+  } catch {
+    return dateStr;
+  }
 }
 
 export function ScheduleTab({
@@ -34,6 +48,7 @@ export function ScheduleTab({
   subagents,
   handleCancelTimer,
   fetchWithAuth,
+  onOpenChat,
 }: ScheduleTabProps) {
   // Create Form State
   const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
@@ -344,230 +359,234 @@ export function ScheduleTab({
                 No active timers or scheduled tasks found, Sir.
               </div>
             ) : (
-              safeTimers.map((timer) => (
-                <div 
-                  key={timer.id} 
-                  style={{
-                    ...styles.timerCard,
-                    borderColor: timer.status === 'paused'
-                      ? 'rgba(234, 179, 8, 0.3)'
-                      : (timer.status === 'running' 
-                          ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.2)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(0, 240, 255, 0.2)')) 
-                          : 'rgba(255, 255, 255, 0.05)'),
-                    backgroundColor: timer.status === 'paused'
-                      ? 'rgba(234, 179, 8, 0.03)'
-                      : (timer.status === 'running' 
-                          ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.02)' : 'rgba(0, 240, 255, 0.02)')) 
-                          : 'rgba(255, 255, 255, 0.01)'),
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px'
-                  }}
-                >
-                  <div style={styles.timerHeader}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={styles.timerLabel}>{timer.label}</span>
-                      
-                      {/* Action buttons: Pause/Resume, Restart, Info, Edit, Delete */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: '6px' }}>
-                        {/* Pause / Resume Button */}
-                        <button 
-                          onClick={() => handleTogglePause(timer)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: timer.status === 'paused' ? '#eab308' : 'rgba(59, 130, 246, 0.85)',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = timer.status === 'paused' ? '#facc15' : '#60a5fa';
-                            e.currentTarget.style.backgroundColor = timer.status === 'paused' ? 'rgba(234, 179, 8, 0.15)' : 'rgba(59, 130, 246, 0.15)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = timer.status === 'paused' ? '#eab308' : 'rgba(59, 130, 246, 0.85)';
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                          title={timer.status === 'paused' ? 'Resume Schedule' : 'Pause Schedule'}
-                        >
-                          {timer.status === 'paused' ? <Play size={14} /> : <Pause size={14} />}
-                        </button>
+              safeTimers.map((timer) => {
+                const isPaused = timer.status === 'paused';
+                const isRunning = timer.status === 'running';
 
-                        {/* Restart Button */}
-                        <button 
-                          onClick={() => handleRestart(timer.id)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'rgba(16, 185, 129, 0.85)',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = '#34d399';
-                            e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.15)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = 'rgba(16, 185, 129, 0.85)';
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                          title="Restart Schedule (Reset Timer)"
-                        >
-                          <RotateCcw size={14} />
-                        </button>
+                let statusText = 'COMPLETED';
+                let statusClass = 'completed';
+                let badgeColor = 'var(--success)';
+                let badgeBorder = 'rgba(16, 185, 129, 0.35)';
+                let badgeBg = 'rgba(16, 185, 129, 0.1)';
 
-                        {/* Info Button */}
-                        <button 
-                          onClick={() => setInfoTimer(timer)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'rgba(0, 240, 255, 0.7)',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = 'var(--accent-cyan)';
-                            e.currentTarget.style.backgroundColor = 'rgba(0, 240, 255, 0.1)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = 'rgba(0, 240, 255, 0.7)';
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                          title="View Info & Preview Prompt"
-                        >
-                          <Info size={14} />
-                        </button>
+                if (isPaused) {
+                  statusText = 'PAUSED';
+                  statusClass = 'paused';
+                  badgeColor = '#eab308';
+                  badgeBorder = 'rgba(234, 179, 8, 0.35)';
+                  badgeBg = 'rgba(234, 179, 8, 0.1)';
+                } else if (isRunning) {
+                  if (timer.type === 'alarm') {
+                    statusText = 'WAITING';
+                    statusClass = 'waiting';
+                    badgeColor = '#f97316';
+                    badgeBorder = 'rgba(249, 115, 22, 0.35)';
+                    badgeBg = 'rgba(249, 115, 22, 0.1)';
+                  } else if (timer.type === 'recurring') {
+                    statusText = 'RECURRING';
+                    statusClass = 'recurring';
+                    badgeColor = '#10b981';
+                    badgeBorder = 'rgba(16, 185, 129, 0.35)';
+                    badgeBg = 'rgba(16, 185, 129, 0.1)';
+                  } else {
+                    statusText = 'COUNTDOWN';
+                    statusClass = 'countdown';
+                    badgeColor = 'var(--accent-cyan)';
+                    badgeBorder = 'rgba(0, 240, 255, 0.35)';
+                    badgeBg = 'rgba(0, 240, 255, 0.1)';
+                  }
+                }
 
-                        {/* Edit Button */}
-                        <button 
-                          onClick={() => handleOpenEdit(timer)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'rgba(234, 179, 8, 0.7)',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = '#eab308';
-                            e.currentTarget.style.backgroundColor = 'rgba(234, 179, 8, 0.1)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = 'rgba(234, 179, 8, 0.7)';
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                          title="Edit Task Configuration"
-                        >
-                          <Edit3 size={14} />
-                        </button>
+                const cardBorderColor = isPaused
+                  ? 'rgba(234, 179, 8, 0.3)'
+                  : (isRunning 
+                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(0, 240, 255, 0.25)')) 
+                      : 'rgba(255, 255, 255, 0.08)');
 
-                        {/* Delete Button */}
-                        <button 
-                          onClick={() => handleCancelTimer(timer.id)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'rgba(239, 68, 68, 0.65)',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = '#ef4444';
-                            e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = 'rgba(239, 68, 68, 0.65)';
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                          title={timer.status === 'running' || timer.status === 'paused' ? 'Cancel Task' : 'Dismiss'}
+                const cardBgColor = isPaused
+                  ? 'rgba(234, 179, 8, 0.03)'
+                  : (isRunning 
+                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.02)' : 'rgba(0, 240, 255, 0.02)')) 
+                      : 'rgba(255, 255, 255, 0.01)');
+
+                return (
+                  <div 
+                    key={timer.id} 
+                    className="schedule-card"
+                    style={{
+                      ...styles.timerCard,
+                      borderColor: cardBorderColor,
+                      backgroundColor: cardBgColor,
+                    }}
+                  >
+                    {/* Card Header */}
+                    <div style={styles.timerHeader}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                        <span style={styles.timerLabel} title={timer.label}>
+                          {timer.label}
+                        </span>
+                        
+                        <span style={{ 
+                          fontSize: '0.65rem', 
+                          fontFamily: 'var(--font-mono)', 
+                          fontWeight: 600, 
+                          padding: '2px 8px', 
+                          borderRadius: '12px', 
+                          backgroundColor: timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.12)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(0, 240, 255, 0.12)'),
+                          color: timer.type === 'recurring' ? '#10b981' : (timer.type === 'alarm' ? '#f97316' : 'var(--accent-cyan)'),
+                          border: `1px solid ${timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : 'rgba(0, 240, 255, 0.25)')}`,
+                          textTransform: 'uppercase'
+                        }}>
+                          {timer.type === 'recurring' ? '🔁 RECURRING' : (timer.type === 'alarm' ? '⏰ ALARM' : '⏱️ ONE-SHOT')}
+                        </span>
+
+                        <span 
+                          style={{ 
+                            fontSize: '0.65rem', 
+                            fontFamily: 'var(--font-mono)', 
+                            padding: '2px 6px', 
+                            borderRadius: '4px', 
+                            backgroundColor: 'rgba(255, 255, 255, 0.05)', 
+                            color: 'var(--text-muted)', 
+                            border: '1px solid rgba(255, 255, 255, 0.08)' 
+                          }} 
+                          title={`Task ID: ${timer.id}`}
                         >
-                          <Trash2 size={13} />
-                        </button>
+                          ID: {timer.id.length > 8 ? `${timer.id.slice(0, 8)}...` : timer.id}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {/* Status Badge */}
+                        <span style={{
+                          ...styles.timerStatusBadge,
+                          color: badgeColor,
+                          borderColor: badgeBorder,
+                          backgroundColor: badgeBg,
+                        }}>
+                          <span className={`status-dot-pulse ${statusClass}`} />
+                          {statusText}
+                        </span>
+
+                        {/* Action Buttons Toolbar */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {onOpenChat && (
+                            <button
+                              onClick={() => onOpenChat(`task_${timer.id}`)}
+                              className="icon-btn-action"
+                              title="Open Chat Session & History"
+                            >
+                              <MessageSquare size={14} color="var(--accent-cyan)" />
+                            </button>
+                          )}
+
+                          <button 
+                            onClick={() => handleTogglePause(timer)}
+                            className="icon-btn-action"
+                            title={timer.status === 'paused' ? 'Resume Schedule' : 'Pause Schedule'}
+                          >
+                            {timer.status === 'paused' ? <Play size={14} color="#eab308" /> : <Pause size={14} color="#60a5fa" />}
+                          </button>
+
+                          <button 
+                            onClick={() => handleRestart(timer.id)}
+                            className="icon-btn-action"
+                            title="Restart Schedule (Reset Timer)"
+                          >
+                            <RotateCcw size={14} color="#34d399" />
+                          </button>
+
+                          <button 
+                            onClick={() => setInfoTimer(timer)}
+                            className="icon-btn-action"
+                            title="View Info & Preview Prompt"
+                          >
+                            <Info size={14} color="var(--accent-cyan)" />
+                          </button>
+
+                          <button 
+                            onClick={() => handleOpenEdit(timer)}
+                            className="icon-btn-action"
+                            title="Edit Task Configuration"
+                          >
+                            <Edit3 size={14} color="#eab308" />
+                          </button>
+
+                          <button 
+                            onClick={() => handleCancelTimer(timer.id)}
+                            className="icon-btn-action danger"
+                            title={timer.status === 'running' || timer.status === 'paused' ? 'Cancel Task' : 'Dismiss'}
+                          >
+                            <Trash2 size={14} color="#ef4444" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    <span style={{
-                      ...styles.timerStatusBadge,
-                      color: timer.status === 'paused'
-                        ? '#eab308'
-                        : (timer.status === 'running' 
-                            ? (timer.type === 'alarm' ? '#f97316' : (timer.type === 'recurring' ? '#10b981' : 'var(--accent-cyan)')) 
-                            : 'var(--success)'),
-                      borderColor: timer.status === 'paused'
-                        ? 'rgba(234, 179, 8, 0.3)'
-                        : (timer.status === 'running' 
-                            ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.3)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(0, 240, 255, 0.3)')) 
-                            : 'rgba(16, 185, 129, 0.3)')
-                    }}>
-                      {timer.status === 'paused'
-                        ? 'PAUSED'
-                        : (timer.status === 'running' 
-                            ? (timer.type === 'alarm' ? 'WAITING' : (timer.type === 'recurring' ? 'RECURRING' : 'COUNTDOWN')) 
-                            : 'COMPLETED')}
-                    </span>
-                  </div>
+                    {/* Card Body */}
+                    <div style={styles.timerBody}>
+                      <div style={styles.countdownBox}>
+                        <span style={styles.countdownVal}>
+                          {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
+                        </span>
+                        <span style={styles.countdownUnit}>
+                          {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'until next run' : (timer.type === 'alarm' ? 'until ring' : 'remaining'))}
+                        </span>
+                      </div>
 
-                  <div style={styles.timerBody}>
-                    <div style={styles.countdownBox}>
-                      <span style={styles.countdownVal}>
-                        {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
-                      </span>
-                      <span style={styles.countdownUnit}>
-                        {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'until next' : (timer.type === 'alarm' ? 'until ring' : 'remaining'))}
-                      </span>
-                    </div>
-                    <div style={styles.timerMeta}>
-                      {timer.type === 'alarm' ? (
-                        <div>Triggers at: {timer.target_time}</div>
-                      ) : (
-                        timer.type === 'recurring' ? (
-                          <div>Every {timer.interval_hours} hrs | Fired: {timer.fire_count || 0} times</div>
+                      <div style={styles.timerMeta}>
+                        {timer.type === 'alarm' ? (
+                          <div>Triggers at: <span style={{ color: '#fff', fontWeight: 600 }}>{timer.target_time}</span></div>
                         ) : (
-                          <div>Duration: {timer.duration} sec</div>
-                        )
-                      )}
-                      <div>Started at: {timer.created_at}</div>
+                          timer.type === 'recurring' ? (
+                            <div>Every <span style={{ color: '#fff', fontWeight: 600 }}>{timer.interval_hours} hrs</span> | Fired: <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>{timer.fire_count || 0} times</span></div>
+                          ) : (
+                            <div>Duration: <span style={{ color: '#fff', fontWeight: 600 }}>{timer.duration}s</span></div>
+                          )
+                        )}
+                        {timer.created_at && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                            Started: {formatCreatedDate(timer.created_at)}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {timer.agent_id && (
-                    <div style={{ marginTop: '4px', padding: '6px 8px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', fontSize: '0.75rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--accent-cyan)', marginBottom: '2px' }}>
-                        <span>🤖 Target Agent: {timer.agent_id}</span>
+                    {/* Card Footer (Target Agent & Prompt) */}
+                    {timer.agent_id && (
+                      <div style={{ 
+                        marginTop: '2px', 
+                        padding: '8px 12px', 
+                        borderRadius: '6px', 
+                        backgroundColor: 'rgba(6, 9, 19, 0.6)', 
+                        border: '1px solid rgba(255, 255, 255, 0.05)', 
+                        fontSize: '0.78rem' 
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--accent-cyan)', marginBottom: '3px' }}>
+                          <span>🤖 Target Agent: <span style={{ color: '#fff' }}>{timer.agent_id}</span></span>
+                        </div>
+                        {timer.prompt && (
+                          <div 
+                            style={{ 
+                              color: 'var(--text-muted)', 
+                              fontFamily: 'var(--font-mono)', 
+                              fontSize: '0.72rem', 
+                              overflow: 'hidden', 
+                              textOverflow: 'ellipsis', 
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1.4,
+                              opacity: 0.9
+                            }} 
+                            title={timer.prompt}
+                          >
+                            "{timer.prompt}"
+                          </div>
+                        )}
                       </div>
-                      <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={timer.prompt}>
-                        "{timer.prompt}"
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -627,9 +646,17 @@ export function ScheduleTab({
 
             {/* Task Info Body */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>TASK NAME / LABEL</label>
-                <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff' }}>{infoTimer.label}</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>TASK NAME / LABEL</label>
+                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#fff' }}>{infoTimer.label}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>TASK ID (DB)</label>
+                  <code style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', background: 'rgba(0,240,255,0.06)', padding: '3px 8px', borderRadius: '4px', border: '1px solid rgba(0,240,255,0.15)', userSelect: 'all' }}>
+                    {infoTimer.id}
+                  </code>
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '12px' }}>

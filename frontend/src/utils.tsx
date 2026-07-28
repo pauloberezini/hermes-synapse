@@ -465,3 +465,41 @@ export const initFetchInterceptor = () => {
     return res;
   };
 };
+
+/**
+ * Formats a message timestamp into HH:mm dd/MM/yyyy
+ */
+export const formatMessageTimestamp = (timestamp?: string): string => {
+  if (!timestamp) {
+    return formatFormattedDate(new Date());
+  }
+
+  let d: Date;
+  if (/^\d+$/.test(timestamp)) {
+    d = new Date(parseInt(timestamp, 10));
+  } else {
+    let isoStr = timestamp;
+    if (isoStr.includes(' ') && !isoStr.includes('T')) {
+      isoStr = isoStr.replace(' ', 'T');
+    }
+    if (!isoStr.endsWith('Z') && !isoStr.includes('+') && !isoStr.includes('-')) {
+      isoStr += 'Z';
+    }
+    d = new Date(isoStr);
+  }
+
+  if (isNaN(d.getTime())) {
+    d = new Date();
+  }
+
+  return formatFormattedDate(d);
+};
+
+function formatFormattedDate(d: Date): string {
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${hours}:${minutes} ${day}/${month}/${year}`;
+}

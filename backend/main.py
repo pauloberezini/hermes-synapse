@@ -1,5 +1,6 @@
 import logging
 from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query
 from fastapi.responses import JSONResponse
@@ -970,7 +971,9 @@ async def clear_activity_logs_api():
 @app.get("/api/history/sessions")
 async def get_history_sessions():
     from backend.database import DB_PATH
+    from backend.scheduler import get_all_timers
     import sqlite3
+    import json
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -978,34 +981,84 @@ async def get_history_sessions():
         subagent_ids = {r[0] for r in cursor.fetchall()}
         
         cursor.execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
-        sessions = [r[0] for r in cursor.fetchall()]
+        msg_sessions = [r[0] for r in cursor.fetchall()]
         
-        # Fetch all custom titles and agent_ids from session_metadata
-        cursor.execute("SELECT session_id, title, agent_id FROM session_metadata")
-        metadata_map = {r[0]: {"title": r[1], "agent_id": r[2]} for r in cursor.fetchall()}
+        # Fetch all metadata from session_metadata table
+        cursor.execute("SELECT session_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info FROM session_metadata")
+        metadata_map = {}
+        scheduled_meta_sessions = []
+        for r in cursor.fetchall():
+            s_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info = r
+            info_dict = None
+            if schedule_info:
+                try:
+                    info_dict = json.loads(schedule_info)
+                except Exception:
+                    info_dict = None
+            metadata_map[s_id] = {
+                "title": title,
+                "agent_id": agent_id,
+                "is_scheduled": bool(is_scheduled or s_id.startswith("task_")),
+                "job_id": job_id or (s_id[5:] if s_id.startswith("task_") else None),
+                "schedule_type": schedule_type,
+                "schedule_info": info_dict
+            }
+            if is_scheduled or s_id.startswith("task_"):
+                scheduled_meta_sessions.append(s_id)
         conn.close()
+
+        # Combine sessions from messages and session_metadata (so newly scheduled tasks with 0 messages appear)
+        all_session_ids = []
+        seen = set()
+        for s in msg_sessions + scheduled_meta_sessions:
+            if s not in seen:
+                seen.add(s)
+                all_session_ids.append(s)
         
-        # Filter out subagents, and keep only "dashboard" and custom sessions
-        user_sessions = [s for s in sessions if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
+        # Overlay live scheduler info
+        live_jobs = {t["id"]: t for t in get_all_timers()}
+        
+        # Filter out subagents and archive sessions
+        user_sessions = [s for s in all_session_ids if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
         
         sessions_response = []
         for s in ["dashboard"] + user_sessions:
             meta = metadata_map.get(s, {})
             title = meta.get("title")
             agent_id = meta.get("agent_id")
+            is_scheduled = meta.get("is_scheduled", False) or s.startswith("task_")
+            job_id = meta.get("job_id") or (s[5:] if s.startswith("task_") else None)
+            schedule_type = meta.get("schedule_type")
+            schedule_info = meta.get("schedule_info") or {}
+
+            if job_id and job_id in live_jobs:
+                live_info = live_jobs[job_id]
+                schedule_info.update(live_info)
+                if not schedule_type:
+                    schedule_type = live_info.get("type")
+                if not title:
+                    label = live_info.get("label", "")
+                    title = f"⏰ {label}" if label and not label.startswith("⏰") else (label or s)
+
             if not title:
                 if s == "dashboard":
                     title = "Main Terminal"
                 else:
                     title = s
+
             sessions_response.append({
                 "id": s,
                 "title": title,
-                "agent_id": agent_id
+                "agent_id": agent_id,
+                "is_scheduled": is_scheduled,
+                "job_id": job_id,
+                "schedule_type": schedule_type,
+                "schedule_info": schedule_info
             })
         return sessions_response
     except Exception as e:
-        return [{"id": "dashboard", "title": "Main Terminal", "agent_id": None}]
+        logger.error("Error in get_history_sessions: %s", e)
+        return [{"id": "dashboard", "title": "Main Terminal", "agent_id": None, "is_scheduled": False}]
 
 class SessionAgentPayload(BaseModel):
     agent_id: str
@@ -1319,7 +1372,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "chat_message",
                         "role": "user",
                         "content": display_text,
-                        "chat_id": chat_id
+                        "chat_id": chat_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     })
                     # Call agent with enriched context
                     response_text = await agent_instance.respond(agent_text, session_id=chat_id)
@@ -1365,7 +1419,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "chat_id": chat_id,
                         "cost_usd": cost_usd,
                         "suppress_tts": suppress_tts,
-                        "id": assistant_msg_id
+                        "id": assistant_msg_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     })
                     
                     # Broadcast user message ID update

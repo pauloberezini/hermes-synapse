@@ -2,6 +2,7 @@ import os
 import sqlite3
 import logging
 import json
+from datetime import datetime, timezone
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
@@ -422,17 +423,24 @@ def _init_sqlite_schema():
         )
     """)
 
-    # Migration: add agent_id column to session_metadata if it doesn't exist
+    # Migration: add columns to session_metadata if they don't exist
     cursor.execute("PRAGMA table_info(session_metadata)")
     existing_columns = [row[1] for row in cursor.fetchall()]
 
-    if "agent_id" not in existing_columns:
-        try:
-            cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
-            logger.info("Migrated session_metadata table to include agent_id column.")
-        except sqlite3.OperationalError as e:
-            logger.error("Failed to migrate session_metadata table to include agent_id column: %s", e)
-            raise
+    new_cols = [
+        ("agent_id", "TEXT"),
+        ("is_scheduled", "INTEGER DEFAULT 0"),
+        ("job_id", "TEXT"),
+        ("schedule_type", "TEXT"),
+        ("schedule_info", "TEXT"),
+    ]
+    for col_name, col_type in new_cols:
+        if col_name not in existing_columns:
+            try:
+                cursor.execute(f"ALTER TABLE session_metadata ADD COLUMN {col_name} {col_type}")
+                logger.info("Migrated session_metadata table to include %s column.", col_name)
+            except sqlite3.OperationalError as e:
+                logger.error("Failed to migrate session_metadata table for column %s: %s", col_name, e)
 
     conn.commit()
     conn.close()
@@ -784,12 +792,14 @@ def _get_default_agents_migrations() -> list:
     ]
 
 
-def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0) -> Optional[int]:
+def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0, timestamp: Optional[str] = None) -> Optional[int]:
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
+        if not timestamp:
+            timestamp = datetime.now(timezone.utc).isoformat()
         return _lastrowid(
-            "INSERT INTO messages (session_id, role, content, cost_usd) VALUES (?, ?, ?, ?)",
-            (session_id, role, content, cost_usd),
+            "INSERT INTO messages (session_id, role, content, cost_usd, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (session_id, role, content, cost_usd, timestamp),
         )
     except Exception as e:
         logger.error(f"Error saving message: {e}")
@@ -799,13 +809,13 @@ def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Retrieves the last N messages for a given chat session, in chronological order."""
     try:
         rows = _execute("""
-            SELECT id, role, content, cost_usd FROM (
-                SELECT id, role, content, cost_usd FROM messages
+            SELECT id, role, content, cost_usd, timestamp FROM (
+                SELECT id, role, content, cost_usd, timestamp FROM messages
                 WHERE session_id = ?
                 ORDER BY id DESC LIMIT ?
             ) ORDER BY id ASC
         """, (session_id, limit))
-        return [{"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3]} for r in rows]
+        return [{"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3], "timestamp": r[4]} for r in rows]
     except Exception as e:
         logger.error(f"Error retrieving chat history: {e}")
         return []
@@ -1218,28 +1228,73 @@ def set_setting(key: str, value: str) -> bool:
 
 # ─── SESSION METADATA HELPERS ──────────────────────────────────────────────────
 
-def save_session_metadata(session_id: str, title: str, agent_id: Optional[str] = None):
-    """Saves or updates custom metadata (title and target agent) for a chat session."""
+def save_session_metadata(
+    session_id: str,
+    title: str,
+    agent_id: Optional[str] = None,
+    is_scheduled: int = 0,
+    job_id: Optional[str] = None,
+    schedule_type: Optional[str] = None,
+    schedule_info: Optional[str] = None,
+):
+    """Saves or updates custom metadata (title, target agent, scheduled status) for a chat session."""
     try:
-        # Check if row exists to preserve existing values if updating selectively
         rows = _execute(
-            "SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,)
+            "SELECT agent_id, is_scheduled, job_id, schedule_type, schedule_info FROM session_metadata WHERE session_id = ?",
+            (session_id,)
         )
         final_agent_id = agent_id
-        if rows and agent_id is None:
-            final_agent_id = rows[0][0]
+        final_is_scheduled = is_scheduled
+        final_job_id = job_id
+        final_schedule_type = schedule_type
+        final_schedule_info = schedule_info
+
+        if rows:
+            if agent_id is None:
+                final_agent_id = rows[0][0]
+            if is_scheduled == 0 and rows[0][1]:
+                final_is_scheduled = rows[0][1]
+            if job_id is None:
+                final_job_id = rows[0][2]
+            if schedule_type is None:
+                final_schedule_type = rows[0][3]
+            if schedule_info is None:
+                final_schedule_info = rows[0][4]
 
         _execute("""
-            INSERT INTO session_metadata (session_id, title, agent_id, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO session_metadata (session_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(session_id) DO UPDATE SET
                 title = excluded.title,
                 agent_id = excluded.agent_id,
+                is_scheduled = excluded.is_scheduled,
+                job_id = excluded.job_id,
+                schedule_type = excluded.schedule_type,
+                schedule_info = excluded.schedule_info,
                 updated_at = CURRENT_TIMESTAMP
-        """, (session_id, title, final_agent_id))
-        logger.info(f"Saved custom metadata for session {session_id}: title={title}, agent_id={final_agent_id}")
+        """, (session_id, title, final_agent_id, final_is_scheduled, final_job_id, final_schedule_type, final_schedule_info))
+        logger.info(f"Saved custom metadata for session {session_id}: title={title}, agent_id={final_agent_id}, scheduled={final_is_scheduled}")
     except Exception as e:
         logger.error(f"Error saving session metadata for {session_id}: {e}")
+
+def save_scheduled_session_metadata(
+    session_id: str,
+    title: str,
+    agent_id: Optional[str],
+    job_id: str,
+    schedule_type: str,
+    schedule_info: Optional[str] = None
+):
+    """Convenience helper to register or update a scheduled task session."""
+    save_session_metadata(
+        session_id=session_id,
+        title=title,
+        agent_id=agent_id,
+        is_scheduled=1,
+        job_id=job_id,
+        schedule_type=schedule_type,
+        schedule_info=schedule_info
+    )
 
 def save_session_title(session_id: str, title: str):
     """Saves or updates a custom title for a chat session."""

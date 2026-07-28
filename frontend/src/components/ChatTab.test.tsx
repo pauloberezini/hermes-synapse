@@ -85,4 +85,18 @@ describe('ChatTab Component', () => {
     expect(screen.getAllByText('Main Terminal').length).toBeGreaterThan(0);
     expect(screen.getByText('chat_123')).toBeInTheDocument();
   });
+
+  it('renders message timestamp formatted as HH:mm dd/MM/yyyy', () => {
+    const propsWithTimestamp = {
+      ...defaultProps,
+      messages: [
+        { role: 'user' as const, content: 'Test prompt', timestamp: '2026-07-28T14:05:00Z' }
+      ]
+    };
+    render(<ChatTab {...propsWithTimestamp} />);
+
+    // Matches HH:mm dd/MM/yyyy format (e.g., 14:05 28/07/2026 or local timezone equivalent)
+    const timestampRegex = /\d{2}:\d{2}\s\d{2}\/\d{2}\/\d{4}/;
+    expect(screen.getByText(timestampRegex)).toBeInTheDocument();
+  });
 });

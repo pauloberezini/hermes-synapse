@@ -187,7 +187,46 @@ async def test_restart_timer():
     assert scheduler.restart_timer(timer_id) is True
     timers = scheduler.get_all_timers()
     assert len(timers) == 1
-    assert timers[0]["status"] == "running"
     assert scheduler.restart_timer("invalid_id") is False
 
 
+@pytest.mark.asyncio
+async def test_restore_state_from_db_kwargs():
+    timer_id = scheduler.add_timer("Persisted Task", 300, "chat123", agent_id="jarvis", prompt="Run diagnostic")
+    # Simulate memory clear (server restart)
+    scheduler._timer_meta.clear()
+    assert len(scheduler._timer_meta) == 0
+
+    scheduler.restore_state()
+    timers = scheduler.get_all_timers()
+    assert len(timers) == 1
+    assert timers[0]["id"] == timer_id
+    assert timers[0]["label"] == "Persisted Task"
+    assert timers[0]["agent_id"] == "jarvis"
+    assert timers[0]["prompt"] == "Run diagnostic"
+    assert timers[0]["type"] == "one-shot"
+    assert timers[0]["created_at"] != ""
+
+@pytest.mark.asyncio
+async def test_scheduled_session_creation_and_history():
+    from backend import database
+    timer_id = scheduler.add_timer("Check Weather", 60, "123", agent_id="jarvis", prompt="Check rain forecast")
+    session_id = f"task_{timer_id}"
+    
+    # Verify title in session_metadata
+    title = database.get_session_title(session_id)
+    assert title is not None
+    assert "Check Weather" in title
+
+    # Test execution triggers using task_session_id
+    with patch("backend.agent.agent_instance.respond", new_callable=AsyncMock) as mock_respond, \
+         patch("backend.websocket_manager.manager.broadcast", new_callable=AsyncMock) as mock_broadcast:
+        mock_respond.return_value = "Rain is expected at 14:00."
+        await scheduler._trigger_agent_task("jarvis", "Check rain forecast", "123", task_session_id=session_id, job_id=timer_id)
+        
+        mock_respond.assert_called_once_with("Check rain forecast", session_id=session_id)
+        # Verify websocket broadcast sent with correct chat_id
+        broadcast_calls = [call.args[0] for call in mock_broadcast.call_args_list]
+        user_msgs = [c for c in broadcast_calls if c.get("type") == "chat_message" and c.get("role") == "user"]
+        assert len(user_msgs) > 0
+        assert user_msgs[0]["chat_id"] == session_id

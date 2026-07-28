@@ -2,6 +2,7 @@ import os
 import logging
 import io
 import re
+from datetime import datetime, timezone
 from functools import wraps
 from telegram import Update
 from telegram.ext import (
@@ -123,7 +124,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "type": "chat_message",
         "role": "user",
         "content": user_text,
-        "chat_id": chat_id
+        "chat_id": chat_id,
+        "timestamp": datetime.now(timezone.utc).isoformat()
     })
     
     # Show typing indicator
@@ -241,7 +243,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "chat_id": chat_id,
         "cost_usd": cost_usd,
         "suppress_tts": True,
-        "id": assistant_msg_id
+        "id": assistant_msg_id,
+        "timestamp": datetime.now(timezone.utc).isoformat()
     })
     
     # Broadcast user message ID update
