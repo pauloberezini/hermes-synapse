@@ -113,6 +113,9 @@ export function ScheduleTab({
         if (data.status === 'success') {
           setTaskLabel('');
           setTaskPrompt('');
+          if (onOpenChat && data.id) {
+            onOpenChat(`task_${data.id}`);
+          }
         } else {
           alert("Error: " + (data.error || "Failed to schedule task"));
         }
@@ -184,6 +187,9 @@ export function ScheduleTab({
         if (data.status === 'triggered') {
           setRunMessage("⚡ Task triggered successfully! Agent is executing instructions...");
           setTimeout(() => setRunMessage(null), 4000);
+          if (onOpenChat) {
+            onOpenChat(`task_${timerId}`);
+          }
         } else {
           alert("Error running task: " + (data.error || "Failed to trigger task"));
         }

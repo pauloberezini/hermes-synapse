@@ -2125,6 +2125,7 @@ export default function App() {
             isConnected={isConnected}
             language={appSettings.language as 'en' | 'ru'}
             liveTrace={officeLiveTrace}
+            fetchWithAuth={fetchWithAuth}
             selectChat={(agentId) => {
               selectChat(agentId);
               setActiveTab('chat');

@@ -151,8 +151,12 @@ async def test_update_timer_and_trigger_now():
     with patch("backend.scheduler._trigger_agent_task", new_callable=AsyncMock) as mock_trigger:
         triggered = scheduler.trigger_timer_now(timer_id)
         assert triggered is True
-        await asyncio.sleep(0.01)
-        mock_trigger.assert_called_once_with("jarvis", "Updated prompt", "123")
+        assert mock_trigger.call_count == 1
+        call_kwargs = mock_trigger.call_args.kwargs
+        assert call_kwargs["agent_id"] == "jarvis"
+        assert call_kwargs["prompt"] == "Updated prompt"
+        assert call_kwargs["chat_id"] == "123"
+        assert call_kwargs["task_session_id"] == f"task_{timer_id}"
 
     assert scheduler.update_timer("non_existent_id", "Label", "one-shot", duration_seconds=60) is False
     assert scheduler.trigger_timer_now("non_existent_id") is False

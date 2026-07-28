@@ -490,10 +490,20 @@ def trigger_timer_now(item_id: str) -> bool:
     agent_id = kwargs.get("agent_id") or "jarvis"
     prompt = kwargs.get("prompt")
     chat_id = kwargs.get("chat_id", "dashboard")
+    label = kwargs.get("label", item_id)
+    task_session_id = f"task_{item_id}"
     if not prompt:
         raise ValueError("Task has no prompt to execute.")
-    asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
-    logger.info(f"Manually triggered task {item_id} (agent={agent_id})")
+    _register_scheduled_session(item_id, label, _infer_type(job), agent_id, prompt, status="running")
+    asyncio.create_task(_trigger_agent_task(
+        agent_id=agent_id,
+        prompt=prompt,
+        chat_id=chat_id,
+        task_session_id=task_session_id,
+        job_id=item_id,
+        label=label,
+    ))
+    logger.info(f"Manually triggered task {item_id} (agent={agent_id}, session_id={task_session_id})")
     return True
 
 
