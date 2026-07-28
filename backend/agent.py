@@ -297,6 +297,8 @@ class JarvisAgent:
                 start_time = time.time()
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
+                if not response_text or not response_text.strip():
+                    response_text = "Сэр, процесс оркестрации завершен, но результат ответа оказался пустым."
                 latency_ms = int((time.time() - start_time) * 1000)
                 
                 # Save the assistant message exchange in the DB
@@ -380,6 +382,8 @@ class JarvisAgent:
             try:
                 orch_result = await run_orchestration(context_query, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
+                if not response_text or not response_text.strip():
+                    response_text = "Сэр, процесс оркестрации завершен, но результат ответа оказался пустым."
                 traces = orch_result["traces"]
                 error_msg = None
                 self.last_run_metadata[session_id] = {

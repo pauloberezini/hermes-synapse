@@ -315,6 +315,12 @@ def cancel_timer_or_alarm(item_id: str) -> bool:
     job.remove()
     _timer_meta.pop(item_id, None)
     _fire_counts.pop(item_id, None)
+    try:
+        from backend.database import delete_session_title
+        delete_session_title(f"task_{item_id}")
+        delete_session_title(item_id)
+    except Exception as e:
+        logger.error(f"Error cleaning session metadata on cancel: {e}")
     logger.info(f"Timer/alarm cancelled: {item_id}")
     return True
 
@@ -326,6 +332,12 @@ def cancel_recurring_reminder(reminder_id: str) -> bool:
     job.remove()
     _timer_meta.pop(reminder_id, None)
     _fire_counts.pop(reminder_id, None)
+    try:
+        from backend.database import delete_session_title
+        delete_session_title(f"task_{reminder_id}")
+        delete_session_title(reminder_id)
+    except Exception as e:
+        logger.error(f"Error cleaning session metadata on cancel: {e}")
     logger.info(f"Recurring reminder cancelled: {reminder_id}")
     return True
 

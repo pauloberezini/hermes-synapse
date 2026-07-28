@@ -1022,6 +1022,7 @@ async def get_history_sessions():
         user_sessions = [s for s in all_session_ids if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
         
         sessions_response = []
+        msg_sessions_set = set(msg_sessions)
         for s in ["dashboard"] + user_sessions:
             meta = metadata_map.get(s, {})
             title = meta.get("title")
@@ -1030,6 +1031,10 @@ async def get_history_sessions():
             job_id = meta.get("job_id") or (s[5:] if s.startswith("task_") else None)
             schedule_type = meta.get("schedule_type")
             schedule_info = meta.get("schedule_info") or {}
+
+            # Filter out deleted ghost timers that have no live job and 0 messages
+            if is_scheduled and job_id and job_id not in live_jobs and s not in msg_sessions_set:
+                continue
 
             if job_id and job_id in live_jobs:
                 live_info = live_jobs[job_id]
@@ -1082,9 +1087,12 @@ async def get_history_api(chat_id: str, limit: int = 40):
 @app.delete("/api/history/{chat_id}")
 async def delete_history_api(chat_id: str):
     from backend.database import clear_chat_history, delete_session_title
+    from backend.scheduler import cancel_timer_or_alarm, cancel_recurring_reminder
     clear_chat_history(chat_id)
     delete_session_title(chat_id)
-    # Also clear from agent's in-memory last costs or messages if needed
+    job_id = chat_id[5:] if chat_id.startswith("task_") else chat_id
+    cancel_timer_or_alarm(job_id)
+    cancel_recurring_reminder(job_id)
     if chat_id in agent_instance.last_costs:
         agent_instance.last_costs[chat_id] = 0.0
     return {"status": "success"}
