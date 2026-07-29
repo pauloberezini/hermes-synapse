@@ -747,22 +747,7 @@ def _migrate_existing_subagents_sqlite(cursor):
         cursor.execute("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                system_prompt = excluded.system_prompt,
-                agent_type = excluded.agent_type,
-                parent_id = excluded.parent_id,
-                skills = excluded.skills
-            WHERE subagents.system_prompt IN (
-                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
-                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
-                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
-                'You are a research agent. Search for information on the internet using web_search.',
-                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
-                'You are a Code Engineer. Write and execute Python scripts.',
-                'Вы — Аналитик-Визуализатор. Создавайте графики.',
-                'You are an Analyst-Visualizer. Create charts.'
-            )
+            ON CONFLICT(id) DO NOTHING
         """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
 
 
@@ -773,22 +758,7 @@ def _migrate_existing_subagents_postgres(cursor):
         cursor.execute("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                system_prompt = excluded.system_prompt,
-                agent_type = excluded.agent_type,
-                parent_id = excluded.parent_id,
-                skills = excluded.skills
-            WHERE subagents.system_prompt IN (
-                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
-                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
-                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
-                'You are a research agent. Search for information on the internet using web_search.',
-                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
-                'You are a Code Engineer. Write and execute Python scripts.',
-                'Вы — Аналитик-Визуализатор. Создавайте графики.',
-                'You are an Analyst-Visualizer. Create charts.'
-            )
+            ON CONFLICT(id) DO NOTHING
         """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
 
 
