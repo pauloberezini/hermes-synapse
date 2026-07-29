@@ -49,12 +49,17 @@ export function NetworkTab({
     const saved = localStorage.getItem('jarvis_skill_positions');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        let hasExtremeOffset = false;
+        Object.values(parsed).forEach((v: any) => {
+          if (v && typeof v.x === 'number' && v.x >= 2500) hasExtremeOffset = true;
+        });
+        if (!hasExtremeOffset) return parsed;
       } catch (e) {}
     }
     const defaults: Record<string, { x: number; y: number }> = {};
     SKILLS_LIST.forEach((skill, skIndex) => {
-      defaults[skill.id] = { x: 3500, y: 50 + skIndex * 135 };
+      defaults[skill.id] = { x: 1050, y: 50 + skIndex * 120 };
     });
     return defaults;
   });
@@ -76,7 +81,7 @@ export function NetworkTab({
     const nodes = [
       ...subagents.map(n => ({ x: n.x || 100, y: n.y || 100, w: 220, h: 100 })),
       ...SKILLS_LIST.map((skill, idx) => {
-        const pos = skillPositions[skill.id] || { x: 3500, y: 50 + idx * 135 };
+        const pos = skillPositions[skill.id] || { x: 1050, y: 50 + idx * 120 };
         return { x: pos.x, y: pos.y, w: 200, h: 70 };
       })
     ];
@@ -116,6 +121,15 @@ export function NetworkTab({
     setZoom(newZoom);
     setPanOffset({ x: newPanX, y: newPanY });
   };
+
+  const initialCenteredRef = useRef(false);
+  useEffect(() => {
+    if (subagents.length > 0 && !initialCenteredRef.current) {
+      initialCenteredRef.current = true;
+      const timer = setTimeout(() => handleCenterView(), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [subagents.length]);
 
   // Inspector panel form states
   const [inspectName, setInspectName] = useState('');

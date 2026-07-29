@@ -458,12 +458,25 @@ export default function App() {
       ...options.headers,
       ...(token ? { 'Authorization': `Bearer ${token}` } : {})
     };
-    return fetch(url, { ...options, headers }).then(res => {
+
+    let relativeUrl = url;
+    if (url.startsWith('http://localhost:8000/api')) {
+      relativeUrl = url.replace('http://localhost:8000', '');
+    }
+
+    const doFetch = (targetUrl: string) => fetch(targetUrl, { ...options, headers }).then(res => {
       if (res.status === 401) {
         localStorage.removeItem('jarvis_auth_token');
         setIsAuthenticated(false);
       }
       return res;
+    });
+
+    return doFetch(relativeUrl).catch((firstErr) => {
+      if (relativeUrl !== url) {
+        return doFetch(url);
+      }
+      throw firstErr;
     });
   }, []);
 
