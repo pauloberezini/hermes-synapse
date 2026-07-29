@@ -223,7 +223,7 @@ def get_current_time_israel() -> str:
 # 3. TIMERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def set_timer(label: str, duration_seconds: int, chat_id: str) -> str:
+def set_timer(label: str, duration_seconds: int, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None) -> str:
     """Creates a countdown timer that fires a Telegram alert on completion."""
     if duration_seconds > 3600:
         return json.dumps({
@@ -232,7 +232,10 @@ def set_timer(label: str, duration_seconds: int, chat_id: str) -> str:
         }, ensure_ascii=False)
     try:
         from backend.scheduler import add_timer
-        timer_id = add_timer(label, duration_seconds, chat_id)
+        if agent_id or prompt:
+            timer_id = add_timer(label, duration_seconds, chat_id, agent_id, prompt)
+        else:
+            timer_id = add_timer(label, duration_seconds, chat_id)
         return json.dumps({
             "status":           "active",
             "timer_id":         timer_id,
@@ -245,11 +248,14 @@ def set_timer(label: str, duration_seconds: int, chat_id: str) -> str:
         return json.dumps({"status": "failed", "error": str(e)})
 
 
-def set_alarm(time_str: str, label: str, chat_id: str) -> str:
+def set_alarm(time_str: str, label: str, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None) -> str:
     """Creates an alarm clock scheduled for a specific time/date (Israel local time) with Telegram notification."""
     try:
         from backend.scheduler import add_alarm
-        alarm_id = add_alarm(time_str, label, chat_id)
+        if agent_id or prompt:
+            alarm_id = add_alarm(time_str, label, chat_id, agent_id, prompt)
+        else:
+            alarm_id = add_alarm(time_str, label, chat_id)
         return json.dumps({
             "status":      "active",
             "alarm_id":    alarm_id,
@@ -288,11 +294,14 @@ def cancel_timer_or_alarm(id: str) -> str:
 # 4. RECURRING REMINDERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def set_recurring_reminder(label: str, interval_hours: float, chat_id: str) -> str:
+def set_recurring_reminder(label: str, interval_hours: float, chat_id: str, agent_id: Optional[str] = None, prompt: Optional[str] = None) -> str:
     """Creates a recurring reminder that fires every N hours via Telegram."""
     try:
         from backend.scheduler import add_recurring_reminder
-        reminder_id = add_recurring_reminder(label, interval_hours, chat_id)
+        if agent_id or prompt:
+            reminder_id = add_recurring_reminder(label, interval_hours, chat_id, agent_id, prompt)
+        else:
+            reminder_id = add_recurring_reminder(label, interval_hours, chat_id)
         return json.dumps({
             "status":         "active",
             "reminder_id":    reminder_id,
@@ -1489,18 +1498,22 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         return get_current_time_israel()
 
     elif name == "set_timer":
-        return set_timer(
-            arguments.get("label", "Таймер"),
-            int(arguments.get("duration_seconds", 60)),
-            chat_id
-        )
+        label = arguments.get("label", "Таймер")
+        duration = int(arguments.get("duration_seconds", 60))
+        agent_id = arguments.get("agent_id")
+        prompt = arguments.get("prompt")
+        if agent_id or prompt:
+            return set_timer(label, duration, chat_id, agent_id, prompt)
+        return set_timer(label, duration, chat_id)
 
     elif name == "set_alarm":
-        return set_alarm(
-            arguments.get("time_str", ""),
-            arguments.get("label", "Будильник"),
-            chat_id
-        )
+        time_str = arguments.get("time_str", "")
+        label = arguments.get("label", "Будильник")
+        agent_id = arguments.get("agent_id")
+        prompt = arguments.get("prompt")
+        if agent_id or prompt:
+            return set_alarm(time_str, label, chat_id, agent_id, prompt)
+        return set_alarm(time_str, label, chat_id)
 
     elif name == "cancel_timer_or_alarm":
         return cancel_timer_or_alarm(
@@ -1508,11 +1521,13 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         )
 
     elif name == "set_recurring_reminder":
-        return set_recurring_reminder(
-            arguments.get("label", "Напоминание"),
-            float(arguments.get("interval_hours", 24)),
-            chat_id
-        )
+        label = arguments.get("label", "Напоминание")
+        interval_hours = float(arguments.get("interval_hours", 24))
+        agent_id = arguments.get("agent_id")
+        prompt = arguments.get("prompt")
+        if agent_id or prompt:
+            return set_recurring_reminder(label, interval_hours, chat_id, agent_id, prompt)
+        return set_recurring_reminder(label, interval_hours, chat_id)
 
     elif name == "get_calendar_events":
         return get_calendar_events(int(arguments.get("days_ahead", 7)))

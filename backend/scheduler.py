@@ -576,6 +576,12 @@ async def _trigger_agent_task(
     job_id: Optional[str] = None,
     label: Optional[str] = None,
 ) -> None:
+    if agent_id == "jarvis":
+        lower_prompt = (prompt + " " + (label or "")).lower()
+        if any(kw in lower_prompt for kw in ["hedge fund", "trading", "bcm", "pepperstone", "ctrader", "intraday"]):
+            agent_id = "bcm_orchestrator"
+            logger.info(f"Auto-rerouted scheduled task {job_id or label} to bcm_orchestrator based on trading keywords.")
+
     session_id = task_session_id or (f"task_{job_id}" if job_id else agent_id)
     try:
         from backend.agent import agent_instance, DECISION_LOGS
