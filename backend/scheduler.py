@@ -688,26 +688,93 @@ def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[async
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def restore_state() -> None:
-    """Populate _timer_meta for jobs restored from SQLite DB by APScheduler."""
-    for job in scheduler.get_jobs():
-        if job.id == "skill_distillation":
-            continue
-        kwargs = job.kwargs or {}
-        task_type = kwargs.get("task_type") or _infer_type(job)
-        status = "paused" if getattr(job, "next_run_time", None) is None else "running"
-        _timer_meta[job.id] = {
-            "type": task_type,
-            "created_at": kwargs.get("created_at", ""),
-            "interval_hours": kwargs.get("interval_hours"),
-            "duration": kwargs.get("duration"),
-            "target_time": kwargs.get("target_time_str"),
-            "status": status,
-        }
-        label = kwargs.get("label", job.name or job.id)
-        agent_id = kwargs.get("agent_id")
-        prompt = kwargs.get("prompt")
-        _register_scheduled_session(job.id, label, task_type, agent_id, prompt, status=status)
-    logger.info(f"Scheduler: {len(scheduler.get_jobs())} jobs loaded from DB")
+    """Populate _timer_meta and restore scheduled jobs from SQLite session_metadata DB table."""
+    try:
+        from backend.database import _execute
+        rows = _execute("SELECT session_id, title, agent_id, job_id, schedule_type, schedule_info FROM session_metadata WHERE is_scheduled = 1")
+        restored_count = 0
+        for r in rows:
+            session_id, title, agent_id, job_id, schedule_type, schedule_info_raw = r
+            if not job_id or job_id == "skill_distillation":
+                continue
+            
+            info = {}
+            if schedule_info_raw:
+                try:
+                    info = json.loads(schedule_info_raw)
+                except Exception:
+                    pass
+            
+            label = info.get("label") or title or job_id
+            if label.startswith("⏰ "):
+                label = label[2:]
+            elif label.startswith("🔔 "):
+                label = label[2:]
+                
+            task_type = schedule_type or info.get("task_type") or "recurring"
+            prompt = info.get("prompt")
+            status = info.get("status") or "running"
+            chat_id = info.get("chat_id", "dashboard")
+            created_at = info.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+            _timer_meta[job_id] = {
+                "type": task_type,
+                "created_at": created_at,
+                "interval_hours": info.get("interval_hours", 1.0),
+                "duration": info.get("duration"),
+                "target_time": info.get("target_time"),
+                "status": status,
+            }
+
+            existing_job = scheduler.get_job(job_id)
+            if not existing_job:
+                if task_type == "recurring":
+                    interval_hours = float(info.get("interval_hours") or 1.0)
+                    job = scheduler.add_job(
+                        _job_recurring,
+                        trigger=IntervalTrigger(hours=interval_hours),
+                        kwargs={"job_id": job_id, "label": label, "interval_hours": interval_hours,
+                                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                                "created_at": created_at, "task_type": "recurring"},
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                    if status == "paused":
+                        job.pause()
+                    restored_count += 1
+                elif task_type == "one-shot":
+                    duration = int(info.get("duration") or 60)
+                    run_at = datetime.now(scheduler.timezone) + timedelta(seconds=duration)
+                    job = scheduler.add_job(
+                        _job_one_shot,
+                        trigger=DateTrigger(run_date=run_at),
+                        kwargs={"job_id": job_id, "label": label, "duration": duration,
+                                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                                "created_at": created_at, "task_type": "one-shot"},
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                    if status == "paused":
+                        job.pause()
+                    restored_count += 1
+                elif task_type == "alarm":
+                    target_time_str = info.get("target_time") or created_at
+                    from zoneinfo import ZoneInfo
+                    tz = ZoneInfo("Asia/Jerusalem")
+                    now_tz = datetime.now(tz)
+                    target_dt = now_tz + timedelta(minutes=5)
+                    job = scheduler.add_job(
+                        _job_alarm,
+                        trigger=DateTrigger(run_date=target_dt),
+                        kwargs={"job_id": job_id, "label": label, "chat_id": chat_id,
+                                "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt,
+                                "created_at": created_at, "task_type": "alarm"},
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                    if status == "paused":
+                        job.pause()
+                    restored_count += 1
+        logger.info(f"Scheduler: restored {restored_count} tasks from session_metadata DB table.")
+    except Exception as e:
+        logger.error(f"Error in restore_state from DB: {e}")
 
 
 async def _start_restored_tasks() -> None:
