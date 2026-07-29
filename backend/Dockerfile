@@ -37,7 +37,11 @@ RUN pip install --no-cache-dir \
     todoist-api-python>=2.1.3 \
     pypdf>=4.0.0 \
     apscheduler>=3.10.0 \
-    sqlalchemy>=2.0.0
+    sqlalchemy>=2.0.0 \
+    simplefix>=1.0.17 \
+    twisted>=24.0.0 \
+    service_identity>=24.0.0 \
+    pyopenssl>=24.0.0
 
 
 
