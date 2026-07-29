@@ -474,9 +474,82 @@ def _init_sqlite_schema():
             except sqlite3.OperationalError as e:
                 logger.error("Failed to migrate session_metadata table for column %s: %s", col_name, e)
 
+    _auto_heal_subagents_and_skills(cursor)
+
     conn.commit()
     conn.close()
     logger.info("SQLite Database initialized successfully.")
+
+
+def _auto_heal_subagents_and_skills(cursor):
+    """Auto-heal missing subagents, skills, messages, and session metadata from backup."""
+    backup_path = os.path.join(DB_DIR, "hermes_corrupt_backup.db")
+    if not os.path.exists(backup_path):
+        return
+
+    try:
+        b_conn = sqlite3.connect(backup_path)
+        b_cur = b_conn.cursor()
+
+        # 1. Subagents
+        try:
+            b_cur.execute("SELECT id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature FROM subagents")
+            for a in b_cur.fetchall():
+                cursor.execute("""
+                    INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                """, a)
+        except Exception as e:
+            logger.warning("Auto-heal subagents warning: %s", e)
+
+        # 2. Distilled skills
+        try:
+            b_cur.execute("SELECT created_at, decision_log_id, session_id, skill_name, title, file_path, trigger_conditions, content FROM distilled_skills")
+            for sk in b_cur.fetchall():
+                sk_list = list(sk)
+                if not sk_list[0]: sk_list[0] = '2026-01-01T00:00:00Z'
+                if not sk_list[2]: sk_list[2] = 'default'
+                if not sk_list[5]: sk_list[5] = ''
+                if not sk_list[6]: sk_list[6] = ''
+                if not sk_list[7]: sk_list[7] = ''
+                cursor.execute("""
+                    INSERT INTO distilled_skills (created_at, decision_log_id, session_id, skill_name, title, file_path, trigger_conditions, content)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(skill_name) DO NOTHING
+                """, sk_list)
+        except Exception as e:
+            logger.warning("Auto-heal skills warning: %s", e)
+
+        # 3. Messages
+        try:
+            b_cur.execute("SELECT session_id, role, content, timestamp, cost_usd FROM messages")
+            for msg in b_cur.fetchall():
+                cursor.execute("""
+                    INSERT INTO messages (session_id, role, content, timestamp, cost_usd)
+                    SELECT ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM messages WHERE session_id = ? AND role = ? AND content = ? AND timestamp = ?
+                    )
+                """, (msg[0], msg[1], msg[2], msg[3], msg[4], msg[0], msg[1], msg[2], msg[3]))
+        except Exception as e:
+            logger.warning("Auto-heal messages warning: %s", e)
+
+        # 4. Session metadata
+        try:
+            b_cur.execute("SELECT session_id, title, created_at, updated_at, agent_id FROM session_metadata")
+            for sess in b_cur.fetchall():
+                cursor.execute("""
+                    INSERT INTO session_metadata (session_id, title, created_at, updated_at, agent_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO NOTHING
+                """, sess)
+        except Exception as e:
+            logger.warning("Auto-heal sessions warning: %s", e)
+
+        b_conn.close()
+    except Exception as e:
+        logger.error("Auto-heal failed: %s", e)
 
 
 def _init_postgres_schema():
