@@ -12,24 +12,8 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Defensive imports with clear error messages for cronjob diagnostics
-try:
-    try:
-        from backend.bcm.memory_manager import BCMMemory
-    except ImportError:
-        from memory_manager import BCMMemory
-except Exception as e:
-    print(f"WARNING: Cannot import BCMMemory: {e}")
-    BCMMemory = None
-
-try:
-    try:
-        from backend.bcm.compliance_officer import ComplianceOfficer
-    except ImportError:
-        from compliance_officer import ComplianceOfficer
-except Exception as e:
-    print(f"WARNING: Cannot import ComplianceOfficer: {e}")
-    ComplianceOfficer = None
+from memory_manager import BCMMemory
+from compliance_officer import ComplianceOfficer
 
 # Load configuration from .env
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
