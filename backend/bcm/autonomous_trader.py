@@ -12,8 +12,15 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 
-from memory_manager import BCMMemory
-from compliance_officer import ComplianceOfficer
+try:
+    from backend.bcm.memory_manager import BCMMemory
+except ImportError:
+    from memory_manager import BCMMemory
+
+try:
+    from backend.bcm.compliance_officer import ComplianceOfficer
+except ImportError:
+    from compliance_officer import ComplianceOfficer
 
 # Load configuration from .env
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
