@@ -9,7 +9,7 @@ logger = logging.getLogger("jarvis.bcm.tools")
 # Ensure BCM directory is in sys.path so modules can import from each other correctly
 BCM_DIR = os.path.dirname(os.path.abspath(__file__))
 if BCM_DIR not in sys.path:
-    sys.path.append(BCM_DIR)
+    sys.path.insert(0, BCM_DIR)
 
 def _ensure_bcm_dependencies():
     import subprocess

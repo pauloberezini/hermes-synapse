@@ -18,6 +18,11 @@ def clean_scheduler_state():
         pass
     scheduler._timer_meta.clear()
     scheduler._fire_counts.clear()
+    try:
+        from backend import database
+        database._execute("DELETE FROM session_metadata WHERE session_id LIKE 'task_%'")
+    except Exception:
+        pass
     yield
     try:
         for job in list(scheduler.scheduler.get_jobs()):
@@ -228,7 +233,7 @@ async def test_scheduled_session_creation_and_history():
         mock_respond.return_value = "Rain is expected at 14:00."
         await scheduler._trigger_agent_task("jarvis", "Check rain forecast", "123", task_session_id=session_id, job_id=timer_id)
         
-        mock_respond.assert_called_once_with("Check rain forecast", session_id=session_id)
+        mock_respond.assert_called_once_with("Check rain forecast", session_id=session_id, override_agent_id="jarvis")
         # Verify websocket broadcast sent with correct chat_id
         broadcast_calls = [call.args[0] for call in mock_broadcast.call_args_list]
         user_msgs = [c for c in broadcast_calls if c.get("type") == "chat_message" and c.get("role") == "user"]
