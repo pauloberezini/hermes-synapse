@@ -583,6 +583,12 @@ async def _trigger_agent_task(
             logger.info(f"Auto-rerouted scheduled task {job_id or label} to bcm_orchestrator based on trading keywords.")
 
     session_id = task_session_id or (f"task_{job_id}" if job_id else agent_id)
+    if job_id and agent_id:
+        try:
+            _register_scheduled_session(job_id, label or job_id, "recurring", agent_id, prompt)
+        except Exception:
+            pass
+
     try:
         from backend.agent import agent_instance, DECISION_LOGS
         from backend.websocket_manager import manager
@@ -597,7 +603,7 @@ async def _trigger_agent_task(
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
-        response_text = await agent_instance.respond(prompt, session_id=session_id)
+        response_text = await agent_instance.respond(prompt, session_id=session_id, override_agent_id=agent_id)
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
         suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
         saved_ids = agent_instance.last_saved_ids.get(session_id, {})
