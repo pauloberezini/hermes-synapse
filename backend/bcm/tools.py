@@ -347,7 +347,10 @@ def _normalize_yf_symbol(symbol: str) -> str:
 
 def handle_bcm_calculate_remizov_shift(args):
     try:
-        from autonomous_trader import calculate_remizov_shift
+        try:
+            from backend.bcm.autonomous_trader import calculate_remizov_shift
+        except ImportError:
+            from autonomous_trader import calculate_remizov_shift
         import yfinance as yf
         raw_symbol = args.get("symbol")
         yf_symbol = _normalize_yf_symbol(raw_symbol)
@@ -360,7 +363,10 @@ def handle_bcm_calculate_remizov_shift(args):
 
 def handle_bcm_get_technical_indicators(args):
     try:
-        from autonomous_trader import get_technical_analysis
+        try:
+            from backend.bcm.autonomous_trader import get_technical_analysis
+        except ImportError:
+            from autonomous_trader import get_technical_analysis
         raw_symbol = args.get("symbol")
         yf_symbol = _normalize_yf_symbol(raw_symbol)
         analysis = get_technical_analysis(yf_symbol)
@@ -372,8 +378,12 @@ def handle_bcm_get_technical_indicators(args):
 
 def handle_bcm_get_market_experience(args):
     try:
-        from autonomous_trader import get_technical_analysis, calculate_remizov_shift, calculate_atr_keltner
-        from memory_manager import BCMMemory
+        try:
+            from backend.bcm.autonomous_trader import get_technical_analysis, calculate_remizov_shift, calculate_atr_keltner
+            from backend.bcm.memory_manager import BCMMemory
+        except ImportError:
+            from autonomous_trader import get_technical_analysis, calculate_remizov_shift, calculate_atr_keltner
+            from memory_manager import BCMMemory
         import yfinance as yf
         symbol = args.get("symbol")
         ticker = yf.Ticker(symbol)
