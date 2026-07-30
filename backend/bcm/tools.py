@@ -201,6 +201,17 @@ SYMBOL_MAP = {
     "US500": 10001, "SPX500": 10001, "NAS100": 10002, "US100": 10002, "US30": 10003,
     "BRENT": 10053, "SPOTBRENT": 10053, "OIL": 10053,
     "WTI": 10054, "SPOTCRUDE": 10054,
+    # US Stock & ETF CFDs on Pepperstone
+    "AMZN": 10098, "AMZN.US": 10098,
+    "GOOGL": 11621, "GOOGL.US": 11621, "GOOG": 10101, "GOOG.US": 10101,
+    "AAPL": 10099, "AAPL.US": 10099,
+    "NVDA": 10104, "NVDA.US": 10104,
+    "TSLA": 10105, "TSLA.US": 10105,
+    "MSFT": 10097, "MSFT.US": 10097,
+    "META": 10100, "META.US": 10100,
+    "SPY": 10118, "SPY.US": 10118,
+    "QQQ": 11827, "QQQ.US": 11827,
+    "USO": 11973, "USO.US": 11973,
 }
 
 def handle_ctrader_place_order(args):
@@ -316,6 +327,17 @@ YF_SYMBOL_MAP = {
     "XAUUSD": "GC=F", "GOLD": "GC=F", "XAGUSD": "SI=F", "SILVER": "SI=F",
     "US500": "^GSPC", "SPX500": "^GSPC", "NAS100": "^NDX", "US100": "^NDX", "US30": "^DJI",
     "BRENT": "BZ=F", "WTI": "CL=F", "OIL": "BZ=F",
+    # US Stock & ETF CFDs
+    "AMZN": "AMZN", "AMZN.US": "AMZN",
+    "GOOGL": "GOOGL", "GOOGL.US": "GOOGL", "GOOG": "GOOG", "GOOG.US": "GOOG",
+    "AAPL": "AAPL", "AAPL.US": "AAPL",
+    "NVDA": "NVDA", "NVDA.US": "NVDA",
+    "TSLA": "TSLA", "TSLA.US": "TSLA",
+    "MSFT": "MSFT", "MSFT.US": "MSFT",
+    "META": "META", "META.US": "META",
+    "SPY": "SPY", "SPY.US": "SPY",
+    "QQQ": "QQQ", "QQQ.US": "QQQ",
+    "USO": "USO", "USO.US": "USO",
 }
 
 def _normalize_yf_symbol(symbol: str) -> str:

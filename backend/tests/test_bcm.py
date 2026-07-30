@@ -19,7 +19,7 @@ from backend.bcm.tools import (
 
 def test_symbol_mappings():
     """Verify all Pepperstone symbols have valid FIX Symbol IDs and Yahoo Finance tickers."""
-    expected_symbols = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT", "WTI"]
+    expected_symbols = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT", "WTI", "AMZN", "GOOGL", "NVDA", "TSLA", "AAPL", "MSFT", "META", "SPY", "QQQ", "USO"]
     
     for sym in expected_symbols:
         assert sym in SYMBOL_MAP, f"Missing FIX symbol ID for {sym}"
