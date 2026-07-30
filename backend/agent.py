@@ -292,7 +292,7 @@ class JarvisAgent:
         target_agent_id = override_agent_id or get_session_agent_id(session_id) or session_id
         subagent = get_subagent(target_agent_id)
         if subagent:
-            if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
+            if subagent.get("id") == "orchestrator":
                 from backend.orchestrator import run_orchestration
                 start_time = time.time()
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
