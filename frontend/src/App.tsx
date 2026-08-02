@@ -19,7 +19,8 @@ import {
   ChevronLeft,
   BarChart3,
   Building2,
-  LogOut
+  LogOut,
+  Kanban
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -47,6 +48,7 @@ import { NetworkTab } from './components/NetworkTab';
 import { MCPTab } from './components/MCPTab';
 import { MetricsTab } from './components/MetricsTab';
 import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
+import { TaskBoardTab } from './components/TaskBoardTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -76,7 +78,7 @@ const langToLocale: Record<string, string> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'tasks' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = getSafeStorageItem('jarvis_active_tab');
     return (saved as any) || 'chat';
   });
@@ -1665,6 +1667,19 @@ export default function App() {
           <button 
             style={{
               ...styles.navBtn, 
+              ...(activeTab === 'tasks' ? styles.navBtnActive : {}),
+              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
+            }}
+            onClick={() => { setActiveTab('tasks'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+            title={sidebarCollapsed ? "Task Engine" : undefined}
+          >
+            <Kanban size={18} />
+            {!sidebarCollapsed && <span>Task Engine</span>}
+          </button>
+
+          <button 
+            style={{
+              ...styles.navBtn, 
               ...(activeTab === 'network' ? styles.navBtnActive : {}),
               ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
             }}
@@ -2163,6 +2178,10 @@ export default function App() {
 
         {activeTab === 'mcp' && (
           <MCPTab />
+        )}
+
+        {activeTab === 'tasks' && (
+          <TaskBoardTab />
         )}
 
         {activeTab === 'office' && (

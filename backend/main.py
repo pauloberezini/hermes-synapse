@@ -602,6 +602,132 @@ async def delete_subagent_api(subagent_id: str):
     ok = delete_subagent(subagent_id)
     return {"status": "success" if ok else "failed"}
 
+# ── Paperclip Governance & Presets API Endpoints ────────────────────────────────
+
+class BudgetUpdateRequest(BaseModel):
+    daily_budget_usd: Optional[float] = None
+    monthly_budget_usd: Optional[float] = None
+
+class ApprovalResolveRequest(BaseModel):
+    decision: str  # "APPROVED" | "REJECTED"
+    resolver_note: str = ""
+
+@app.get("/api/governance/approvals")
+async def get_approvals_api(pending_only: bool = False):
+    from backend.governance import ApprovalQueue
+    if pending_only:
+        return ApprovalQueue.get_pending()
+    return ApprovalQueue.get_all()
+
+@app.get("/api/governance/approvals/count")
+async def get_pending_approvals_count_api():
+    from backend.governance import ApprovalQueue
+    return {"count": ApprovalQueue.count_pending()}
+
+@app.post("/api/governance/approvals/{request_id}/resolve")
+async def resolve_approval_api(request_id: int, payload: ApprovalResolveRequest):
+    from backend.governance import ApprovalQueue
+    ok = ApprovalQueue.resolve(request_id, payload.decision, payload.resolver_note)
+    if not ok:
+        return JSONResponse(status_code=404, content={"status": "failed", "error": f"Request #{request_id} not found"})
+    return {"status": "success", "id": request_id, "decision": payload.decision}
+
+@app.get("/api/governance/budget/{session_id}")
+async def get_budget_api(session_id: str):
+    from backend.governance import BudgetGuard
+    return BudgetGuard.get_spend_summary(session_id)
+
+@app.post("/api/governance/budget/{session_id}")
+async def update_budget_api(session_id: str, body: BudgetUpdateRequest):
+    from backend.database import _get_conn
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE session_metadata SET daily_budget_usd = ?, monthly_budget_usd = ? WHERE session_id = ?",
+            (body.daily_budget_usd, body.monthly_budget_usd, session_id)
+        )
+        conn.commit()
+    return {"status": "success", "session_id": session_id}
+
+@app.get("/api/subagents/presets")
+async def get_presets_api():
+    from backend.presets import list_presets
+    return list_presets()
+
+@app.post("/api/subagents/presets/{preset_id}/load")
+async def load_preset_api(preset_id: str):
+    from backend.presets import load_preset
+    ok = load_preset(preset_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"status": "failed", "error": f"Preset '{preset_id}' not found"})
+    return {"status": "success", "preset_id": preset_id}
+
+# ── Paperclip Task Engine REST API Endpoints (FEAT-5) ──────────────────────────
+
+class TaskCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+    status: str = "BACKLOG"
+    assigned_agent_id: str = ""
+
+class TaskCheckoutRequest(BaseModel):
+    agent_id: str
+    lock_duration_seconds: int = 300
+
+class TaskUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    assigned_agent_id: Optional[str] = None
+    checkpoint_data: Optional[str] = None
+
+@app.get("/api/tasks")
+async def get_tasks_api(status: Optional[str] = None, assigned_agent_id: Optional[str] = None):
+    from backend.database import db_get_tasks
+    return db_get_tasks(status=status, assigned_agent_id=assigned_agent_id)
+
+@app.post("/api/tasks")
+async def create_task_api(body: TaskCreateRequest):
+    from backend.database import db_create_task
+    task_id = db_create_task(
+        title=body.title,
+        description=body.description,
+        status=body.status,
+        assigned_agent_id=body.assigned_agent_id,
+    )
+    return {"status": "success", "id": task_id}
+
+@app.post("/api/tasks/{task_id}/checkout")
+async def checkout_task_api(task_id: int, body: TaskCheckoutRequest):
+    from backend.database import db_checkout_task
+    res = db_checkout_task(task_id, body.agent_id, body.lock_duration_seconds)
+    if res.get("status") == "error":
+        return JSONResponse(status_code=404, content=res)
+    elif res.get("status") == "locked":
+        return JSONResponse(status_code=409, content=res)
+    return res
+
+@app.put("/api/tasks/{task_id}")
+async def update_task_api(task_id: int, body: TaskUpdateRequest):
+    from backend.database import db_update_task
+    ok = db_update_task(
+        task_id,
+        title=body.title,
+        description=body.description,
+        status=body.status,
+        assigned_agent_id=body.assigned_agent_id,
+        checkpoint_data=body.checkpoint_data,
+    )
+    if not ok:
+        return JSONResponse(status_code=404, content={"status": "failed", "error": f"Task #{task_id} not found or no changes"})
+    return {"status": "success", "id": task_id}
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task_api(task_id: int):
+    from backend.database import db_delete_task
+    ok = db_delete_task(task_id)
+    return {"status": "success" if ok else "failed"}
+
 @app.get("/api/skills")
 async def get_skills_api():
     """Returns all available built-in skill names and which tools each unlocks."""
