@@ -6,6 +6,8 @@ export interface ChatMessage {
   content: string;
   chat_id?: string | number;
   cost_usd?: number;
+  timestamp?: string;
+  created_at?: string;
 }
 
 export interface DecisionLog {
@@ -50,6 +52,21 @@ export interface ChatSession {
   id: string;
   title: string;
   agent_id?: string;
+  is_scheduled?: boolean;
+  job_id?: string;
+  schedule_type?: 'one-shot' | 'alarm' | 'recurring' | string;
+  schedule_info?: {
+    status?: 'running' | 'paused' | 'completed' | 'cancelled' | string;
+    label?: string;
+    prompt?: string;
+    duration?: number;
+    target_time?: string;
+    interval_hours?: number;
+    time_left?: number;
+    created_at?: string;
+    fire_count?: number;
+    [key: string]: any;
+  };
 }
 
 export interface AgentEvent {

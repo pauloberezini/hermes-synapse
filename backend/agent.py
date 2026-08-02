@@ -277,7 +277,7 @@ class JarvisAgent:
         from backend import database as db
         db.clear_chat_history(session_id)
 
-    async def respond(self, user_message: str, session_id: str = "default") -> str:
+    async def respond(self, user_message: str, session_id: str = "default", override_agent_id: Optional[str] = None) -> str:
         """Sends chat request to OpenRouter LLM model with memory context and system prompt."""
         if not self.api_key:
             return "Ошибка: OPENROUTER_API_KEY не задан в конфигурации .env, Сэр."
@@ -289,14 +289,16 @@ class JarvisAgent:
 
         # Check if this session is a registered custom subagent
         from backend.database import get_subagent, get_session_agent_id
-        target_agent_id = get_session_agent_id(session_id) or session_id
+        target_agent_id = override_agent_id or get_session_agent_id(session_id) or session_id
         subagent = get_subagent(target_agent_id)
         if subagent:
-            if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
+            if subagent.get("id") == "orchestrator":
                 from backend.orchestrator import run_orchestration
                 start_time = time.time()
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
+                if not response_text or not response_text.strip():
+                    response_text = "Сэр, процесс оркестрации завершен, но результат ответа оказался пустым."
                 latency_ms = int((time.time() - start_time) * 1000)
                 
                 # Save the assistant message exchange in the DB
@@ -380,6 +382,8 @@ class JarvisAgent:
             try:
                 orch_result = await run_orchestration(context_query, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
+                if not response_text or not response_text.strip():
+                    response_text = "Сэр, процесс оркестрации завершен, но результат ответа оказался пустым."
                 traces = orch_result["traces"]
                 error_msg = None
                 self.last_run_metadata[session_id] = {

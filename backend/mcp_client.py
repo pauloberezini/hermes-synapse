@@ -11,6 +11,8 @@ logger = logging.getLogger("hermes.mcp_client")
 class MCPServerClient:
     def __init__(self, name: str, config: Dict[str, Any]):
         self.name = name
+        self.url = config.get("url")
+        self.http_headers = config.get("headers", {})
         self.command = config.get("command")
         self.args = config.get("args", [])
         self.env = {**os.environ, **config.get("env", {})}
@@ -20,32 +22,81 @@ class MCPServerClient:
         self.req_id = 0
         self.pending_requests = {}
         self.tools = []
+        self.session_id = None
 
     async def start(self):
         try:
-            logger.info(f"Starting MCP server '{self.name}': {self.command} {' '.join(self.args)}")
-            self.process = await asyncio.create_subprocess_exec(
-                self.command,
-                *self.args,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=self.env
-            )
-            self.reader = self.process.stdout
-            self.writer = self.process.stdin
-            
-            # Start background reader task for messages
-            asyncio.create_task(self._read_loop())
-            
-            # Initialize connection
-            await self._initialize()
-            
-            # List tools
-            await self._list_tools()
+            if self.url:
+                logger.info(f"Connecting HTTP/SSE MCP server '{self.name}': {self.url}")
+                await self._initialize_http()
+                await self._list_tools_http()
+            else:
+                logger.info(f"Starting MCP server '{self.name}': {self.command} {' '.join(self.args)}")
+                self.process = await asyncio.create_subprocess_exec(
+                    self.command,
+                    *self.args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=self.env
+                )
+                self.reader = self.process.stdout
+                self.writer = self.process.stdin
+                
+                # Start background reader task for messages
+                asyncio.create_task(self._read_loop())
+                
+                # Initialize connection
+                await self._initialize()
+                
+                # List tools
+                await self._list_tools()
             logger.info(f"MCP server '{self.name}' successfully initialized with {len(self.tools)} tools.")
         except Exception as e:
             logger.error(f"Failed to start MCP server '{self.name}': {e}")
+
+    async def send_request_http(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        import httpx
+        self.req_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self.req_id,
+            "method": method,
+            "params": params
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            **self.http_headers
+        }
+        if self.session_id:
+            headers["mcp-session-id"] = self.session_id
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(self.url, json=payload, headers=headers)
+            resp.raise_for_status()
+            if "mcp-session-id" in resp.headers:
+                self.session_id = resp.headers["mcp-session-id"]
+            
+            text = resp.text
+            for line in text.splitlines():
+                if line.startswith("data: "):
+                    return json.loads(line[6:])
+            return resp.json()
+
+    async def _initialize_http(self):
+        return await self.send_request_http("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "hermes-mcp-client",
+                "version": "1.0.0"
+            }
+        })
+
+    async def _list_tools_http(self):
+        res = await self.send_request_http("tools/list", {})
+        self.tools = res.get("result", {}).get("tools", [])
 
     async def _read_loop(self):
         # Background task reading stderr to log it
@@ -79,6 +130,8 @@ class MCPServerClient:
                 logger.error(f"Error parsing line from '{self.name}': {e}")
 
     async def send_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        if self.url:
+            return await self.send_request_http(method, params)
         self.req_id += 1
         curr_id = self.req_id
         fut = asyncio.get_event_loop().create_future()
@@ -119,10 +172,16 @@ class MCPServerClient:
         self.tools = res.get("result", {}).get("tools", [])
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        res = await self.send_request("tools/call", {
-            "name": tool_name,
-            "arguments": arguments
-        })
+        if self.url:
+            res = await self.send_request_http("tools/call", {
+                "name": tool_name,
+                "arguments": arguments
+            })
+        else:
+            res = await self.send_request("tools/call", {
+                "name": tool_name,
+                "arguments": arguments
+            })
         if "error" in res:
             return json.dumps({"error": res["error"]}, ensure_ascii=False)
         content_list = res.get("result", {}).get("content", [])

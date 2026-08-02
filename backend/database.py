@@ -2,6 +2,7 @@ import os
 import sqlite3
 import logging
 import json
+from datetime import datetime, timezone
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
@@ -15,6 +16,26 @@ DB_PATH = os.path.join(DB_DIR, "hermes.db")
 # WAL-mode connection factory (SQLite)
 # ---------------------------------------------------------------------------
 
+def _recover_malformed_db():
+    """Backs up a corrupt SQLite database file and cleans WAL/SHM sidecars."""
+    import shutil
+    import time
+    if os.path.exists(DB_PATH):
+        timestamp = int(time.time())
+        backup_path = f"{DB_PATH}.corrupt.{timestamp}"
+        try:
+            shutil.move(DB_PATH, backup_path)
+            logger.warning(f"Backed up corrupt database from {DB_PATH} to {backup_path}")
+        except Exception as e:
+            logger.error(f"Failed to move corrupt database file: {e}")
+    for sidecar in [f"{DB_PATH}-wal", f"{DB_PATH}-shm"]:
+        if os.path.exists(sidecar):
+            try:
+                os.remove(sidecar)
+            except Exception as e:
+                logger.error(f"Failed to remove sidecar file {sidecar}: {e}")
+
+
 def _get_conn() -> sqlite3.Connection:
     """Open a SQLite connection with WAL journal mode and safe PRAGMA settings.
 
@@ -23,12 +44,24 @@ def _get_conn() -> sqlite3.Connection:
     - A single writer never blocks readers
     - busy_timeout prevents 'database is locked' exceptions under load
     """
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")       # enable WAL mode
-    conn.execute("PRAGMA synchronous=NORMAL")      # safe & fast (vs FULL)
-    conn.execute("PRAGMA busy_timeout=5000")       # wait 5s before giving up
-    conn.execute("PRAGMA foreign_keys=ON")         # enforce FK constraints
-    return conn
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")       # enable WAL mode
+        conn.execute("PRAGMA synchronous=NORMAL")      # safe & fast (vs FULL)
+        conn.execute("PRAGMA busy_timeout=5000")       # wait 5s before giving up
+        conn.execute("PRAGMA foreign_keys=ON")         # enforce FK constraints
+        return conn
+    except sqlite3.DatabaseError as e:
+        if "malformed" in str(e).lower() or "disk image" in str(e).lower():
+            logger.error(f"Database file at {DB_PATH} is malformed ({e}). Resetting DB file.")
+            _recover_malformed_db()
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            return conn
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -422,21 +455,101 @@ def _init_sqlite_schema():
         )
     """)
 
-    # Migration: add agent_id column to session_metadata if it doesn't exist
+    # Migration: add columns to session_metadata if they don't exist
     cursor.execute("PRAGMA table_info(session_metadata)")
     existing_columns = [row[1] for row in cursor.fetchall()]
 
-    if "agent_id" not in existing_columns:
-        try:
-            cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
-            logger.info("Migrated session_metadata table to include agent_id column.")
-        except sqlite3.OperationalError as e:
-            logger.error("Failed to migrate session_metadata table to include agent_id column: %s", e)
-            raise
+    new_cols = [
+        ("agent_id", "TEXT"),
+        ("is_scheduled", "INTEGER DEFAULT 0"),
+        ("job_id", "TEXT"),
+        ("schedule_type", "TEXT"),
+        ("schedule_info", "TEXT"),
+    ]
+    for col_name, col_type in new_cols:
+        if col_name not in existing_columns:
+            try:
+                cursor.execute(f"ALTER TABLE session_metadata ADD COLUMN {col_name} {col_type}")
+                logger.info("Migrated session_metadata table to include %s column.", col_name)
+            except sqlite3.OperationalError as e:
+                logger.error("Failed to migrate session_metadata table for column %s: %s", col_name, e)
+
+    _auto_heal_subagents_and_skills(cursor)
 
     conn.commit()
     conn.close()
     logger.info("SQLite Database initialized successfully.")
+
+
+def _auto_heal_subagents_and_skills(cursor):
+    """Auto-heal missing subagents, skills, messages, and session metadata from backup."""
+    backup_path = os.path.join(DB_DIR, "hermes_corrupt_backup.db")
+    if not os.path.exists(backup_path):
+        return
+
+    try:
+        b_conn = sqlite3.connect(backup_path)
+        b_cur = b_conn.cursor()
+
+        # 1. Subagents
+        try:
+            b_cur.execute("SELECT id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature FROM subagents")
+            for a in b_cur.fetchall():
+                cursor.execute("""
+                    INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                """, a)
+        except Exception as e:
+            logger.warning("Auto-heal subagents warning: %s", e)
+
+        # 2. Distilled skills
+        try:
+            b_cur.execute("SELECT created_at, decision_log_id, session_id, skill_name, title, file_path, trigger_conditions, content FROM distilled_skills")
+            for sk in b_cur.fetchall():
+                sk_list = list(sk)
+                if not sk_list[0]: sk_list[0] = '2026-01-01T00:00:00Z'
+                if not sk_list[2]: sk_list[2] = 'default'
+                if not sk_list[5]: sk_list[5] = ''
+                if not sk_list[6]: sk_list[6] = ''
+                if not sk_list[7]: sk_list[7] = ''
+                cursor.execute("""
+                    INSERT INTO distilled_skills (created_at, decision_log_id, session_id, skill_name, title, file_path, trigger_conditions, content)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(skill_name) DO NOTHING
+                """, sk_list)
+        except Exception as e:
+            logger.warning("Auto-heal skills warning: %s", e)
+
+        # 3. Messages
+        try:
+            b_cur.execute("SELECT session_id, role, content, timestamp, cost_usd FROM messages")
+            for msg in b_cur.fetchall():
+                cursor.execute("""
+                    INSERT INTO messages (session_id, role, content, timestamp, cost_usd)
+                    SELECT ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM messages WHERE session_id = ? AND role = ? AND content = ? AND timestamp = ?
+                    )
+                """, (msg[0], msg[1], msg[2], msg[3], msg[4], msg[0], msg[1], msg[2], msg[3]))
+        except Exception as e:
+            logger.warning("Auto-heal messages warning: %s", e)
+
+        # 4. Session metadata
+        try:
+            b_cur.execute("SELECT session_id, title, created_at, updated_at, agent_id FROM session_metadata")
+            for sess in b_cur.fetchall():
+                cursor.execute("""
+                    INSERT INTO session_metadata (session_id, title, created_at, updated_at, agent_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO NOTHING
+                """, sess)
+        except Exception as e:
+            logger.warning("Auto-heal sessions warning: %s", e)
+
+        b_conn.close()
+    except Exception as e:
+        logger.error("Auto-heal failed: %s", e)
 
 
 def _init_postgres_schema():
@@ -654,7 +767,7 @@ def _get_default_agents(default_model: str) -> list:
     return [
         (
             "jarvis", "Jarvis (Main)",
-            "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent. Be concise, efficient, and always explain which agent you are routing to.",
+            "You are Jarvis, a highly intelligent AI orchestrator. Your job is to understand the user's request and delegate it to the most appropriate sub-agent.\n\nRouting Rules:\n- For trading, financial markets, Pepperstone, cTrader, hedge fund strategies, or order requests, ALWAYS route to BCM Trading Orchestrator (bcm_orchestrator).\n- For general web searches, news, or weather, route to Search Agent (research).\n- For writing/executing code, route to Code Engineer (code).\n- For data analysis or plotting, route to Data Analyst (analyst).\n- For calendar/todoist, route to Daily Planner (planner).\n- For system status/terminal commands, route to Sys Ops (sysops).\n\nBe concise and state which sub-agent you are delegating to.",
             default_model, "orchestrator", None, "", 100, 350
         ),
         (
@@ -707,22 +820,7 @@ def _migrate_existing_subagents_sqlite(cursor):
         cursor.execute("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                system_prompt = excluded.system_prompt,
-                agent_type = excluded.agent_type,
-                parent_id = excluded.parent_id,
-                skills = excluded.skills
-            WHERE subagents.system_prompt IN (
-                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
-                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
-                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
-                'You are a research agent. Search for information on the internet using web_search.',
-                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
-                'You are a Code Engineer. Write and execute Python scripts.',
-                'Вы — Аналитик-Визуализатор. Создавайте графики.',
-                'You are an Analyst-Visualizer. Create charts.'
-            )
+            ON CONFLICT(id) DO NOTHING
         """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
 
 
@@ -733,22 +831,7 @@ def _migrate_existing_subagents_postgres(cursor):
         cursor.execute("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                system_prompt = excluded.system_prompt,
-                agent_type = excluded.agent_type,
-                parent_id = excluded.parent_id,
-                skills = excluded.skills
-            WHERE subagents.system_prompt IN (
-                'Вы — Джарвис, высокоинтеллектуальный персональный ассистент Тони Старка.',
-                'You are Jarvis, a highly intelligent personal assistant to Tony Stark.',
-                'Вы — исследовательский агент. Ищите информацию в интернете с помощью web_search.',
-                'You are a research agent. Search for information on the internet using web_search.',
-                'Вы — Код-Инженер. Пишите и выполняйте Python скрипты.',
-                'You are a Code Engineer. Write and execute Python scripts.',
-                'Вы — Аналитик-Визуализатор. Создавайте графики.',
-                'You are an Analyst-Visualizer. Create charts.'
-            )
+            ON CONFLICT(id) DO NOTHING
         """, (agent_id, name, prompt, default_model, agent_type, parent_id, skills, x, y, 0.7))
 
 
@@ -784,12 +867,14 @@ def _get_default_agents_migrations() -> list:
     ]
 
 
-def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0) -> Optional[int]:
+def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0, timestamp: Optional[str] = None) -> Optional[int]:
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
+        if not timestamp:
+            timestamp = datetime.now(timezone.utc).isoformat()
         return _lastrowid(
-            "INSERT INTO messages (session_id, role, content, cost_usd) VALUES (?, ?, ?, ?)",
-            (session_id, role, content, cost_usd),
+            "INSERT INTO messages (session_id, role, content, cost_usd, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (session_id, role, content, cost_usd, timestamp),
         )
     except Exception as e:
         logger.error(f"Error saving message: {e}")
@@ -799,13 +884,13 @@ def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Retrieves the last N messages for a given chat session, in chronological order."""
     try:
         rows = _execute("""
-            SELECT id, role, content, cost_usd FROM (
-                SELECT id, role, content, cost_usd FROM messages
+            SELECT id, role, content, cost_usd, timestamp FROM (
+                SELECT id, role, content, cost_usd, timestamp FROM messages
                 WHERE session_id = ?
                 ORDER BY id DESC LIMIT ?
             ) ORDER BY id ASC
         """, (session_id, limit))
-        return [{"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3]} for r in rows]
+        return [{"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3], "timestamp": r[4]} for r in rows]
     except Exception as e:
         logger.error(f"Error retrieving chat history: {e}")
         return []
@@ -1218,28 +1303,73 @@ def set_setting(key: str, value: str) -> bool:
 
 # ─── SESSION METADATA HELPERS ──────────────────────────────────────────────────
 
-def save_session_metadata(session_id: str, title: str, agent_id: Optional[str] = None):
-    """Saves or updates custom metadata (title and target agent) for a chat session."""
+def save_session_metadata(
+    session_id: str,
+    title: str,
+    agent_id: Optional[str] = None,
+    is_scheduled: int = 0,
+    job_id: Optional[str] = None,
+    schedule_type: Optional[str] = None,
+    schedule_info: Optional[str] = None,
+):
+    """Saves or updates custom metadata (title, target agent, scheduled status) for a chat session."""
     try:
-        # Check if row exists to preserve existing values if updating selectively
         rows = _execute(
-            "SELECT agent_id FROM session_metadata WHERE session_id = ?", (session_id,)
+            "SELECT agent_id, is_scheduled, job_id, schedule_type, schedule_info FROM session_metadata WHERE session_id = ?",
+            (session_id,)
         )
         final_agent_id = agent_id
-        if rows and agent_id is None:
-            final_agent_id = rows[0][0]
+        final_is_scheduled = is_scheduled
+        final_job_id = job_id
+        final_schedule_type = schedule_type
+        final_schedule_info = schedule_info
+
+        if rows:
+            if agent_id is None:
+                final_agent_id = rows[0][0]
+            if is_scheduled == 0 and rows[0][1]:
+                final_is_scheduled = rows[0][1]
+            if job_id is None:
+                final_job_id = rows[0][2]
+            if schedule_type is None:
+                final_schedule_type = rows[0][3]
+            if schedule_info is None:
+                final_schedule_info = rows[0][4]
 
         _execute("""
-            INSERT INTO session_metadata (session_id, title, agent_id, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO session_metadata (session_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(session_id) DO UPDATE SET
                 title = excluded.title,
                 agent_id = excluded.agent_id,
+                is_scheduled = excluded.is_scheduled,
+                job_id = excluded.job_id,
+                schedule_type = excluded.schedule_type,
+                schedule_info = excluded.schedule_info,
                 updated_at = CURRENT_TIMESTAMP
-        """, (session_id, title, final_agent_id))
-        logger.info(f"Saved custom metadata for session {session_id}: title={title}, agent_id={final_agent_id}")
+        """, (session_id, title, final_agent_id, final_is_scheduled, final_job_id, final_schedule_type, final_schedule_info))
+        logger.info(f"Saved custom metadata for session {session_id}: title={title}, agent_id={final_agent_id}, scheduled={final_is_scheduled}")
     except Exception as e:
         logger.error(f"Error saving session metadata for {session_id}: {e}")
+
+def save_scheduled_session_metadata(
+    session_id: str,
+    title: str,
+    agent_id: Optional[str],
+    job_id: str,
+    schedule_type: str,
+    schedule_info: Optional[str] = None
+):
+    """Convenience helper to register or update a scheduled task session."""
+    save_session_metadata(
+        session_id=session_id,
+        title=title,
+        agent_id=agent_id,
+        is_scheduled=1,
+        job_id=job_id,
+        schedule_type=schedule_type,
+        schedule_info=schedule_info
+    )
 
 def save_session_title(session_id: str, title: str):
     """Saves or updates a custom title for a chat session."""

@@ -28,6 +28,8 @@ dependencies = [
     "pypdf>=4.0.0",
     "apscheduler>=3.10.0",
     "sqlalchemy>=2.0",
+    "yfinance>=0.2.0",
+    "ta>=0.10.0",
 ]
 
 [dependency-groups]

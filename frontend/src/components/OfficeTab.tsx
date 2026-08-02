@@ -49,6 +49,7 @@ interface OfficeTabProps {
   isConnected?: boolean;
   language?: 'en' | 'ru';
   liveTrace?: OfficeLiveTrace | null;
+  fetchWithAuth?: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
 export interface OfficeAgent extends AgentModel {
@@ -369,7 +370,7 @@ function ViewSwitcher({ view, setView, copy }: { view: OfficeView; setView: (vie
   return <div className="office-view-switcher" role="tablist" aria-label="Office view">{views.map(item => <button key={item.id} type="button" role="tab" aria-selected={view === item.id} className={view === item.id ? 'is-active' : ''} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span></button>)}</div>;
 }
 
-export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru', liveTrace = null }: OfficeTabProps) {
+export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru', liveTrace = null, fetchWithAuth }: OfficeTabProps) {
   const copy = COPY[language];
   const [theme, setThemeState] = useState<OfficeThemeKey>(() => {
     const saved = localStorage.getItem(OFFICE_THEME_STORAGE_KEY);
@@ -414,8 +415,21 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
       setRefreshing(hasLoaded);
       try {
         const token = localStorage.getItem('jarvis_auth_token');
-        const response = await fetch('/api/office/state', { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: controller.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+        let response: Response;
+        try {
+          response = fetchWithAuth
+            ? await fetchWithAuth('/api/office/state', { signal: controller.signal })
+            : await fetch('/api/office/state', { headers, signal: controller.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch (firstErr) {
+          if (cancelled || (firstErr instanceof DOMException && firstErr.name === 'AbortError')) throw firstErr;
+          const fallbackUrl = 'http://localhost:8000/api/office/state';
+          response = fetchWithAuth
+            ? await fetchWithAuth(fallbackUrl, { signal: controller.signal })
+            : await fetch(fallbackUrl, { headers, signal: controller.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`, { cause: firstErr });
+        }
         const data = await response.json() as { agents?: AgentModel[] };
         if (cancelled) return;
         const next = Array.isArray(data.agents) ? data.agents : [];

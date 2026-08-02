@@ -18,7 +18,8 @@ import {
   ChevronRight,
   ChevronLeft,
   BarChart3,
-  Building2
+  Building2,
+  LogOut
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -476,12 +477,25 @@ export default function App() {
       ...options.headers,
       ...(token ? { 'Authorization': `Bearer ${token}` } : {})
     };
-    return fetch(url, { ...options, headers }).then(res => {
+
+    let relativeUrl = url;
+    if (url.startsWith('http://localhost:8000/api')) {
+      relativeUrl = url.replace('http://localhost:8000', '');
+    }
+
+    const doFetch = (targetUrl: string) => fetch(targetUrl, { ...options, headers }).then(res => {
       if (res.status === 401) {
         localStorage.removeItem('jarvis_auth_token');
         setIsAuthenticated(false);
       }
       return res;
+    });
+
+    return doFetch(relativeUrl).catch((firstErr) => {
+      if (relativeUrl !== url) {
+        return doFetch(url);
+      }
+      throw firstErr;
     });
   }, []);
 
@@ -489,9 +503,13 @@ export default function App() {
     setAuthStatus('sending');
     setAuthError('');
     try {
-      const res = await fetch('http://localhost:8000/api/auth/request-code', {
-        method: 'POST'
-      });
+      let res: Response;
+      try {
+        res = await fetch('/api/auth/request-code', { method: 'POST' });
+        if (!res.ok && res.status === 404) throw new Error('404');
+      } catch (firstErr) {
+        res = await fetch('http://localhost:8000/api/auth/request-code', { method: 'POST' });
+      }
       const data = await res.json();
       if (data.status === 'success') {
         setAuthStatus('sent');
@@ -510,11 +528,21 @@ export default function App() {
     setAuthStatus('verifying');
     setAuthError('');
     try {
-      const res = await fetch('http://localhost:8000/api/auth/verify-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
-      });
+      let res: Response;
+      try {
+        res = await fetch('/api/auth/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+        if (!res.ok && res.status === 404) throw new Error('404');
+      } catch (firstErr) {
+        res = await fetch('http://localhost:8000/api/auth/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+      }
       if (res.ok) {
         const data = await res.json();
         localStorage.setItem('jarvis_auth_token', data.token);
@@ -536,6 +564,17 @@ export default function App() {
     e.preventDefault();
     verifyOtpCode(otpCode);
   };
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('jarvis_auth_token');
+    setIsAuthenticated(false);
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setIsConnected(false);
+    setAuthStatus('idle');
+  }, []);
 
   useEffect(() => {
     if (otpCode.length === 6 && authStatus !== 'verifying') {
@@ -600,7 +639,8 @@ export default function App() {
                 role: data.role,
                 content: data.content,
                 chat_id: msgChatId,
-                cost_usd: data.cost_usd
+                cost_usd: data.cost_usd,
+                timestamp: data.timestamp || new Date().toISOString()
               }]);
             }
             if (data.role === 'assistant') {
@@ -1858,6 +1898,25 @@ export default function App() {
               >
                 {logs.length}
               </div>
+              <button 
+                onClick={handleLogout}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  cursor: 'pointer',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  borderRadius: '6px',
+                  padding: '6px',
+                  color: '#ef4444',
+                  marginTop: '4px',
+                  transition: 'all 0.2s'
+                }} 
+                title="Logout / Выйти из аккаунта"
+              >
+                <LogOut size={16} />
+              </button>
             </>
           ) : (
             <>
@@ -1884,6 +1943,34 @@ export default function App() {
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#00f0ff' }}>
                   {logs.length} logs
                 </span>
+              </div>
+
+              <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <button
+                  onClick={handleLogout}
+                  className="btn-primary"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(185, 28, 28, 0.1) 100%)',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    color: '#ef4444',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: '0 0 10px rgba(239, 68, 68, 0.15)',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Logout / Выйти из сессии"
+                >
+                  <LogOut size={15} />
+                  <span>Logout (Выход)</span>
+                </button>
               </div>
             </>
           )}
@@ -2000,6 +2087,10 @@ export default function App() {
             subagents={subagents}
             handleCancelTimer={handleCancelTimer}
             fetchWithAuth={fetchWithAuth}
+            onOpenChat={(sessionId) => {
+              selectChat(sessionId);
+              setActiveTab('chat');
+            }}
           />
         )}
 
@@ -2080,6 +2171,7 @@ export default function App() {
             isConnected={isConnected}
             language={appSettings.language as 'en' | 'ru'}
             liveTrace={officeLiveTrace}
+            fetchWithAuth={fetchWithAuth}
             selectChat={(agentId) => {
               selectChat(agentId);
               setActiveTab('chat');

@@ -10,6 +10,7 @@ import {
   Paperclip, 
   Square, 
   Play, 
+  Pause,
   Send,
   MoreVertical,
   Archive,
@@ -19,11 +20,13 @@ import {
   Edit2,
   FileText,
   Download,
+  Clock,
+  Zap,
   X as XIcon
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig, ChatSession } from '../types';
 import { styles } from '../styles';
-import { renderMarkdown } from '../utils';
+import { renderMarkdown, formatMessageTimestamp } from '../utils';
 
 interface ChatTabProps {
   currentChatId: string;
@@ -296,7 +299,18 @@ export function ChatTab({
               const isActive = currentChatId === s;
               const label = session.title || getSessionLabel(s);
               const isDashboard = s === 'dashboard';
-              
+              const isScheduled = Boolean(session.is_scheduled || s.startsWith('task_'));
+              const scheduleInfo = session.schedule_info || {};
+              const taskStatus = scheduleInfo.status || 'running';
+              const taskType = session.schedule_type || scheduleInfo.type || 'task';
+
+              let iconColor = isActive ? 'var(--accent-cyan)' : 'var(--text-dim)';
+              if (isScheduled) {
+                if (taskStatus === 'paused') iconColor = '#ff9f00';
+                else if (taskStatus === 'completed') iconColor = '#10b981';
+                else iconColor = 'var(--accent-cyan)';
+              }
+
               return (
                 <div 
                   key={s}
@@ -309,10 +323,14 @@ export function ChatTab({
                     borderRadius: '8px',
                     border: isDashboard 
                       ? (isActive ? '1px solid rgba(0, 240, 255, 0.7)' : '1px solid rgba(0, 240, 255, 0.25)')
-                      : (isActive ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid rgba(255, 255, 255, 0.03)'),
+                      : isScheduled
+                        ? (isActive ? '1px solid rgba(0, 240, 255, 0.6)' : '1px solid rgba(0, 240, 255, 0.15)')
+                        : (isActive ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid rgba(255, 255, 255, 0.03)'),
                     backgroundColor: isDashboard
                       ? (isActive ? 'rgba(0, 240, 255, 0.08)' : 'rgba(0, 240, 255, 0.02)')
-                      : (isActive ? 'rgba(0, 240, 255, 0.04)' : 'rgba(255, 255, 255, 0.01)'),
+                      : isScheduled
+                        ? (isActive ? 'rgba(0, 240, 255, 0.06)' : 'rgba(0, 240, 255, 0.015)')
+                        : (isActive ? 'rgba(0, 240, 255, 0.04)' : 'rgba(255, 255, 255, 0.01)'),
                     cursor: 'pointer',
                     transition: 'all 0.2s',
                     position: 'relative',
@@ -327,6 +345,8 @@ export function ChatTab({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
                     {isDashboard ? (
                       <Cpu size={14} style={{ color: 'var(--accent-cyan)', flexShrink: 0 }} />
+                    ) : isScheduled ? (
+                      <Clock size={14} style={{ color: iconColor, flexShrink: 0 }} />
                     ) : (
                       <MessageSquare size={14} style={{ color: isActive ? 'var(--accent-cyan)' : 'var(--text-dim)', flexShrink: 0 }} />
                     )}
@@ -362,7 +382,7 @@ export function ChatTab({
                             }}
                           />
                         ) : (
-                          <span style={{ fontSize: '0.8rem', fontWeight: (isActive || isDashboard) ? 600 : 500, color: (isActive || isDashboard) ? '#fff' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: (isActive || isDashboard || isScheduled) ? 600 : 500, color: (isActive || isDashboard) ? '#fff' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {label}
                           </span>
                         )}
@@ -371,10 +391,28 @@ export function ChatTab({
                             <Lock size={10} style={{ color: 'rgba(0, 240, 255, 0.4)', flexShrink: 0 }} />
                           </span>
                         )}
+                        {isScheduled && !editingSessionId && (
+                          <span style={{
+                            fontSize: '0.55rem',
+                            fontWeight: 700,
+                            padding: '1px 4px',
+                            borderRadius: '3px',
+                            background: taskStatus === 'paused' ? 'rgba(255,159,0,0.15)' : taskStatus === 'completed' ? 'rgba(16,185,129,0.15)' : 'rgba(0,240,255,0.15)',
+                            color: taskStatus === 'paused' ? '#ff9f00' : taskStatus === 'completed' ? '#10b981' : 'var(--accent-cyan)',
+                            border: `1px solid ${taskStatus === 'paused' ? 'rgba(255,159,0,0.3)' : taskStatus === 'completed' ? 'rgba(16,185,129,0.3)' : 'rgba(0,240,255,0.3)'}`,
+                            flexShrink: 0
+                          }}>
+                            {taskType.toUpperCase()}
+                          </span>
+                        )}
                       </div>
-                      {isDashboard && (
+                      {isDashboard ? (
                         <span style={{ fontSize: '0.6rem', color: 'rgba(0, 240, 255, 0.65)', fontWeight: 500, letterSpacing: '0.5px' }}>MAIN ORCHESTRATOR</span>
-                      )}
+                      ) : isScheduled ? (
+                        <span style={{ fontSize: '0.62rem', color: taskStatus === 'paused' ? '#ff9f00' : taskStatus === 'completed' ? '#10b981' : 'var(--text-dim)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {taskStatus.toUpperCase()} {scheduleInfo.interval_hours ? `• Every ${scheduleInfo.interval_hours}h` : scheduleInfo.duration ? `• ${scheduleInfo.duration}s` : ''}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <div style={{ position: 'relative' }}>
@@ -544,7 +582,144 @@ export function ChatTab({
         </div>
 
         {/* Chat Area */}
-        <div style={{ ...styles.chatArea, flex: 1, height: '100%' }} className="glass-panel">
+        <div style={{ ...styles.chatArea, flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }} className="glass-panel">
+          {/* Scheduled Task Control Header Card */}
+          {(() => {
+            const activeSessionObj = (Array.isArray(chatSessions) ? chatSessions : []).find(s => s.id === currentChatId);
+            const isCurrentScheduled = Boolean(activeSessionObj?.is_scheduled || currentChatId.startsWith('task_'));
+            if (!isCurrentScheduled) return null;
+
+            const scheduleInfo = activeSessionObj?.schedule_info || {};
+            const jobId = activeSessionObj?.job_id || (currentChatId.startsWith('task_') ? currentChatId.replace('task_', '') : null);
+            const taskStatus = scheduleInfo?.status || 'running';
+            const taskType = activeSessionObj?.schedule_type || scheduleInfo?.type || 'scheduled';
+
+            return (
+              <div style={{
+                margin: '12px 16px 0 16px',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                background: 'linear-gradient(135deg, rgba(0, 240, 255, 0.08) 0%, rgba(11, 15, 25, 0.7) 100%)',
+                border: '1px solid rgba(0, 240, 255, 0.25)',
+                boxShadow: '0 0 15px rgba(0, 240, 255, 0.05)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px',
+                flexWrap: 'wrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '240px' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '8px',
+                    background: taskStatus === 'paused' ? 'rgba(255,159,0,0.1)' : taskStatus === 'completed' ? 'rgba(16,185,129,0.1)' : 'rgba(0, 240, 255, 0.1)',
+                    border: `1px solid ${taskStatus === 'paused' ? 'rgba(255,159,0,0.3)' : taskStatus === 'completed' ? 'rgba(16,185,129,0.3)' : 'rgba(0, 240, 255, 0.3)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    <Clock size={18} style={{ color: taskStatus === 'paused' ? '#ff9f00' : taskStatus === 'completed' ? '#10b981' : 'var(--accent-cyan)' }} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff' }}>
+                        {activeSessionObj?.title || getSessionLabel(currentChatId)}
+                      </span>
+                      <span style={{
+                        fontSize: '0.62rem',
+                        fontWeight: 700,
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        background: taskStatus === 'paused' ? 'rgba(255,159,0,0.15)' : taskStatus === 'completed' ? 'rgba(16,185,129,0.15)' : 'rgba(0,240,255,0.15)',
+                        color: taskStatus === 'paused' ? '#ff9f00' : taskStatus === 'completed' ? '#10b981' : 'var(--accent-cyan)',
+                        border: `1px solid ${taskStatus === 'paused' ? 'rgba(255,159,0,0.3)' : taskStatus === 'completed' ? 'rgba(16,185,129,0.3)' : 'rgba(0,240,255,0.3)'}`
+                      }}>
+                        {taskStatus.toUpperCase()}
+                      </span>
+                      <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>
+                        TYPE: {taskType.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {scheduleInfo?.prompt ? `Prompt: "${scheduleInfo.prompt}"` : 'Scheduled Automation Workflow'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Controls */}
+                {jobId && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}/run`, { method: 'POST' });
+                          if (res.ok) fetchChatSessions();
+                        } catch(e) { console.error(e); }
+                      }}
+                      className="btn-primary"
+                      style={{ padding: '6px 12px', border: '1px solid rgba(0,240,255,0.4)', color: 'var(--accent-cyan)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                      title="Run task immediately"
+                    >
+                      <Zap size={13} />
+                      <span>Run Now</span>
+                    </button>
+
+                    {taskStatus === 'running' ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}/pause`, { method: 'POST' });
+                            if (res.ok) fetchChatSessions();
+                          } catch(e) { console.error(e); }
+                        }}
+                        className="btn-primary"
+                        style={{ padding: '6px 12px', border: '1px solid rgba(255,159,0,0.4)', color: '#ff9f00', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                        title="Pause task schedule"
+                      >
+                        <Pause size={13} />
+                        <span>Pause</span>
+                      </button>
+                    ) : taskStatus === 'paused' ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}/resume`, { method: 'POST' });
+                            if (res.ok) fetchChatSessions();
+                          } catch(e) { console.error(e); }
+                        }}
+                        className="btn-primary"
+                        style={{ padding: '6px 12px', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                        title="Resume task schedule"
+                      >
+                        <Play size={13} />
+                        <span>Resume</span>
+                      </button>
+                    ) : null}
+
+                    <button
+                      onClick={async () => {
+                        if (window.confirm("Cancel and delete this scheduled task?")) {
+                          try {
+                            const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}`, { method: 'DELETE' });
+                            if (res.ok) fetchChatSessions();
+                          } catch(e) { console.error(e); }
+                        }
+                      }}
+                      className="btn-primary"
+                      style={{ padding: '6px 10px', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', fontSize: '0.75rem' }}
+                      title="Cancel task"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           <div style={styles.chatScroller}>
             {messages.map((msg, index) => (
               <div 
@@ -615,6 +790,9 @@ export function ChatTab({
                         {msg.id && (
                           <span style={styles.chatIdLabel}>ID: {msg.id}</span>
                         )}
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', opacity: 0.85, letterSpacing: '0.3px' }}>
+                          {formatMessageTimestamp(msg.timestamp || msg.created_at)}
+                        </span>
                       </div>
                     </div>
                     <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>

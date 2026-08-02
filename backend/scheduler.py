@@ -20,7 +20,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -28,13 +28,18 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from backend.database import DB_PATH
+
 logger = logging.getLogger("hermes.scheduler")
 
 # ─── Scheduler singleton ────────────────────────────────────────────────────────
-_DB_URL = os.environ.get(
-    "SCHEDULER_DB_URL",
-    "sqlite:////app/backend/data/hermes.db",
-)
+if "PYTEST_CURRENT_TEST" in os.environ:
+    _DB_URL = "sqlite:///:memory:"
+else:
+    _DB_URL = os.environ.get(
+        "SCHEDULER_DB_URL",
+        f"sqlite:///{DB_PATH}",
+    )
 
 _jobstore = SQLAlchemyJobStore(url=_DB_URL, tablename="apscheduler_jobs")
 scheduler = AsyncIOScheduler(
@@ -71,11 +76,18 @@ async def _job_one_shot(
     chat_id: str,
     agent_id: Optional[str] = None,
     prompt: Optional[str] = None,
+    created_at: Optional[str] = None,
+    task_type: Optional[str] = None,
+    **kwargs,
 ) -> None:
     logger.info(f"One-shot timer fired: '{label}' ({duration}s)")
     from backend.activity_logger import log_activity
+    task_session_id = f"task_{job_id}"
+    _timer_meta[job_id]["status"] = "completed"
+    _register_scheduled_session(job_id, label, "one-shot", agent_id, prompt, status="completed", extra={"duration": duration})
+
     if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"✅ Timer complete: '{label}'")
         await _send_telegram_alert(
@@ -83,7 +95,7 @@ async def _job_one_shot(
             f"🏛️ **ATTENTION, SIR**\n\nTimer complete:\n"
             f"• Event: **{label}**\n• Duration: {duration} sec\n• Status: ✅ Completed",
         )
-    await _broadcast_ws({"type": "timer_completed", "timer": {"id": job_id, "label": label, "status": "completed"}})
+    await _broadcast_ws({"type": "timer_completed", "timer": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
 
 
 async def _job_alarm(
@@ -94,11 +106,18 @@ async def _job_alarm(
     target_time_str: str,
     agent_id: Optional[str] = None,
     prompt: Optional[str] = None,
+    created_at: Optional[str] = None,
+    task_type: Optional[str] = None,
+    **kwargs,
 ) -> None:
     logger.info(f"Alarm fired: '{label}'")
     from backend.activity_logger import log_activity
+    task_session_id = f"task_{job_id}"
+    _timer_meta[job_id]["status"] = "completed"
+    _register_scheduled_session(job_id, label, "alarm", agent_id, prompt, status="completed", extra={"target_time": target_time_str})
+
     if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"🔔 Alarm triggered: '{label}'")
         await _send_telegram_alert(
@@ -106,7 +125,7 @@ async def _job_alarm(
             f"⏰ **ALARM, SIR**\n\n"
             f"• Event: **{label}**\n• Trigger time: {target_time_str}\n• Status: ✅ Completed",
         )
-    await _broadcast_ws({"type": "alarm_fired", "alarm": {"id": job_id, "label": label, "status": "completed"}})
+    await _broadcast_ws({"type": "alarm_fired", "alarm": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
 
 
 async def _job_recurring(
@@ -117,13 +136,19 @@ async def _job_recurring(
     chat_id: str,
     agent_id: Optional[str] = None,
     prompt: Optional[str] = None,
+    created_at: Optional[str] = None,
+    task_type: Optional[str] = None,
+    **kwargs,
 ) -> None:
     _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
     count = _fire_counts[job_id]
     logger.info(f"Recurring reminder fired #{count}: '{label}'")
     from backend.activity_logger import log_activity
+    task_session_id = f"task_{job_id}"
+    _register_scheduled_session(job_id, label, "recurring", agent_id, prompt, status="running", extra={"interval_hours": interval_hours, "fire_count": count})
+
     if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         hours_str = (
             f"{int(interval_hours)} h" if interval_hours >= 1
@@ -148,6 +173,39 @@ async def _job_recurring(
     })
 
 
+def _register_scheduled_session(
+    job_id: str,
+    label: str,
+    task_type: str,
+    agent_id: Optional[str],
+    prompt: Optional[str],
+    status: str = "running",
+    extra: Optional[Dict] = None
+):
+    import json
+    from backend.database import save_scheduled_session_metadata
+    session_id = f"task_{job_id}"
+    title = label if (label.startswith("⏰") or label.startswith("🔔")) else f"⏰ {label}"
+    info_dict = {
+        "job_id": job_id,
+        "label": label,
+        "task_type": task_type,
+        "prompt": prompt,
+        "status": status,
+        "agent_id": agent_id or "jarvis",
+    }
+    if extra:
+        info_dict.update(extra)
+    save_scheduled_session_metadata(
+        session_id=session_id,
+        title=title,
+        agent_id=agent_id or "jarvis",
+        job_id=job_id,
+        schedule_type=task_type,
+        schedule_info=json.dumps(info_dict)
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -166,10 +224,12 @@ def add_timer(
         _job_one_shot,
         trigger=DateTrigger(run_date=run_at),
         kwargs={"job_id": timer_id, "label": label, "duration": duration_seconds,
-                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                "created_at": created_at, "task_type": "one-shot"},
         id=timer_id, name=label, replace_existing=True,
     )
-    _timer_meta[timer_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds}
+    _timer_meta[timer_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds, "status": "running"}
+    _register_scheduled_session(timer_id, label, "one-shot", agent_id, prompt, status="running", extra={"duration": duration_seconds})
     logger.info(f"One-shot timer scheduled: '{label}' in {duration_seconds}s (id={timer_id})")
     return timer_id
 
@@ -212,10 +272,12 @@ def add_alarm(
         _job_alarm,
         trigger=DateTrigger(run_date=target_dt),
         kwargs={"job_id": alarm_id, "label": label, "chat_id": chat_id,
-                "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt},
+                "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt,
+                "created_at": created_at, "task_type": "alarm"},
         id=alarm_id, name=label, replace_existing=True,
     )
-    _timer_meta[alarm_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str}
+    _timer_meta[alarm_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str, "status": "running"}
+    _register_scheduled_session(alarm_id, label, "alarm", agent_id, prompt, status="running", extra={"target_time": target_time_str})
     logger.info(f"Alarm scheduled: '{label}' at {target_time_str} (id={alarm_id})")
     return alarm_id
 
@@ -233,10 +295,12 @@ def add_recurring_reminder(
         _job_recurring,
         trigger=IntervalTrigger(hours=interval_hours),
         kwargs={"job_id": reminder_id, "label": label, "interval_hours": interval_hours,
-                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                "created_at": created_at, "task_type": "recurring"},
         id=reminder_id, name=label, replace_existing=True,
     )
-    _timer_meta[reminder_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours}
+    _timer_meta[reminder_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours, "status": "running"}
+    _register_scheduled_session(reminder_id, label, "recurring", agent_id, prompt, status="running", extra={"interval_hours": interval_hours})
 
     from backend.activity_logger import log_activity
     log_activity("idle", "Scheduler", f"🔔 Recurring reminder started every {interval_hours}h: '{label}'")
@@ -251,6 +315,12 @@ def cancel_timer_or_alarm(item_id: str) -> bool:
     job.remove()
     _timer_meta.pop(item_id, None)
     _fire_counts.pop(item_id, None)
+    try:
+        from backend.database import delete_session_title
+        delete_session_title(f"task_{item_id}")
+        delete_session_title(item_id)
+    except Exception as e:
+        logger.error(f"Error cleaning session metadata on cancel: {e}")
     logger.info(f"Timer/alarm cancelled: {item_id}")
     return True
 
@@ -262,6 +332,12 @@ def cancel_recurring_reminder(reminder_id: str) -> bool:
     job.remove()
     _timer_meta.pop(reminder_id, None)
     _fire_counts.pop(reminder_id, None)
+    try:
+        from backend.database import delete_session_title
+        delete_session_title(f"task_{reminder_id}")
+        delete_session_title(reminder_id)
+    except Exception as e:
+        logger.error(f"Error cleaning session metadata on cancel: {e}")
     logger.info(f"Recurring reminder cancelled: {reminder_id}")
     return True
 
@@ -281,7 +357,7 @@ def update_timer(
         return False
 
     chat_id = job.kwargs.get("chat_id", "dashboard")
-    created_at = _timer_meta.get(item_id, {}).get("created_at", datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S"))
+    created_at = _timer_meta.get(item_id, {}).get("created_at") or job.kwargs.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
 
     job.remove()
     _timer_meta.pop(item_id, None)
@@ -294,10 +370,11 @@ def update_timer(
             _job_one_shot,
             trigger=DateTrigger(run_date=run_at),
             kwargs={"job_id": item_id, "label": label, "duration": duration_seconds,
-                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                    "created_at": created_at, "task_type": "one-shot"},
             id=item_id, name=label, replace_existing=True,
         )
-        _timer_meta[item_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds}
+        _timer_meta[item_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds, "status": "running"}
     elif task_type == "alarm":
         if not time_str:
             raise ValueError("time_str is required for alarm timer")
@@ -330,10 +407,11 @@ def update_timer(
             _job_alarm,
             trigger=DateTrigger(run_date=target_dt),
             kwargs={"job_id": item_id, "label": label, "chat_id": chat_id,
-                    "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt},
+                    "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt,
+                    "created_at": created_at, "task_type": "alarm"},
             id=item_id, name=label, replace_existing=True,
         )
-        _timer_meta[item_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str}
+        _timer_meta[item_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str, "status": "running"}
     elif task_type == "recurring":
         if interval_hours is None:
             raise ValueError("interval_hours is required for recurring timer")
@@ -341,15 +419,67 @@ def update_timer(
             _job_recurring,
             trigger=IntervalTrigger(hours=interval_hours),
             kwargs={"job_id": item_id, "label": label, "interval_hours": interval_hours,
-                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt},
+                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                    "created_at": created_at, "task_type": "recurring"},
             id=item_id, name=label, replace_existing=True,
         )
-        _timer_meta[item_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours}
+        _timer_meta[item_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours, "status": "running"}
     else:
         raise ValueError(f"Invalid task type: '{task_type}'")
 
     logger.info(f"Updated task {item_id}: label='{label}', type={task_type}")
     return True
+
+
+def pause_timer(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    job.pause()
+    if item_id not in _timer_meta:
+        _timer_meta[item_id] = {"type": _infer_type(job), "created_at": ""}
+    _timer_meta[item_id]["status"] = "paused"
+    logger.info(f"Timer {item_id} paused")
+    return True
+
+
+def resume_timer(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    job.resume()
+    if item_id not in _timer_meta:
+        _timer_meta[item_id] = {"type": _infer_type(job), "created_at": ""}
+    _timer_meta[item_id]["status"] = "running"
+    logger.info(f"Timer {item_id} resumed")
+    return True
+
+
+def restart_timer(item_id: str) -> bool:
+    job = scheduler.get_job(item_id)
+    if job is None:
+        return False
+    
+    meta = _timer_meta.get(item_id, {})
+    task_type = meta.get("type") or _infer_type(job)
+    kwargs = job.kwargs or {}
+    label = kwargs.get("label", job.name or item_id)
+    agent_id = kwargs.get("agent_id")
+    prompt = kwargs.get("prompt")
+    duration_seconds = kwargs.get("duration") or meta.get("duration") or 60
+    time_str = kwargs.get("target_time_str") or meta.get("target_time")
+    interval_hours = kwargs.get("interval_hours") or meta.get("interval_hours") or 1.0
+
+    return update_timer(
+        item_id=item_id,
+        label=label,
+        task_type=task_type,
+        agent_id=agent_id,
+        prompt=prompt,
+        duration_seconds=duration_seconds,
+        time_str=time_str,
+        interval_hours=interval_hours,
+    )
 
 
 def trigger_timer_now(item_id: str) -> bool:
@@ -360,10 +490,20 @@ def trigger_timer_now(item_id: str) -> bool:
     agent_id = kwargs.get("agent_id") or "jarvis"
     prompt = kwargs.get("prompt")
     chat_id = kwargs.get("chat_id", "dashboard")
+    label = kwargs.get("label", item_id)
+    task_session_id = f"task_{item_id}"
     if not prompt:
         raise ValueError("Task has no prompt to execute.")
-    asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id))
-    logger.info(f"Manually triggered task {item_id} (agent={agent_id})")
+    _register_scheduled_session(item_id, label, _infer_type(job), agent_id, prompt, status="running")
+    asyncio.create_task(_trigger_agent_task(
+        agent_id=agent_id,
+        prompt=prompt,
+        chat_id=chat_id,
+        task_session_id=task_session_id,
+        job_id=item_id,
+        label=label,
+    ))
+    logger.info(f"Manually triggered task {item_id} (agent={agent_id}, session_id={task_session_id})")
     return True
 
 
@@ -389,15 +529,17 @@ def get_all_timers() -> List[Dict[str, Any]]:
         job_id = job.id
         label = kwargs.get("label", job.name or job_id)
         meta = _timer_meta.get(job_id, {})
-        job_type = meta.get("type") or _infer_type(job)
-        created_at = meta.get("created_at", "")
+        job_type = meta.get("type") or kwargs.get("task_type") or _infer_type(job)
+        created_at = meta.get("created_at") or kwargs.get("created_at", "")
         next_run = getattr(job, "next_run_time", None)
         time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
+
+        status = meta.get("status", "paused" if next_run is None else "running")
 
         entry: Dict[str, Any] = {
             "id": job_id,
             "label": label,
-            "status": "running",
+            "status": status,
             "time_left": time_left,
             "type": job_type,
             "created_at": created_at,
@@ -426,25 +568,67 @@ def get_all_reminders() -> List[Dict[str, Any]]:
 # SHARED HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _trigger_agent_task(agent_id: str, prompt: str, chat_id: str) -> None:
+async def _trigger_agent_task(
+    agent_id: str,
+    prompt: str,
+    chat_id: str,
+    task_session_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    label: Optional[str] = None,
+) -> None:
+    if agent_id == "jarvis":
+        lower_prompt = (prompt + " " + (label or "")).lower()
+        if any(kw in lower_prompt for kw in ["hedge fund", "trading", "bcm", "pepperstone", "ctrader", "intraday"]):
+            agent_id = "bcm_orchestrator"
+            logger.info(f"Auto-rerouted scheduled task {job_id or label} to bcm_orchestrator based on trading keywords.")
+
+    session_id = task_session_id or (f"task_{job_id}" if job_id else agent_id)
+    if job_id and agent_id:
+        try:
+            _register_scheduled_session(job_id, label or job_id, "recurring", agent_id, prompt)
+        except Exception:
+            pass
+
     try:
         from backend.agent import agent_instance, DECISION_LOGS
         from backend.websocket_manager import manager
-        await manager.broadcast({"type": "chat_message", "role": "user",
-                                 "content": f"[Scheduled Task] {prompt}", "chat_id": agent_id})
-        response_text = await agent_instance.respond(prompt, session_id=agent_id)
-        cost_usd = agent_instance.last_costs.get(agent_id, 0.0)
-        suppress_tts = agent_instance.check_and_clear_suppress_tts(agent_id)
-        saved_ids = agent_instance.last_saved_ids.get(agent_id, {})
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_prompt_display = f"[Scheduled Run - {now_str}] {prompt}"
+
+        await manager.broadcast({
+            "type": "chat_message",
+            "role": "user",
+            "content": user_prompt_display,
+            "chat_id": session_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        response_text = await agent_instance.respond(prompt, session_id=session_id, override_agent_id=agent_id)
+        cost_usd = agent_instance.last_costs.get(session_id, 0.0)
+        suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
+        saved_ids = agent_instance.last_saved_ids.get(session_id, {})
         user_msg_id = saved_ids.get("user")
         assistant_msg_id = saved_ids.get("assistant")
-        await manager.broadcast({"type": "chat_message", "role": "assistant", "content": response_text,
-                                 "chat_id": agent_id, "cost_usd": cost_usd,
-                                 "suppress_tts": suppress_tts, "id": assistant_msg_id})
+
+        await manager.broadcast({
+            "type": "chat_message",
+            "role": "assistant",
+            "content": response_text,
+            "chat_id": session_id,
+            "cost_usd": cost_usd,
+            "suppress_tts": suppress_tts,
+            "id": assistant_msg_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
         if user_msg_id:
-            await manager.broadcast({"type": "user_message_id_update", "chat_id": agent_id,
-                                     "content": prompt, "id": user_msg_id})
+            await manager.broadcast({
+                "type": "user_message_id_update",
+                "chat_id": session_id,
+                "content": user_prompt_display,
+                "id": user_msg_id
+            })
         await manager.broadcast({"type": "logs_update", "logs": DECISION_LOGS[:20]})
+        await manager.broadcast({"type": "scheduled_task_executed", "session_id": session_id, "job_id": job_id})
         await _send_telegram_alert(
             chat_id,
             f"🤖 **SCHEDULED TASK RESULT**\n\n• **Agent**: `{agent_id}`\n"
@@ -510,17 +694,93 @@ def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[async
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def restore_state() -> None:
-    """No-op: APScheduler auto-restores from SQLite on scheduler.start()."""
-    for job in scheduler.get_jobs():
-        if job.id not in _timer_meta:
-            _timer_meta[job.id] = {
-                "type": _infer_type(job),
-                "created_at": "",
-                "interval_hours": (job.kwargs or {}).get("interval_hours"),
-                "duration": (job.kwargs or {}).get("duration"),
-                "target_time": (job.kwargs or {}).get("target_time_str"),
+    """Populate _timer_meta and restore scheduled jobs from SQLite session_metadata DB table."""
+    try:
+        from backend.database import _execute
+        rows = _execute("SELECT session_id, title, agent_id, job_id, schedule_type, schedule_info FROM session_metadata WHERE is_scheduled = 1")
+        restored_count = 0
+        for r in rows:
+            session_id, title, agent_id, job_id, schedule_type, schedule_info_raw = r
+            if not job_id or job_id == "skill_distillation":
+                continue
+            
+            info = {}
+            if schedule_info_raw:
+                try:
+                    info = json.loads(schedule_info_raw)
+                except Exception:
+                    pass
+            
+            label = info.get("label") or title or job_id
+            if label.startswith("⏰ "):
+                label = label[2:]
+            elif label.startswith("🔔 "):
+                label = label[2:]
+                
+            task_type = schedule_type or info.get("task_type") or "recurring"
+            prompt = info.get("prompt")
+            status = info.get("status") or "running"
+            chat_id = info.get("chat_id", "dashboard")
+            created_at = info.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+            _timer_meta[job_id] = {
+                "type": task_type,
+                "created_at": created_at,
+                "interval_hours": info.get("interval_hours", 1.0),
+                "duration": info.get("duration"),
+                "target_time": info.get("target_time"),
+                "status": status,
             }
-    logger.info(f"Scheduler: {len(scheduler.get_jobs())} jobs loaded from DB")
+
+            existing_job = scheduler.get_job(job_id)
+            if not existing_job:
+                if task_type == "recurring":
+                    interval_hours = float(info.get("interval_hours") or 1.0)
+                    job = scheduler.add_job(
+                        _job_recurring,
+                        trigger=IntervalTrigger(hours=interval_hours),
+                        kwargs={"job_id": job_id, "label": label, "interval_hours": interval_hours,
+                                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                                "created_at": created_at, "task_type": "recurring"},
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                    if status == "paused":
+                        job.pause()
+                    restored_count += 1
+                elif task_type == "one-shot":
+                    duration = int(info.get("duration") or 60)
+                    run_at = datetime.now(scheduler.timezone) + timedelta(seconds=duration)
+                    job = scheduler.add_job(
+                        _job_one_shot,
+                        trigger=DateTrigger(run_date=run_at),
+                        kwargs={"job_id": job_id, "label": label, "duration": duration,
+                                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                                "created_at": created_at, "task_type": "one-shot"},
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                    if status == "paused":
+                        job.pause()
+                    restored_count += 1
+                elif task_type == "alarm":
+                    target_time_str = info.get("target_time") or created_at
+                    from zoneinfo import ZoneInfo
+                    tz = ZoneInfo("Asia/Jerusalem")
+                    now_tz = datetime.now(tz)
+                    target_dt = now_tz + timedelta(minutes=5)
+                    job = scheduler.add_job(
+                        _job_alarm,
+                        trigger=DateTrigger(run_date=target_dt),
+                        kwargs={"job_id": job_id, "label": label, "chat_id": chat_id,
+                                "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt,
+                                "created_at": created_at, "task_type": "alarm"},
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                    if status == "paused":
+                        job.pause()
+                    restored_count += 1
+        logger.info(f"Scheduler: restored {restored_count} tasks from session_metadata DB table.")
+    except Exception as e:
+        logger.error(f"Error in restore_state from DB: {e}")
 
 
 async def _start_restored_tasks() -> None:
