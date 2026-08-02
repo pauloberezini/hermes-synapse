@@ -88,8 +88,23 @@ graph TD
     * Centralized open registry endpoints (`/api/marketplace/skills`, `/api/marketplace/register`) for discovering and dynamically registering `hermes_sdk` skill packages.
 15. **Stage 15: Autonomous Agent Mesh & Peer-to-Peer Protocol**
     * Decentralized inter-agent communication engine (`backend/mesh.py`, `AgentMeshRouter`) enabling P2P capability matching, peer discovery, and task delegation.
+16. **Stage 16: Paperclip Governance Control Plane & Resumable Task Engine**
+    * `BudgetGuard` real-time token/dollar spend enforcement per session and globally across all sessions ([governance.py](file:///Users/pauloberezini/Documents/private/git/jarvis/backend/governance.py)).
+    * Human-in-the-loop action approval queue for high-stakes tool executions ([ApprovalsModal.tsx](file:///Users/pauloberezini/Documents/private/git/jarvis/frontend/src/components/ApprovalsModal.tsx)).
+    * 1-Click company archetype presets (Hedge Fund, Engineering Shop, OSINT Bureau) ([presets.py](file:///Users/pauloberezini/Documents/private/git/jarvis/backend/presets.py)).
+    * Org Chart hierarchy (CEO, Director, Worker) & automatic escalation routing (`escalate_task`).
+    * Atomic task checkout locks & Kanban ticket board ([TaskBoardTab.tsx](file:///Users/pauloberezini/Documents/private/git/jarvis/frontend/src/components/TaskBoardTab.tsx)).
+    * Heartbeat Pulse execution engine with DB state checkpointing (`run_orchestration_pulse`).
 
 ---
+
+### 🟡 Upcoming & Future Roadmap (Stages 17+)
+17. **Stage 17: Production Multi-Cluster Agent Mesh**
+    * Cross-cloud distributed agent deployment across multi-node Kubernetes and Docker Swarm clusters.
+18. **Stage 18: Real-Time WebRTC Voice & Multimodal Gateway**
+    * Low-latency bidirectional WebRTC voice streaming and real-time vision feed via Gemini Live API.
+19. **Stage 19: Skills Marketplace Monetization & Billing Engine**
+    * Automated Stripe / OpenNode Lightning payment gateway for monetization of third-party subagent skills.
 
 ## 🏛️ Technical Architecture Specification
 
