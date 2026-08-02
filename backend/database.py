@@ -443,7 +443,7 @@ def _init_sqlite_schema():
             value TEXT NOT NULL
         )
     """)
-    cursor.execute("INSERT OR IGNORE INTO app_settings VALUES ('language', 'ru')")
+    cursor.execute("INSERT OR IGNORE INTO app_settings VALUES ('language', 'en')")
 
     # Create session metadata table
     cursor.execute("""
@@ -465,6 +465,8 @@ def _init_sqlite_schema():
         ("job_id", "TEXT"),
         ("schedule_type", "TEXT"),
         ("schedule_info", "TEXT"),
+        ("daily_budget_usd", "REAL"),
+        ("monthly_budget_usd", "REAL"),
     ]
     for col_name, col_type in new_cols:
         if col_name not in existing_columns:
@@ -473,6 +475,21 @@ def _init_sqlite_schema():
                 logger.info("Migrated session_metadata table to include %s column.", col_name)
             except sqlite3.OperationalError as e:
                 logger.error("Failed to migrate session_metadata table for column %s: %s", col_name, e)
+
+    # Create approval requests table (Paperclip Governance Approval Queue)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS approval_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            action_name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'PENDING',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            resolver_note TEXT
+        )
+    """)
 
     _auto_heal_subagents_and_skills(cursor)
 
@@ -738,7 +755,7 @@ def _init_postgres_schema():
                 value TEXT NOT NULL
             )
         """)
-        cursor.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'ru') ON CONFLICT (key) DO NOTHING")
+        cursor.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'en') ON CONFLICT (key) DO NOTHING")
 
         # Create session metadata table
         cursor.execute("""

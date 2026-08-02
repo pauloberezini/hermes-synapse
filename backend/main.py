@@ -273,15 +273,15 @@ async def update_config(update: ConfigUpdate):
 @app.get("/api/settings")
 async def get_settings():
     from backend.database import get_setting
-    return {"language": get_setting("language") or "ru"}
+    return {"language": get_setting("language") or "en"}
 
 @app.post("/api/settings")
 async def update_settings(update: SettingsUpdate):
     from backend.database import set_setting, get_setting
     if update.language is not None:
         set_setting("language", update.language)
-    await manager.broadcast({"type": "settings_update", "language": get_setting("language") or "ru"})
-    return {"status": "success", "language": get_setting("language") or "ru"}
+    await manager.broadcast({"type": "settings_update", "language": get_setting("language") or "en"})
+    return {"status": "success", "language": get_setting("language") or "en"}
 
 @app.get("/api/logs")
 async def get_logs():

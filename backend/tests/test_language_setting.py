@@ -36,10 +36,10 @@ def client():
 
 # ─── 1. Database helpers ───────────────────────────────────────────────────────
 
-def test_default_language_is_ru():
-    """init_db seeds language='ru' by default."""
+def test_default_language_is_en():
+    """init_db seeds language='en' by default."""
     val = database.get_setting("language")
-    assert val == "ru"
+    assert val == "en"
 
 
 def test_set_and_get_setting():
@@ -68,7 +68,7 @@ def test_set_custom_key():
 def test_get_settings_default(client):
     resp = client.get("/api/settings")
     assert resp.status_code == 200
-    assert resp.json()["language"] == "ru"
+    assert resp.json()["language"] == "en"
 
 
 def test_get_settings_after_db_change(client):

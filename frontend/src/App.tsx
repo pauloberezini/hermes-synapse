@@ -139,8 +139,8 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
-  const [appSettings, setAppSettings] = useState<AppSettings>({ language: 'ru' });
-  const appSettingsRef = useRef<AppSettings>({ language: 'ru' }); // always-current ref for WS/callbacks
+  const [appSettings, setAppSettings] = useState<AppSettings>({ language: 'en' });
+  const appSettingsRef = useRef<AppSettings>({ language: 'en' }); // always-current ref for WS/callbacks
 
   // Prompt edit states
   const [editedPrompt, setEditedPrompt] = useState('');
