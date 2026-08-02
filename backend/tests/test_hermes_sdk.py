@@ -162,6 +162,15 @@ def test_validate_skill_env_no_requirements():
 # ─── API integration tests for validate-env and runtime env endpoints ─────────
 
 from fastapi.testclient import TestClient as _TestClient
+from unittest.mock import AsyncMock
+
+
+@pytest.fixture(autouse=True)
+def mock_telegram_bot(monkeypatch):
+    """Prevent FastAPI lifespan from making real Telegram API network calls during tests."""
+    monkeypatch.setattr("backend.bot.init_bot", AsyncMock(return_value=None))
+    monkeypatch.setattr("backend.bot.shutdown_bot", AsyncMock(return_value=None))
+
 
 
 def test_validate_env_api_endpoint(monkeypatch):
