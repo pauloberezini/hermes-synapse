@@ -1,0 +1,13 @@
+{
+  "name": "hermes-synapse-docs",
+  "version": "1.0.0",
+  "description": "Hermes Synapse Open-Source Documentation & Video Hub",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

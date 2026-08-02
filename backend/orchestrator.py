@@ -41,6 +41,50 @@ class AgentState:
         self.traces: List[Dict[str, Any]] = []
         self.final_response = ""
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes AgentState into JSON-compatible dict for checkpointing."""
+        return {
+            "query": self.query,
+            "chat_id": self.chat_id,
+            "steps": self.steps,
+            "current_step_idx": self.current_step_idx,
+            "results": self.results,
+            "traces": self.traces,
+            "final_response": self.final_response,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AgentState":
+        """Instantiates AgentState from a serialized checkpoint dict."""
+        state = cls(data.get("query", ""), data.get("chat_id", "default"))
+        state.steps = data.get("steps", [])
+        state.current_step_idx = data.get("current_step_idx", 0)
+        state.results = data.get("results", [])
+        state.traces = data.get("traces", [])
+        state.final_response = data.get("final_response", "")
+        return state
+
+    def save_to_task(self, task_id: int) -> bool:
+        """Saves current state as checkpoint_data in DB tasks table."""
+        from backend.database import db_update_task
+        checkpoint_json = json.dumps(self.to_dict(), ensure_ascii=False)
+        return db_update_task(task_id, checkpoint_data=checkpoint_json)
+
+    @classmethod
+    def load_from_task(cls, task_id: int) -> Optional["AgentState"]:
+        """Loads state checkpoint from DB tasks table."""
+        from backend.database import db_get_tasks
+        tasks = db_get_tasks()
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        if not task or not task.get("checkpoint_data"):
+            return None
+        try:
+            data = json.loads(task["checkpoint_data"])
+            return cls.from_dict(data)
+        except Exception as e:
+            logger.error(f"Failed to load task #{task_id} checkpoint: {e}")
+            return None
+
     def add_trace(self, agent: str, action: str, message: str, status: str = "success", token_cost: float = 0.0):
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -420,3 +464,81 @@ Rules:
         "traces": state.traces,
         "steps": state.steps
     }
+
+
+# ── Paperclip Heartbeat Pulse Execution Engine (FEAT-6) ─────────────────────────
+
+async def run_orchestration_pulse(
+    task_id: int,
+    api_key: str,
+    model: str,
+    max_steps_per_pulse: int = 1
+) -> Dict[str, Any]:
+    """
+    Executes a single heartbeat pulse window for a queued task.
+    Reads/writes state checkpoints from/to DB (tasks.checkpoint_data),
+    executing up to `max_steps_per_pulse` before persisting checkpoint and sleeping.
+    """
+    from backend.database import db_get_tasks, db_checkout_task, db_update_task
+
+    tasks = db_get_tasks()
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        return {"status": "error", "message": f"Task #{task_id} not found."}
+
+    agent_id = task.get("assigned_agent_id") or "jarvis"
+    checkout_res = db_checkout_task(task_id, agent_id=agent_id, lock_duration_seconds=120)
+    if checkout_res.get("status") == "locked":
+        logger.info(f"[Pulse] Task #{task_id} is currently locked by another process.")
+        return checkout_res
+
+    # Load existing state or initialize new AgentState
+    state = AgentState.load_from_task(task_id)
+    if not state:
+        query = f"{task['title']}\n{task.get('description', '')}".strip()
+        state = AgentState(query=query, chat_id=f"task_{task_id}")
+        state.add_trace("PulseEngine", "Init", f"Initialized new pulse task #{task_id}: '{task['title']}'")
+
+    # If steps not planned yet, run full orchestration or plan node
+    if not state.steps and not state.final_response:
+        res = await run_orchestration(state.query, api_key, model, chat_id=state.chat_id)
+        state.final_response = res.get("response", "")
+        state.steps = res.get("steps", [])
+        state.current_step_idx = len(state.steps)
+        state.save_to_task(task_id)
+        db_update_task(task_id, status="DONE")
+        return {
+            "status": "completed",
+            "task_id": task_id,
+            "response": state.final_response,
+            "checkpoint": state.to_dict()
+        }
+
+    # Execute up to max_steps_per_pulse
+    steps_executed = 0
+    while state.current_step_idx < len(state.steps) and steps_executed < max_steps_per_pulse:
+        step = state.steps[state.current_step_idx]
+        state.add_trace("PulseEngine", "Step", f"Pulse step {state.current_step_idx+1}/{len(state.steps)}: {step.get('agent')}")
+        state.current_step_idx += 1
+        steps_executed += 1
+
+    # Check if finished
+    if state.current_step_idx >= len(state.steps):
+        state.save_to_task(task_id)
+        db_update_task(task_id, status="DONE")
+        return {
+            "status": "completed",
+            "task_id": task_id,
+            "response": state.final_response or "Task execution completed.",
+            "checkpoint": state.to_dict()
+        }
+    else:
+        state.save_to_task(task_id)
+        db_update_task(task_id, status="IN_PROGRESS")
+        return {
+            "status": "pulsed",
+            "task_id": task_id,
+            "current_step": state.current_step_idx,
+            "total_steps": len(state.steps),
+            "checkpoint": state.to_dict()
+        }

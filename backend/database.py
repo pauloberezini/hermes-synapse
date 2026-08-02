@@ -11,6 +11,7 @@ logger = logging.getLogger("hermes.database")
 
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "hermes.db")
+os.makedirs(DB_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # WAL-mode connection factory (SQLite)
@@ -45,6 +46,9 @@ def _get_conn() -> sqlite3.Connection:
     - busy_timeout prevents 'database is locked' exceptions under load
     """
     try:
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")       # enable WAL mode
         conn.execute("PRAGMA synchronous=NORMAL")      # safe & fast (vs FULL)
@@ -443,7 +447,7 @@ def _init_sqlite_schema():
             value TEXT NOT NULL
         )
     """)
-    cursor.execute("INSERT OR IGNORE INTO app_settings VALUES ('language', 'ru')")
+    cursor.execute("INSERT OR IGNORE INTO app_settings VALUES ('language', 'en')")
 
     # Create session metadata table
     cursor.execute("""
@@ -465,6 +469,8 @@ def _init_sqlite_schema():
         ("job_id", "TEXT"),
         ("schedule_type", "TEXT"),
         ("schedule_info", "TEXT"),
+        ("daily_budget_usd", "REAL"),
+        ("monthly_budget_usd", "REAL"),
     ]
     for col_name, col_type in new_cols:
         if col_name not in existing_columns:
@@ -473,6 +479,36 @@ def _init_sqlite_schema():
                 logger.info("Migrated session_metadata table to include %s column.", col_name)
             except sqlite3.OperationalError as e:
                 logger.error("Failed to migrate session_metadata table for column %s: %s", col_name, e)
+
+    # Create approval requests table (Paperclip Governance Approval Queue)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS approval_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            action_name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'PENDING',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            resolver_note TEXT
+        )
+    """)
+
+    # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            status TEXT DEFAULT 'BACKLOG',
+            assigned_agent_id TEXT DEFAULT '',
+            checkout_lock_until TEXT DEFAULT '',
+            checkpoint_data TEXT DEFAULT '{}',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     _auto_heal_subagents_and_skills(cursor)
 
@@ -738,7 +774,7 @@ def _init_postgres_schema():
                 value TEXT NOT NULL
             )
         """)
-        cursor.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'ru') ON CONFLICT (key) DO NOTHING")
+        cursor.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'en') ON CONFLICT (key) DO NOTHING")
 
         # Create session metadata table
         cursor.execute("""
@@ -751,13 +787,20 @@ def _init_postgres_schema():
             )
         """)
 
-        # PostgreSQL Migration helper: verify and add agent_id to session_metadata
-        cursor.execute(
-            "SELECT 1 FROM information_schema.columns WHERE table_name='session_metadata' AND column_name='agent_id'"
-        )
-        if not cursor.fetchone():
-            cursor.execute("ALTER TABLE session_metadata ADD COLUMN agent_id TEXT")
-            logger.info("PostgreSQL Migration: added column agent_id to session_metadata table.")
+        # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                status TEXT DEFAULT 'BACKLOG',
+                assigned_agent_id TEXT DEFAULT '',
+                checkout_lock_until TEXT DEFAULT '',
+                checkpoint_data TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
         conn.commit()
     logger.info("PostgreSQL Database initialized successfully.")
@@ -1674,6 +1717,137 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
     except Exception as e:
         logger.error(f"Error fetching undistilled logs: {e}")
         return []
+
+
+# ── Paperclip Task Engine DB Helpers (FEAT-5) ──────────────────────────────────
+
+def db_create_task(title: str, description: str = "", status: str = "BACKLOG", assigned_agent_id: str = "") -> int:
+    """Create a new Kanban task. Returns created task ID."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO tasks (title, description, status, assigned_agent_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (title, description, status, assigned_agent_id, now, now),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def db_get_tasks(status: Optional[str] = None, assigned_agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Fetch tasks, optionally filtered by status or assigned_agent_id."""
+    query = "SELECT id, title, description, status, assigned_agent_id, checkout_lock_until, checkpoint_data, created_at, updated_at FROM tasks"
+    params = []
+    conditions = []
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    if assigned_agent_id:
+        conditions.append("assigned_agent_id = ?")
+        params.append(assigned_agent_id)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY id DESC"
+
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, tuple(params))
+        cols = ["id", "title", "description", "status", "assigned_agent_id", "checkout_lock_until", "checkpoint_data", "created_at", "updated_at"]
+        rows = cursor.fetchall()
+        return [dict(zip(cols, r)) for r in rows]
+
+
+def db_checkout_task(task_id: int, agent_id: str, lock_duration_seconds: int = 300) -> Dict[str, Any]:
+    """
+    Atomic checkout lock for subagents.
+    Sets status to 'IN_PROGRESS', assigns agent_id, and sets checkout_lock_until timestamp.
+    Returns status dict (success or locked_by_other).
+    """
+    now_dt = datetime.now(timezone.utc)
+    now_str = now_dt.isoformat()
+    lock_until_str = datetime.fromtimestamp(now_dt.timestamp() + lock_duration_seconds, tz=timezone.utc).isoformat()
+
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT checkout_lock_until, assigned_agent_id FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"status": "error", "message": f"Task #{task_id} not found."}
+
+        existing_lock, existing_agent = row
+        # Check if active lock by another agent exists
+        if existing_lock and existing_lock > now_str and existing_agent and existing_agent != agent_id:
+            return {
+                "status": "locked",
+                "message": f"Task #{task_id} is locked by agent '{existing_agent}' until {existing_lock}."
+            }
+
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET status = 'IN_PROGRESS', assigned_agent_id = ?, checkout_lock_until = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (agent_id, lock_until_str, now_str, task_id),
+        )
+        conn.commit()
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "assigned_agent_id": agent_id,
+            "checkout_lock_until": lock_until_str
+        }
+
+
+def db_update_task(task_id: int, title: Optional[str] = None, description: Optional[str] = None,
+                   status: Optional[str] = None, assigned_agent_id: Optional[str] = None,
+                   checkpoint_data: Optional[str] = None) -> bool:
+    """Update task fields."""
+    now_str = datetime.now(timezone.utc).isoformat()
+    updates = []
+    params = []
+    if title is not None:
+        updates.append("title = ?")
+        params.append(title)
+    if description is not None:
+        updates.append("description = ?")
+        params.append(description)
+    if status is not None:
+        updates.append("status = ?")
+        params.append(status)
+    if assigned_agent_id is not None:
+        updates.append("assigned_agent_id = ?")
+        params.append(assigned_agent_id)
+    if checkpoint_data is not None:
+        updates.append("checkpoint_data = ?")
+        params.append(checkpoint_data)
+
+    if not updates:
+        return False
+
+    updates.append("updated_at = ?")
+    params.append(now_str)
+    params.append(task_id)
+
+    query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def db_delete_task(task_id: int) -> bool:
+    """Delete a task by ID."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        return cursor.rowcount > 0
 
 # Auto-initialize database schema on import to prevent missing tables
 init_db()

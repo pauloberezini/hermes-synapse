@@ -55,9 +55,21 @@ describe('OfficeTab interactions', () => {
     vi.unstubAllGlobals();
   });
 
+  it('renders Pixel Office in English by default and supports switching language configuration to Russian', async () => {
+    const { rerender } = render(<OfficeTab t={key => key} isConnected />);
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Pixel Office');
+    expect(screen.getByRole('img', { name: /Isometric office:/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Search agents…')).toBeInTheDocument();
+
+    rerender(<OfficeTab t={key => key} language="ru" isConnected />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Пиксельный офис');
+    expect(screen.getByRole('img', { name: /Изометрический офис:/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Поиск агента…')).toBeInTheDocument();
+  });
+
   it('filters agents, opens the inspector, and restores it with keyboard controls', async () => {
-    render(<OfficeTab t={key => key === 'officeTitle' ? 'ИИ-офис' : key} language="ru" isConnected />);
-    await screen.findByRole('img', { name: 'Изометрический офис: Инженерная студия' });
+    render(<OfficeTab t={key => key} language="ru" isConnected />);
+    await screen.findByRole('img', { name: /Изометрический офис:/i });
     expect(document.querySelector('.office-brand img')).toHaveAttribute('src', '/favicon.svg');
     fireEvent.change(screen.getByLabelText('Поиск агента…'), { target: { value: 'Data Analyst' } });
     expect(await screen.findByRole('dialog', { name: 'Data Analyst' })).toBeInTheDocument();

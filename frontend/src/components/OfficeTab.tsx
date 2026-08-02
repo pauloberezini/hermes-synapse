@@ -86,6 +86,7 @@ const PROJECT_COLORS = ['#55e8c1', '#7b9cff', '#b77cff', '#ff72be', '#ffb85c', '
 
 const COPY = {
   ru: {
+    officeTitle: 'Пиксельный офис',
     subtitle: 'Живое состояние агентов в реальном времени', search: 'Поиск агента…', allProjects: 'Все проекты', allStatuses: 'Все статусы',
     total: 'Всего', working: 'Работают', waiting: 'Ожидают', errors: 'Ошибки', paused: 'На паузе', offline: 'Неактивны',
     online: 'Онлайн', reconnecting: 'Переподключение', stale: 'Данные устарели', office: '2D-план', iso: 'Живой офис', command: 'Command Center', list: 'Список',
@@ -99,6 +100,7 @@ const COPY = {
     unassigned: 'Без проекта', specialist: 'Специалист', noTask: 'Нет активной задачи', refreshed: 'Обновлено', agents: 'агентов', logs: 'Логи',
   },
   en: {
+    officeTitle: 'Pixel Office',
     subtitle: 'Live agent state in real time', search: 'Search agents…', allProjects: 'All projects', allStatuses: 'All statuses',
     total: 'Total', working: 'Working', waiting: 'Waiting', errors: 'Errors', paused: 'Paused', offline: 'Inactive',
     online: 'Online', reconnecting: 'Reconnecting', stale: 'Stale data', office: '2D plan', iso: 'Live Office', command: 'Command Center', list: 'List',
@@ -370,7 +372,7 @@ function ViewSwitcher({ view, setView, copy }: { view: OfficeView; setView: (vie
   return <div className="office-view-switcher" role="tablist" aria-label="Office view">{views.map(item => <button key={item.id} type="button" role="tab" aria-selected={view === item.id} className={view === item.id ? 'is-active' : ''} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span></button>)}</div>;
 }
 
-export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru', liveTrace = null, fetchWithAuth }: OfficeTabProps) {
+export function OfficeTab({ t, selectChat, isConnected = false, language = 'en', liveTrace = null, fetchWithAuth }: OfficeTabProps) {
   const copy = COPY[language];
   const [theme, setThemeState] = useState<OfficeThemeKey>(() => {
     const saved = localStorage.getItem(OFFICE_THEME_STORAGE_KEY);
@@ -525,7 +527,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'ru',
   return (
     <div className={`ai-office-page view-${view}${selectedAgent ? ' has-inspector' : ''}`}>
       <header className="office-command-bar">
-        <div className="office-brand"><HermesMark className="office-brand-mark" /><div><h1>{t('officeTitle')}</h1><p>{copy.subtitle}</p></div></div>
+        <div className="office-brand"><HermesMark className="office-brand-mark" /><div><h1>{t('officeTitle') === 'officeTitle' || !t('officeTitle') ? copy.officeTitle : t('officeTitle')}</h1><p>{copy.subtitle}</p></div></div>
         <div className="office-filters">
           <label className="office-search"><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={copy.search} aria-label={copy.search} />{search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X size={14} /></button>}</label>
           <label className="office-select"><BriefcaseBusiness size={15} /><select value={projectFilter} onChange={event => chooseProject(event.target.value)} aria-label={copy.allProjects}><option value="">{copy.allProjects}</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select><ChevronDown size={14} /></label>

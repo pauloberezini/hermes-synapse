@@ -1,0 +1,28 @@
+:root {
+  --vp-c-brand-1: #00f0ff;
+  --vp-c-brand-2: #3b82f6;
+  --vp-c-brand-3: #6366f1;
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(135deg, #00f0ff 0%, #3b82f6 100%);
+}
+
+.dark {
+  --vp-c-bg: #0a0c14;
+  --vp-c-bg-alt: #101424;
+  --vp-c-bg-elv: #151a30;
+  --vp-c-border: rgba(0, 240, 255, 0.15);
+}
+
+.VPHero .name {
+  text-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
+}
+
+.VPFeature {
+  border: 1px solid rgba(0, 240, 255, 0.15) !important;
+  transition: all 0.25s ease !important;
+}
+
+.VPFeature:hover {
+  border-color: rgba(0, 240, 255, 0.5) !important;
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+}
