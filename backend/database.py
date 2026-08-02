@@ -11,6 +11,7 @@ logger = logging.getLogger("hermes.database")
 
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "hermes.db")
+os.makedirs(DB_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # WAL-mode connection factory (SQLite)
@@ -45,6 +46,9 @@ def _get_conn() -> sqlite3.Connection:
     - busy_timeout prevents 'database is locked' exceptions under load
     """
     try:
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")       # enable WAL mode
         conn.execute("PRAGMA synchronous=NORMAL")      # safe & fast (vs FULL)
