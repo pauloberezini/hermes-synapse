@@ -24,6 +24,7 @@ def isolated_db(tmp_path):
     yield
     database.DB_PATH = orig_path
     database.DB_DIR = orig_dir
+    database.init_db()
 
 
 @pytest.fixture()
