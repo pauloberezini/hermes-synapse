@@ -50,6 +50,25 @@ import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 // Initialize global fetch interceptor
 initFetchInterceptor();
 
+// Safe localStorage helper to prevent exceptions in private mode or non-browser environments
+const getSafeStorageItem = (key: string): string | null => {
+  try {
+    return typeof window !== 'undefined' && window.localStorage ? localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+};
+
+const setSafeStorageItem = (key: string, value: string): void => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore quota or access errors gracefully
+  }
+};
+
 // Static BCP-47 locale map — defined at module level so hooks don't need it as a dep
 const langToLocale: Record<string, string> = {
   ru: 'ru-RU', en: 'en-US', he: 'he-IL', de: 'de-DE', es: 'es-ES', fr: 'fr-FR'
@@ -57,18 +76,18 @@ const langToLocale: Record<string, string> = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
-    const saved = localStorage.getItem('jarvis_active_tab');
+    const saved = getSafeStorageItem('jarvis_active_tab');
     return (saved as any) || 'chat';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return localStorage.getItem('jarvis_sidebar_collapsed') === 'true';
+    return getSafeStorageItem('jarvis_sidebar_collapsed') === 'true';
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFlyoutOpen, setSettingsFlyoutOpen] = useState(false);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([{ id: 'dashboard', title: 'Main Terminal' }]);
   const [isConnected, setIsConnected] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('jarvis_auth_token'));
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getSafeStorageItem('jarvis_auth_token'));
   const [otpCode, setOtpCode] = useState('');
   const [authStatus, setAuthStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'error' | 'success'>('idle');
   const [authError, setAuthError] = useState('');
@@ -106,13 +125,13 @@ export default function App() {
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; type?: string; pages?: number; truncated?: boolean } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTTSEnabled, setIsTTSEnabled] = useState<boolean>(() => {
-    const saved = localStorage.getItem('jarvis_tts_enabled');
+    const saved = getSafeStorageItem('jarvis_tts_enabled');
     return saved !== null ? saved === 'true' : true;
   });
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [playingMsgIndex, setPlayingMsgIndex] = useState<number | null>(null);
   const [micEnabled, setMicEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('jarvis_mic_enabled') === 'true';
+    return getSafeStorageItem('jarvis_mic_enabled') === 'true';
   });
   const [micState, setMicState] = useState<'off' | 'listening' | 'capturing'>('off');
   
@@ -148,9 +167,9 @@ export default function App() {
     y?: number;
   }[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string>(() => {
-    return localStorage.getItem('jarvis_current_chat_id') || 'dashboard';
+    return getSafeStorageItem('jarvis_current_chat_id') || 'dashboard';
   });
-  const currentChatIdRef = useRef(localStorage.getItem('jarvis_current_chat_id') || 'dashboard');
+  const currentChatIdRef = useRef(getSafeStorageItem('jarvis_current_chat_id') || 'dashboard');
   
   const [newAgentId, setNewAgentId] = useState('');
   const [newAgentName, setNewAgentName] = useState('');
@@ -177,21 +196,21 @@ export default function App() {
 
   useEffect(() => {
     currentChatIdRef.current = currentChatId;
-    localStorage.setItem('jarvis_current_chat_id', currentChatId);
+    setSafeStorageItem('jarvis_current_chat_id', currentChatId);
   }, [currentChatId]);
 
   useEffect(() => {
-    localStorage.setItem('jarvis_active_tab', activeTab);
+    setSafeStorageItem('jarvis_active_tab', activeTab);
   }, [activeTab]);
 
   // Keep ttsEnabledRef in sync with its state and save to localStorage
   useEffect(() => { 
     ttsEnabledRef.current = isTTSEnabled; 
-    localStorage.setItem('jarvis_tts_enabled', String(isTTSEnabled));
+    setSafeStorageItem('jarvis_tts_enabled', String(isTTSEnabled));
   }, [isTTSEnabled]);
 
   useEffect(() => {
-    localStorage.setItem('jarvis_mic_enabled', String(micEnabled));
+    setSafeStorageItem('jarvis_mic_enabled', String(micEnabled));
   }, [micEnabled]);
   useEffect(() => { appSettingsRef.current = appSettings; }, [appSettings]);
 
