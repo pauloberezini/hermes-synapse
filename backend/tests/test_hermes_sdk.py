@@ -201,18 +201,26 @@ def test_set_runtime_env_api(monkeypatch):
     from backend.auth import create_session
     from backend.main import app
 
+    key = "TEST_RUNTIME_KEY_7"
+    value = "runtime-value-abc"
+
+    monkeypatch.delenv(key, raising=False)
+
     token = create_session()
     with _TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
         response = client.post(
             "/api/settings/env",
-            json={"key": "TEST_RUNTIME_KEY_7", "value": "runtime-value-abc"}
+            json={"key": key, "value": value}
         )
 
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
     assert data["persistent"] is False
-    assert os.environ.get("TEST_RUNTIME_KEY_7") == "runtime-value-abc"
+    assert os.environ.get(key) == value
+
+    monkeypatch.delenv(key, raising=False)
+
 
 
 def test_set_runtime_env_api_blocked_keys():
