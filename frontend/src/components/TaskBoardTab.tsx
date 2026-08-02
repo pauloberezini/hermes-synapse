@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Kanban, Plus, RefreshCw, Lock, User, Trash2 } from 'lucide-react';
+import { Kanban, Plus, RefreshCw, Lock, User, Trash2, Zap } from 'lucide-react';
 import { styles } from '../styles';
 
 interface Task {
@@ -115,6 +115,21 @@ export function TaskBoardTab() {
     }
   };
 
+  const handlePulseTask = async (taskId: number) => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    try {
+      const res = await fetch(`http://localhost:8000/api/tasks/${taskId}/pulse`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        fetchTasks();
+      }
+    } catch (err) {
+      console.error('Failed to pulse task:', err);
+    }
+  };
+
   return (
     <div style={styles.tabWrapper}>
       {/* Header */}
@@ -217,6 +232,13 @@ export function TaskBoardTab() {
                               <Lock size={12} style={{ color: '#f59e0b' }} />
                             </span>
                           )}
+                          <button
+                            onClick={() => handlePulseTask(task.id)}
+                            style={{ background: 'none', border: 'none', color: '#00f0ff', cursor: 'pointer', padding: '2px' }}
+                            title="Trigger Pulse Execution"
+                          >
+                            <Zap size={12} />
+                          </button>
                           <button
                             onClick={() => handleDeleteTask(task.id)}
                             style={{ background: 'none', border: 'none', color: 'rgba(239,68,68,0.6)', cursor: 'pointer', padding: '2px' }}

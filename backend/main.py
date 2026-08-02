@@ -707,6 +707,18 @@ async def checkout_task_api(task_id: int, body: TaskCheckoutRequest):
         return JSONResponse(status_code=409, content=res)
     return res
 
+@app.post("/api/tasks/{task_id}/pulse")
+async def pulse_task_api(task_id: int, max_steps: int = 1):
+    from backend.orchestrator import run_orchestration_pulse
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+    res = await run_orchestration_pulse(task_id, api_key, model, max_steps_per_pulse=max_steps)
+    if res.get("status") == "error":
+        return JSONResponse(status_code=404, content=res)
+    elif res.get("status") == "locked":
+        return JSONResponse(status_code=409, content=res)
+    return res
+
 @app.put("/api/tasks/{task_id}")
 async def update_task_api(task_id: int, body: TaskUpdateRequest):
     from backend.database import db_update_task
