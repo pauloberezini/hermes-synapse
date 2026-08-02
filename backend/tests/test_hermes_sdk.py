@@ -170,6 +170,13 @@ def mock_telegram_bot(monkeypatch):
     """Prevent FastAPI lifespan from making real Telegram API network calls during tests."""
     monkeypatch.setattr("backend.bot.init_bot", AsyncMock(return_value=None))
     monkeypatch.setattr("backend.bot.shutdown_bot", AsyncMock(return_value=None))
+    try:
+        import backend.main
+        monkeypatch.setattr("backend.main.init_bot", AsyncMock(return_value=None))
+        monkeypatch.setattr("backend.main.shutdown_bot", AsyncMock(return_value=None))
+    except (ImportError, AttributeError):
+        pass
+
 
 
 
