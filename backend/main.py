@@ -692,6 +692,79 @@ async def register_marketplace_skill_api(payload: SkillRegistrationPayload):
     }
 
 
+@app.get("/api/marketplace/skills/{skill_name}/validate-env")
+async def validate_skill_env_api(skill_name: str):
+    """Check whether all required environment variables for a registered skill are configured.
+
+    Returns a JSON object with:
+      - ``ok`` (bool): True when every required env var is present.
+      - ``missing`` (list[str]): Required env vars that are absent or empty.
+      - ``optional_missing`` (list[str]): Optional vars that are absent.
+
+    The frontend uses this to display an inline configuration prompt when a
+    skill cannot run due to missing credentials — keeping secrets out of
+    source code and making it easy for contributors to self-configure.
+    """
+    from hermes_sdk.skill import get_registry, validate_skill_env
+    registry = get_registry()
+    manifest = registry.get(skill_name)
+    if manifest is None:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=404,
+            detail=f"Skill '{skill_name}' is not registered. "
+                   "Install and import it so @skill can add it to the registry."
+        )
+    result = validate_skill_env(manifest)
+    return {
+        "skill": skill_name,
+        **result,
+    }
+
+
+class RuntimeEnvPayload(BaseModel):
+    key: str
+    value: str
+
+
+@app.post("/api/settings/env")
+async def set_runtime_env_api(payload: RuntimeEnvPayload):
+    """Inject an environment variable into the running process at runtime.
+
+    This endpoint lets the frontend settings panel set a missing API key
+    without requiring a server restart or a file edit.  The variable is
+    stored **only in the current process memory** — it is NOT persisted to
+    disk — so it will be lost on the next container/server restart.
+
+    For permanent configuration, users should add the key to their ``.env``
+    file as documented in ``.env.example``.
+
+    Security: This endpoint is protected by the global auth middleware.
+    Only authenticated admin users can set env vars.
+    """
+    import os
+    key = payload.key.strip()
+    value = payload.value.strip()
+    if not key:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Environment variable key must not be empty.")
+    # Reject obviously dangerous key names (e.g. PATH, LD_PRELOAD)
+    _BLOCKED_KEYS = {"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "PYTHONPATH"}
+    if key in _BLOCKED_KEYS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Setting '{key}' is not allowed via this endpoint.")
+    os.environ[key] = value
+    logger.info("Runtime env var set via API: %s (value hidden)", key)
+    return {
+        "status": "success",
+        "message": f"Environment variable '{key}' set for this session. "
+                   f"Add it to .env for permanent configuration.",
+        "key": key,
+        "persistent": False,
+    }
+
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # STAGE 15: AUTONOMOUS AGENT MESH & PEER-TO-PEER PROTOCOL
 # ═══════════════════════════════════════════════════════════════════════════════

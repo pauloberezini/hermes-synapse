@@ -65,6 +65,100 @@ interface ChatTabProps {
   fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
+const detectMissingEnvKey = (content: string): string | null => {
+  const match = content.match(/Set `([A-Z0-9_]+)` in your\.env/);
+  return match ? match[1] : null;
+};
+
+interface MissingEnvConfigCardProps {
+  messageIndex: number;
+  envKey: string;
+  onSave: (value: string) => Promise<boolean>;
+}
+
+function MissingEnvConfigCard({ messageIndex, envKey, onSave }: MissingEnvConfigCardProps) {
+  const [inputValue, setInputValue] = React.useState('');
+  const [status, setStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  const handleSave = async () => {
+    if (!inputValue.trim()) return;
+    setStatus('saving');
+    const ok = await onSave(inputValue.trim());
+    setStatus(ok ? 'saved' : 'error');
+  };
+
+  return (
+    <div style={{
+      marginTop: '10px',
+      padding: '12px 14px',
+      background: 'rgba(255, 159, 0, 0.07)',
+      border: '1px solid rgba(255, 159, 0, 0.3)',
+      borderRadius: '8px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#ff9f00', fontWeight: 600 }}>
+        <span>🔑</span>
+        <span>Configure missing API key</span>
+      </div>
+      <div style={{ fontSize: '0.73rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+        <code style={{ color: '#ff9f00' }}>{envKey}</code> is not set. Enter it below to enable this skill for this session.
+      </div>
+      {status === 'saved' ? (
+        <div style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>
+          ✓ Key saved for this session. Try your request again.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <input
+            id={`env-key-input-${messageIndex}`}
+            type="password"
+            placeholder={`Enter ${envKey}…`}
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '6px 10px',
+              background: 'rgba(0,0,0,0.3)',
+              border: '1px solid rgba(255,159,0,0.35)',
+              borderRadius: '6px',
+              color: 'var(--text-primary)',
+              fontSize: '0.78rem',
+              fontFamily: 'var(--font-mono)',
+              outline: 'none'
+            }}
+          />
+          <button
+            id={`env-key-save-${messageIndex}`}
+            onClick={handleSave}
+            disabled={status === 'saving' || !inputValue.trim()}
+            style={{
+              padding: '6px 14px',
+              background: 'rgba(255,159,0,0.18)',
+              border: '1px solid rgba(255,159,0,0.4)',
+              borderRadius: '6px',
+              color: '#ff9f00',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              opacity: (status === 'saving' || !inputValue.trim()) ? 0.5 : 1
+            }}
+          >
+            {status === 'saving' ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      )}
+      {status === 'error' && (
+        <div style={{ fontSize: '0.73rem', color: 'var(--error)' }}>
+          Failed to save. Check your connection or add it manually to .env.
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export function ChatTab({
   currentChatId,
   chatSessions,
@@ -102,6 +196,8 @@ export function ChatTab({
   const [activeMenu, setActiveMenu] = React.useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
   const [editingSessionTitle, setEditingSessionTitle] = React.useState<string>('');
+
+
 
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
@@ -796,6 +892,29 @@ export function ChatTab({
                       </div>
                     </div>
                     <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                    {/* Inline missing-env configuration card */}
+                    {msg.role === 'assistant' && (() => {
+                      const missingKey = detectMissingEnvKey(msg.content);
+                      if (!missingKey) return null;
+                      return (
+                        <MissingEnvConfigCard
+                          messageIndex={index}
+                          envKey={missingKey}
+                          onSave={async (val) => {
+                            try {
+                              const res = await fetchWithAuth('http://localhost:8000/api/settings/env', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ key: missingKey, value: val })
+                              });
+                              return res.ok;
+                            } catch {
+                              return false;
+                            }
+                          }}
+                        />
+                      );
+                    })()}
                   </div>
                 )}
               </div>

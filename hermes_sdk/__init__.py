@@ -26,7 +26,7 @@ For local development, add to PYTHONPATH:
     from hermes_sdk import skill, tool, SkillBase
 """
 
-from hermes_sdk.skill import skill, tool, SkillBase
+from hermes_sdk.skill import skill, tool, SkillBase, validate_skill_env
 from hermes_sdk.types import SkillManifest, ToolSchema, ToolParameter
 
 __all__ = [
@@ -36,6 +36,7 @@ __all__ = [
     "SkillManifest",
     "ToolSchema",
     "ToolParameter",
+    "validate_skill_env",
 ]
 
 __version__ = "0.1.0"
