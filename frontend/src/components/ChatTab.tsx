@@ -100,6 +100,54 @@ export function ChatTab({
   const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
   const [editingSessionTitle, setEditingSessionTitle] = React.useState<string>('');
 
+  // Inline missing-env state: maps message index → { key, inputValue, status }
+  const [missingEnvForms, setMissingEnvForms] = React.useState<Record<number, {
+    key: string;
+    inputValue: string;
+    status: 'idle' | 'saving' | 'saved' | 'error';
+  }>>({});
+
+  // Detect ⚠️ <SkillName> is not configured. Set `KEY` in your .env
+  const detectMissingEnvKey = (content: string): string | null => {
+    const match = content.match(/Set `([A-Z0-9_]+)` in your\.env/);
+    return match ? match[1] : null;
+  };
+
+  const handleSetEnvKey = async (msgIndex: number) => {
+    const form = missingEnvForms[msgIndex];
+    if (!form || !form.key || !form.inputValue.trim()) return;
+    setMissingEnvForms(prev => ({ ...prev, [msgIndex]: { ...prev[msgIndex], status: 'saving' } }));
+    try {
+      const res = await fetchWithAuth('http://localhost:8000/api/settings/env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: form.key, value: form.inputValue.trim() })
+      });
+      if (res.ok) {
+        setMissingEnvForms(prev => ({ ...prev, [msgIndex]: { ...prev[msgIndex], status: 'saved' } }));
+      } else {
+        setMissingEnvForms(prev => ({ ...prev, [msgIndex]: { ...prev[msgIndex], status: 'error' } }));
+      }
+    } catch {
+      setMissingEnvForms(prev => ({ ...prev, [msgIndex]: { ...prev[msgIndex], status: 'error' } }));
+    }
+  };
+
+  // Initialise missing-env form entries when messages change
+  React.useEffect(() => {
+    messages.forEach((msg, idx) => {
+      if (msg.role !== 'assistant') return;
+      const key = detectMissingEnvKey(msg.content);
+      if (key && !missingEnvForms[idx]) {
+        setMissingEnvForms(prev => ({
+          ...prev,
+          [idx]: { key, inputValue: '', status: 'idle' }
+        }));
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
     try {
@@ -618,6 +666,79 @@ export function ChatTab({
                       </div>
                     </div>
                     <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                    {/* Inline missing-env configuration card */}
+                    {msg.role === 'assistant' && missingEnvForms[index] && (
+                      <div style={{
+                        marginTop: '10px',
+                        padding: '12px 14px',
+                        background: 'rgba(255, 159, 0, 0.07)',
+                        border: '1px solid rgba(255, 159, 0, 0.3)',
+                        borderRadius: '8px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#ff9f00', fontWeight: 600 }}>
+                          <span>🔑</span>
+                          <span>Configure missing API key</span>
+                        </div>
+                        <div style={{ fontSize: '0.73rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                          <code style={{ color: '#ff9f00' }}>{missingEnvForms[index].key}</code> is not set. Enter it below to enable this skill for this session.
+                        </div>
+                        {missingEnvForms[index].status === 'saved' ? (
+                          <div style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>
+                            ✓ Key saved for this session. Try your request again.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <input
+                              id={`env-key-input-${index}`}
+                              type="password"
+                              placeholder={`Enter ${missingEnvForms[index].key}…`}
+                              value={missingEnvForms[index].inputValue}
+                              onChange={e => setMissingEnvForms(prev => ({
+                                ...prev,
+                                [index]: { ...prev[index], inputValue: e.target.value }
+                              }))}
+                              style={{
+                                flex: 1,
+                                padding: '6px 10px',
+                                background: 'rgba(0,0,0,0.3)',
+                                border: '1px solid rgba(255,159,0,0.35)',
+                                borderRadius: '6px',
+                                color: 'var(--text-primary)',
+                                fontSize: '0.78rem',
+                                fontFamily: 'var(--font-mono)',
+                                outline: 'none'
+                              }}
+                            />
+                            <button
+                              id={`env-key-save-${index}`}
+                              onClick={() => handleSetEnvKey(index)}
+                              disabled={missingEnvForms[index].status === 'saving' || !missingEnvForms[index].inputValue.trim()}
+                              style={{
+                                padding: '6px 14px',
+                                background: 'rgba(255,159,0,0.18)',
+                                border: '1px solid rgba(255,159,0,0.4)',
+                                borderRadius: '6px',
+                                color: '#ff9f00',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                opacity: (missingEnvForms[index].status === 'saving' || !missingEnvForms[index].inputValue.trim()) ? 0.5 : 1
+                              }}
+                            >
+                              {missingEnvForms[index].status === 'saving' ? 'Saving…' : 'Save'}
+                            </button>
+                          </div>
+                        )}
+                        {missingEnvForms[index].status === 'error' && (
+                          <div style={{ fontSize: '0.73rem', color: 'var(--error)' }}>
+                            Failed to save. Check your connection or add it manually to .env.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

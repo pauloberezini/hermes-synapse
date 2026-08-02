@@ -30,6 +30,47 @@ def get_registry() -> dict[str, SkillManifest]:
     return _SKILL_REGISTRY
 
 
+def validate_skill_env(
+    manifest: SkillManifest,
+) -> dict[str, Any]:
+    """Check which required environment variables are missing for a skill.
+
+    Inspects the skill's ``requires_env`` list and tests each variable against
+    the current process environment.  Returns a dict that the backend can pass
+    directly as a JSON response.
+
+    Args:
+        manifest: The :class:`~hermes_sdk.types.SkillManifest` to validate.
+
+    Returns:
+        A dict with keys:
+            - ``ok`` (bool): True when all required vars are present.
+            - ``missing`` (list[str]): Variables that are absent or empty.
+            - ``optional_missing`` (list[str]): Optional vars that are absent.
+
+    Example::
+
+        from hermes_sdk.skill import get_registry, validate_skill_env
+
+        manifest = get_registry()["github_integration"]
+        result = validate_skill_env(manifest)
+        # {"ok": False, "missing": ["GITHUB_TOKEN"], "optional_missing": []}
+    """
+    missing: list[str] = [
+        key for key in manifest.requires_env
+        if not os.environ.get(key, "").strip()
+    ]
+    optional_missing: list[str] = [
+        key for key in manifest.optional_env
+        if not os.environ.get(key, "").strip()
+    ]
+    return {
+        "ok": len(missing) == 0,
+        "missing": missing,
+        "optional_missing": optional_missing,
+    }
+
+
 def _python_type_to_json_schema_type(annotation) -> str:
     """Map Python type annotations to JSON Schema type strings."""
     if annotation in (str, "str"):
