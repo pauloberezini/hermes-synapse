@@ -40,4 +40,4 @@ Agents automatically store context and query embeddings in Qdrant & SQLite graph
 
 Watch how to connect custom agents using the Hermes Python SDK:
 
-<YouTube id="dQw4w9WgXcQ" title="Building Custom Agents with Hermes SDK" />
+<YouTube id="3GFh-1Gglno" title="Building Custom Agents with Hermes SDK" />

@@ -53,4 +53,4 @@ Deploy pre-configured agent teams with 1 click:
 
 Watch how to configure spend budgets and approve high-stakes subagent requests:
 
-<YouTube id="dQw4w9WgXcQ" title="Paperclip Governance Tutorial" />
+<YouTube id="3GFh-1Gglno" title="Paperclip Governance Tutorial" />

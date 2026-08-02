@@ -57,4 +57,4 @@ npm run dev
 
 Watch our step-by-step installation and initial configuration tutorial:
 
-<YouTube id="dQw4w9WgXcQ" title="Hermes Synapse Installation Guide" />
+<YouTube id="3GFh-1Gglno" title="Hermes Synapse Installation Guide" />

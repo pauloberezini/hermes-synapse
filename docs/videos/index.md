@@ -11,7 +11,7 @@ Welcome to the **Hermes Synapse Video Hub**! Here you will find video walkthroug
 
 Learn how Hermes Synapse combines P2P agent mesh routing with Paperclip budget caps, task engine checkout, and managerial escalation:
 
-<YouTube id="dQw4w9WgXcQ" title="Hermes Synapse Full System Walkthrough" />
+<YouTube id="3GFh-1Gglno" title="Hermes Synapse Full System Walkthrough" />
 
 ---
 
@@ -19,7 +19,7 @@ Learn how Hermes Synapse combines P2P agent mesh routing with Paperclip budget c
 
 See how to set up daily/monthly spending caps and handle human-in-the-loop approval requests in real time:
 
-<YouTube id="dQw4w9WgXcQ" title="Budget Caps & Approvals Queue Walkthrough" />
+<YouTube id="3GFh-1Gglno" title="Budget Caps & Approvals Queue Walkthrough" />
 
 ---
 
@@ -27,7 +27,7 @@ See how to set up daily/monthly spending caps and handle human-in-the-loop appro
 
 Watch subagents claim tickets, acquire temporary checkout locks, and step through resumable heartbeat pulses:
 
-<YouTube id="dQw4w9WgXcQ" title="Kanban Task Engine & Pulse Execution" />
+<YouTube id="3GFh-1Gglno" title="Kanban Task Engine & Pulse Execution" />
 
 ---
 
@@ -35,4 +35,4 @@ Watch subagents claim tickets, acquire temporary checkout locks, and step throug
 
 Learn how to connect custom Python agents to the Hermes Synapse mesh using our lightweight SDK:
 
-<YouTube id="dQw4w9WgXcQ" title="Hermes Python SDK Tutorial" />
+<YouTube id="3GFh-1Gglno" title="Hermes Python SDK Tutorial" />

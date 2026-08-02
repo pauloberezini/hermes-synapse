@@ -48,4 +48,4 @@ router.escalate_task(task_id=42, failed_agent_id="worker_bot")
 
 See the Kanban Board and Heartbeat Pulse Engine in action:
 
-<YouTube id="dQw4w9WgXcQ" title="Kanban Board and Resumable Pulse Engine" />
+<YouTube id="3GFh-1Gglno" title="Kanban Board and Resumable Pulse Engine" />

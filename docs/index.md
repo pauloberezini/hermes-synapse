@@ -39,6 +39,4 @@ features:
 
 ## 🎥 Featured Video Walkthrough
 
-<YouTube id="dQw4w9WgXcQ" title="Hermes Synapse Overview and Paperclip Integration" />
-
-*Replace `dQw4w9WgXcQ` with your actual YouTube video ID in `docs/index.md`!*
+<YouTube id="3GFh-1Gglno" title="Hermes Synapse Overview and Paperclip Integration" />
