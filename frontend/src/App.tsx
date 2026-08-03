@@ -905,8 +905,12 @@ export default function App() {
             const agent = listToSearch.find((a: any) => a.id === chatId);
             if (chatId.startsWith('chat_')) {
               setMessages([{ role: 'assistant', content: 'Conversation initialized, Sir. How can I assist you today?' }]);
+            } else if (chatId.startsWith('task_')) {
+              const label = getSessionLabel(chatId);
+              const displayTitle = (label && label !== chatId) ? label : 'Scheduled Automation Task';
+              setMessages([{ role: 'assistant', content: `Scheduled task session "${displayTitle}" initialized, Sir. Ready for work.` }]);
             } else {
-              setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || chatId}" initialized, Sir. Ready for work.` }]);
+              setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || getSessionLabel(chatId)}" initialized, Sir. Ready for work.` }]);
             }
           }
         }
@@ -2105,6 +2109,9 @@ export default function App() {
             onOpenChat={(sessionId) => {
               selectChat(sessionId);
               setActiveTab('chat');
+            }}
+            onTaskUpdated={() => {
+              fetchChatSessions();
             }}
           />
         )}

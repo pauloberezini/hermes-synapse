@@ -10,6 +10,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies directly
@@ -38,12 +39,17 @@ RUN pip install --no-cache-dir \
     pypdf>=4.0.0 \
     apscheduler>=3.10.0 \
     sqlalchemy>=2.0.0 \
+    psycopg2-binary>=2.9.0 \
     simplefix>=1.0.17 \
     twisted>=24.0.0 \
     service_identity>=24.0.0 \
-    pyopenssl>=24.0.0
+    pyopenssl>=24.0.0 \
+    pytest>=7.0.0
 
 
+
+# Explicitly install PostgreSQL driver
+RUN pip install --no-cache-dir psycopg2-binary>=2.9.0
 
 # Copy source code and environment configuration
 COPY backend/ /app/backend/

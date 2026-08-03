@@ -17,6 +17,7 @@ services:
       - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-pro}
       - QDRANT_HOST=qdrant
       - OBSIDIAN_HOST=host.docker.internal
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/hermes}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -24,10 +25,10 @@ services:
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      # Qdrant is a distroless image (no shell/curl/python) — cannot add a
-      # healthcheck inside it. We use service_started and give the backend
-      # a long enough start_period so Qdrant is ready before it connects.
-      - qdrant
+      qdrant:
+        condition: service_started
+      db:
+        condition: service_healthy
     networks:
       - hermes-net
 
@@ -44,6 +45,26 @@ services:
     networks:
       - hermes-net
 
+  db:
+    image: postgres:16-alpine
+    container_name: jarvis-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=hermes
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hermes"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hermes-net
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: jarvis-qdrant
@@ -53,10 +74,6 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    # NOTE: qdrant/qdrant is a distroless/scratch image — no curl, wget, python,
-    # or any shell tools available. A Docker healthcheck cannot be added here.
-    # The backend's rag.py already handles Qdrant connection failures gracefully
-    # (logs an error and retries on next request) so this is safe.
     networks:
       - hermes-net
 
@@ -66,4 +83,6 @@ networks:
 
 volumes:
   qdrant_data:
+  postgres_data:
+
 

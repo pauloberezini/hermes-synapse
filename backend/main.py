@@ -1513,11 +1513,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await manager.connect(websocket)
     try:
-        # Send initial setup on connection
         from backend.database import get_chat_history
         from backend.activity_logger import ACTIVITY_LOGS
+        from backend.websocket_manager import json_serial
+        import json
+
         history = get_chat_history("dashboard")
-        await websocket.send_json({
+        init_payload = {
             "type": "init",
             "config": {
                 "system_prompt": agent_instance.system_prompt,
@@ -1526,7 +1528,8 @@ async def websocket_endpoint(websocket: WebSocket):
             "logs": DECISION_LOGS[:20],
             "history": history,
             "activity_logs": ACTIVITY_LOGS
-        })
+        }
+        await websocket.send_text(json.dumps(init_payload, default=json_serial, ensure_ascii=False))
         
         while True:
             # Maintain connection alive, process incoming messages if any

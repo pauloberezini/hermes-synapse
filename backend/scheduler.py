@@ -427,43 +427,84 @@ def update_timer(
     else:
         raise ValueError(f"Invalid task type: '{task_type}'")
 
+    extra = {}
+    if duration_seconds is not None:
+        extra["duration"] = duration_seconds
+    if time_str is not None:
+        extra["target_time"] = time_str
+    if interval_hours is not None:
+        extra["interval_hours"] = interval_hours
+
+    _register_scheduled_session(
+        job_id=item_id,
+        label=label,
+        task_type=task_type,
+        agent_id=agent_id,
+        prompt=prompt,
+        status=_timer_meta.get(item_id, {}).get("status", "running"),
+        extra=extra,
+    )
+
     logger.info(f"Updated task {item_id}: label='{label}', type={task_type}")
     return True
 
 
 def pause_timer(item_id: str) -> bool:
-    job = scheduler.get_job(item_id)
-    if job is None:
-        return False
-    job.pause()
-    if item_id not in _timer_meta:
-        _timer_meta[item_id] = {"type": _infer_type(job), "created_at": ""}
-    _timer_meta[item_id]["status"] = "paused"
+    clean_id = item_id.replace("task_", "") if item_id.startswith("task_") else item_id
+    job = scheduler.get_job(clean_id) or scheduler.get_job(item_id)
+    if job is not None:
+        job.pause()
+    if clean_id not in _timer_meta:
+        _timer_meta[clean_id] = {"type": _infer_type(job) if job else "scheduled", "created_at": ""}
+    _timer_meta[clean_id]["status"] = "paused"
+    try:
+        from backend.database import _execute
+        import json
+        session_id = f"task_{clean_id}"
+        rows = _execute("SELECT schedule_info FROM session_metadata WHERE session_id = ? OR job_id = ?", (session_id, clean_id))
+        if rows and rows[0][0]:
+            info_val = rows[0][0]
+            info = json.loads(info_val) if isinstance(info_val, str) else info_val
+            info["status"] = "paused"
+            _execute("UPDATE session_metadata SET schedule_info = ? WHERE session_id = ? OR job_id = ?", (json.dumps(info), session_id, clean_id))
+    except Exception as err:
+        logger.error(f"Failed to update session_metadata for paused timer {item_id}: {err}")
     logger.info(f"Timer {item_id} paused")
     return True
 
 
 def resume_timer(item_id: str) -> bool:
-    job = scheduler.get_job(item_id)
-    if job is None:
-        return False
-    job.resume()
-    if item_id not in _timer_meta:
-        _timer_meta[item_id] = {"type": _infer_type(job), "created_at": ""}
-    _timer_meta[item_id]["status"] = "running"
+    clean_id = item_id.replace("task_", "") if item_id.startswith("task_") else item_id
+    job = scheduler.get_job(clean_id) or scheduler.get_job(item_id)
+    if job is not None:
+        job.resume()
+    if clean_id not in _timer_meta:
+        _timer_meta[clean_id] = {"type": _infer_type(job) if job else "scheduled", "created_at": ""}
+    _timer_meta[clean_id]["status"] = "running"
+    try:
+        from backend.database import _execute
+        import json
+        session_id = f"task_{clean_id}"
+        rows = _execute("SELECT schedule_info FROM session_metadata WHERE session_id = ? OR job_id = ?", (session_id, clean_id))
+        if rows and rows[0][0]:
+            info_val = rows[0][0]
+            info = json.loads(info_val) if isinstance(info_val, str) else info_val
+            info["status"] = "running"
+            _execute("UPDATE session_metadata SET schedule_info = ? WHERE session_id = ? OR job_id = ?", (json.dumps(info), session_id, clean_id))
+    except Exception as err:
+        logger.error(f"Failed to update session_metadata for resumed timer {item_id}: {err}")
     logger.info(f"Timer {item_id} resumed")
     return True
 
 
 def restart_timer(item_id: str) -> bool:
-    job = scheduler.get_job(item_id)
-    if job is None:
-        return False
+    clean_id = item_id.replace("task_", "") if item_id.startswith("task_") else item_id
+    job = scheduler.get_job(clean_id) or scheduler.get_job(item_id)
     
-    meta = _timer_meta.get(item_id, {})
-    task_type = meta.get("type") or _infer_type(job)
-    kwargs = job.kwargs or {}
-    label = kwargs.get("label", job.name or item_id)
+    meta = _timer_meta.get(clean_id, {})
+    task_type = meta.get("type") or (_infer_type(job) if job else "scheduled")
+    kwargs = (job.kwargs if job else {}) or {}
+    label = kwargs.get("label", (job.name if job else clean_id) or clean_id)
     agent_id = kwargs.get("agent_id")
     prompt = kwargs.get("prompt")
     duration_seconds = kwargs.get("duration") or meta.get("duration") or 60
@@ -471,7 +512,7 @@ def restart_timer(item_id: str) -> bool:
     interval_hours = kwargs.get("interval_hours") or meta.get("interval_hours") or 1.0
 
     return update_timer(
-        item_id=item_id,
+        item_id=clean_id,
         label=label,
         task_type=task_type,
         agent_id=agent_id,
@@ -483,27 +524,98 @@ def restart_timer(item_id: str) -> bool:
 
 
 def trigger_timer_now(item_id: str) -> bool:
-    job = scheduler.get_job(item_id)
-    if job is None:
-        return False
-    kwargs = job.kwargs or {}
-    agent_id = kwargs.get("agent_id") or "jarvis"
-    prompt = kwargs.get("prompt")
-    chat_id = kwargs.get("chat_id", "dashboard")
-    label = kwargs.get("label", item_id)
-    task_session_id = f"task_{item_id}"
+    clean_id = item_id.replace("task_", "") if item_id.startswith("task_") else item_id
+    job = scheduler.get_job(clean_id) or scheduler.get_job(item_id)
+    
+    agent_id = "jarvis"
+    prompt = None
+    chat_id = "dashboard"
+    label = clean_id
+    task_type = "scheduled"
+
+    if job is not None:
+        kwargs = job.kwargs or {}
+        agent_id = kwargs.get("agent_id") or "jarvis"
+        prompt = kwargs.get("prompt")
+        chat_id = kwargs.get("chat_id", "dashboard")
+        label = kwargs.get("label", clean_id)
+        task_type = _infer_type(job)
+    else:
+        # Fallback to database lookup in session_metadata table
+        try:
+            from backend.database import _execute
+            import json
+            session_id = f"task_{clean_id}"
+            rows = _execute(
+                "SELECT title, agent_id, schedule_type, schedule_info FROM session_metadata WHERE session_id = ? OR job_id = ?",
+                (session_id, clean_id)
+            )
+            if rows:
+                title_db, agent_id_db, type_db, info_str = rows[0]
+                agent_id = agent_id_db or "jarvis"
+                label = title_db or clean_id
+                task_type = type_db or "scheduled"
+                if info_str:
+                    try:
+                        info_dict = json.loads(info_str) if isinstance(info_str, str) else info_str
+                        prompt = info_dict.get("prompt")
+                        if info_dict.get("label"):
+                            label = info_dict.get("label")
+                        if info_dict.get("agent_id"):
+                            agent_id = info_dict.get("agent_id")
+                    except Exception:
+                        pass
+        except Exception as err:
+            logger.error(f"Error restoring metadata for timer {item_id}: {err}")
+
     if not prompt:
-        raise ValueError("Task has no prompt to execute.")
-    _register_scheduled_session(item_id, label, _infer_type(job), agent_id, prompt, status="running")
-    asyncio.create_task(_trigger_agent_task(
-        agent_id=agent_id,
-        prompt=prompt,
-        chat_id=chat_id,
-        task_session_id=task_session_id,
-        job_id=item_id,
-        label=label,
-    ))
-    logger.info(f"Manually triggered task {item_id} (agent={agent_id}, session_id={task_session_id})")
+        # Fallback 2: retrieve prompt from messages table if this was an existing task session
+        try:
+            from backend.database import _execute
+            session_id = f"task_{clean_id}"
+            msg_rows = _execute(
+                "SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1",
+                (session_id,)
+            )
+            if msg_rows and msg_rows[0][0]:
+                raw_msg = msg_rows[0][0]
+                if raw_msg.startswith("[Scheduled Run"):
+                    parts = raw_msg.split("] ", 1)
+                    prompt = parts[1] if len(parts) > 1 else raw_msg
+                else:
+                    prompt = raw_msg
+        except Exception as err:
+            logger.error(f"Error fetching fallback prompt from messages table for {item_id}: {err}")
+
+    if not prompt and label and label != clean_id:
+        prompt = label
+
+    if not prompt:
+        logger.warning(f"Cannot trigger task {item_id}: job not found in memory or database, or prompt is empty.")
+        return False
+
+    task_session_id = f"task_{clean_id}"
+    _register_scheduled_session(clean_id, label, task_type, agent_id, prompt, status="running")
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_trigger_agent_task(
+            agent_id=agent_id,
+            prompt=prompt,
+            chat_id=chat_id,
+            task_session_id=task_session_id,
+            job_id=clean_id,
+            label=label,
+        ))
+    except RuntimeError:
+        asyncio.run(_trigger_agent_task(
+            agent_id=agent_id,
+            prompt=prompt,
+            chat_id=chat_id,
+            task_session_id=task_session_id,
+            job_id=clean_id,
+            label=label,
+        ))
+    logger.info(f"Manually triggered task {clean_id} (agent={agent_id}, session_id={task_session_id})")
     return True
 
 
@@ -604,6 +716,8 @@ async def _trigger_agent_task(
         })
 
         response_text = await agent_instance.respond(prompt, session_id=session_id, override_agent_id=agent_id)
+        if not response_text or not response_text.strip():
+            response_text = "Сэр, запуск автоматической задачи завершен успешно."
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
         suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
         saved_ids = agent_instance.last_saved_ids.get(session_id, {})

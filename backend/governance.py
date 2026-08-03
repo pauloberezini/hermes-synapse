@@ -113,34 +113,36 @@ class BudgetGuard:
     @staticmethod
     def _session_spend(session_id: str, prefix: Optional[str] = None) -> float:
         """Sum cost_usd from messages table for a session, optionally filtered by date prefix."""
-        from backend.database import _get_conn
-        with _get_conn() as conn:
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
             cursor = conn.cursor()
             if prefix:
-                cursor.execute(
+                sql = backend.translate_placeholder(
                     "SELECT COALESCE(SUM(cost_usd), 0) FROM messages "
-                    "WHERE session_id = ? AND timestamp LIKE ?",
-                    (session_id, f"{prefix}%"),
+                    "WHERE session_id = ? AND timestamp LIKE ?"
                 )
+                cursor.execute(sql, (session_id, f"{prefix}%"))
             else:
-                cursor.execute(
-                    "SELECT COALESCE(SUM(cost_usd), 0) FROM messages WHERE session_id = ?",
-                    (session_id,),
+                sql = backend.translate_placeholder(
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM messages WHERE session_id = ?"
                 )
+                cursor.execute(sql, (session_id,))
             result = cursor.fetchone()
             return float(result[0]) if result else 0.0
 
     @staticmethod
     def _global_spend(prefix: Optional[str] = None) -> float:
         """Sum cost_usd across ALL sessions, optionally filtered by date prefix."""
-        from backend.database import _get_conn
-        with _get_conn() as conn:
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
             cursor = conn.cursor()
             if prefix:
-                cursor.execute(
-                    "SELECT COALESCE(SUM(cost_usd), 0) FROM messages WHERE timestamp LIKE ?",
-                    (f"{prefix}%",),
+                sql = backend.translate_placeholder(
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM messages WHERE timestamp LIKE ?"
                 )
+                cursor.execute(sql, (f"{prefix}%",))
             else:
                 cursor.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM messages")
             result = cursor.fetchone()
@@ -149,14 +151,15 @@ class BudgetGuard:
     @staticmethod
     def _get_session_caps(session_id: str) -> Optional[dict]:
         """Read per-session budget caps from session_metadata."""
-        from backend.database import _get_conn
+        from backend.database import _get_backend
         try:
-            with _get_conn() as conn:
+            backend = _get_backend()
+            with backend.connect() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT daily_budget_usd, monthly_budget_usd FROM session_metadata WHERE session_id = ?",
-                    (session_id,),
+                sql = backend.translate_placeholder(
+                    "SELECT daily_budget_usd, monthly_budget_usd FROM session_metadata WHERE session_id = ?"
                 )
+                cursor.execute(sql, (session_id,))
                 row = cursor.fetchone()
                 if row:
                     return {
@@ -170,11 +173,15 @@ class BudgetGuard:
     @staticmethod
     def _get_global_cap(key: str) -> Optional[float]:
         """Read a global cap from app_settings KV store."""
-        from backend.database import _get_conn
+        from backend.database import _get_backend
         try:
-            with _get_conn() as conn:
+            backend = _get_backend()
+            with backend.connect() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+                sql = backend.translate_placeholder(
+                    "SELECT value FROM app_settings WHERE key = ?"
+                )
+                cursor.execute(sql, (key,))
                 row = cursor.fetchone()
                 if row:
                     val = float(row[0])
@@ -210,31 +217,26 @@ class ApprovalQueue:
         Create a new approval request row. Returns the request ID.
         Agents should persist this ID and poll with ``is_approved(request_id)``.
         """
-        from backend.database import _get_conn
+        from backend.database import _lastrowid
         now = datetime.now(timezone.utc).isoformat()
-        with _get_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO approval_requests (agent_id, action_name, payload, description, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    agent_id,
-                    action_name,
-                    json.dumps(payload, ensure_ascii=False),
-                    description,
-                    ApprovalQueue.STATUS_PENDING,
-                    now,
-                ),
-            )
-            conn.commit()
-            request_id = cursor.lastrowid
-            logger.info(
-                f"[ApprovalQueue] New request #{request_id}: agent={agent_id} "
-                f"action={action_name}"
-            )
-            return request_id
+        sql = """
+            INSERT INTO approval_requests (agent_id, action_name, payload, description, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            agent_id,
+            action_name,
+            json.dumps(payload, ensure_ascii=False),
+            description,
+            ApprovalQueue.STATUS_PENDING,
+            now,
+        )
+        request_id = _lastrowid(sql, params)
+        logger.info(
+            f"[ApprovalQueue] New request #{request_id}: agent={agent_id} "
+            f"action={action_name}"
+        )
+        return request_id or 0
 
     @staticmethod
     def resolve(request_id: int, decision: str, resolver_note: str = "") -> bool:
@@ -244,31 +246,27 @@ class ApprovalQueue:
         """
         if decision not in (ApprovalQueue.STATUS_APPROVED, ApprovalQueue.STATUS_REJECTED):
             raise ValueError(f"Invalid decision '{decision}'. Must be APPROVED or REJECTED.")
-        from backend.database import _get_conn
+        from backend.database import _rowcount
         now = datetime.now(timezone.utc).isoformat()
-        with _get_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE approval_requests SET status = ?, resolver_note = ?, resolved_at = ? WHERE id = ?",
-                (decision, resolver_note, now, request_id),
-            )
-            conn.commit()
-            changed = cursor.rowcount > 0
-            if changed:
-                logger.info(f"[ApprovalQueue] Request #{request_id} → {decision}")
-            return changed
+        sql = "UPDATE approval_requests SET status = ?, resolver_note = ?, resolved_at = ? WHERE id = ?"
+        params = (decision, resolver_note, now, request_id)
+        changed = _rowcount(sql, params) > 0
+        if changed:
+            logger.info(f"[ApprovalQueue] Request #{request_id} → {decision}")
+        return changed
 
     @staticmethod
     def get_pending() -> list[dict]:
         """Return all PENDING approval requests, newest first."""
-        from backend.database import _get_conn
-        with _get_conn() as conn:
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute(
+            sql = backend.translate_placeholder(
                 "SELECT id, agent_id, action_name, payload, description, status, created_at "
-                "FROM approval_requests WHERE status = ? ORDER BY id DESC",
-                (ApprovalQueue.STATUS_PENDING,),
+                "FROM approval_requests WHERE status = ? ORDER BY id DESC"
             )
+            cursor.execute(sql, (ApprovalQueue.STATUS_PENDING,))
             cols = ["id", "agent_id", "action_name", "payload", "description", "status", "created_at"]
             rows = cursor.fetchall()
         return [dict(zip(cols, row)) for row in rows]
@@ -276,14 +274,15 @@ class ApprovalQueue:
     @staticmethod
     def get_all(limit: int = 50) -> list[dict]:
         """Return all approval requests (any status), newest first."""
-        from backend.database import _get_conn
-        with _get_conn() as conn:
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute(
+            sql = backend.translate_placeholder(
                 "SELECT id, agent_id, action_name, payload, description, status, created_at, resolved_at, resolver_note "
-                "FROM approval_requests ORDER BY id DESC LIMIT ?",
-                (limit,),
+                "FROM approval_requests ORDER BY id DESC LIMIT ?"
             )
+            cursor.execute(sql, (limit,))
             cols = ["id", "agent_id", "action_name", "payload", "description", "status",
                     "created_at", "resolved_at", "resolver_note"]
             rows = cursor.fetchall()
@@ -292,22 +291,27 @@ class ApprovalQueue:
     @staticmethod
     def get_status(request_id: int) -> Optional[str]:
         """Return the status string of a request, or None if not found."""
-        from backend.database import _get_conn
-        with _get_conn() as conn:
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT status FROM approval_requests WHERE id = ?", (request_id,))
+            sql = backend.translate_placeholder(
+                "SELECT status FROM approval_requests WHERE id = ?"
+            )
+            cursor.execute(sql, (request_id,))
             row = cursor.fetchone()
         return row[0] if row else None
 
     @staticmethod
     def count_pending() -> int:
         """Return count of PENDING approval requests (for badge display)."""
-        from backend.database import _get_conn
-        with _get_conn() as conn:
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM approval_requests WHERE status = ?",
-                (ApprovalQueue.STATUS_PENDING,),
+            sql = backend.translate_placeholder(
+                "SELECT COUNT(*) FROM approval_requests WHERE status = ?"
             )
+            cursor.execute(sql, (ApprovalQueue.STATUS_PENDING,))
             row = cursor.fetchone()
         return row[0] if row else 0

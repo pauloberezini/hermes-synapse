@@ -722,7 +722,12 @@ export function ChatTab({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff' }}>
-                        {activeSessionObj?.title || getSessionLabel(currentChatId)}
+                        {(() => {
+                          const title = activeSessionObj?.title || getSessionLabel(currentChatId);
+                          if (title && !title.startsWith('task_')) return title;
+                          const resolved = getSessionLabel(currentChatId);
+                          return (resolved && !resolved.startsWith('task_')) ? resolved : 'Scheduled Task';
+                        })()}
                       </span>
                       <span style={{
                         fontSize: '0.62rem',
