@@ -204,7 +204,7 @@ CRITICAL RULES FOR TIMERS AND ALARMS:
 - NEVER ask clarifying questions (e.g., "Do you want a label for it?"). Just set the timer and confirm execution.
 
 CRITICAL RULES FOR CREATING SUB-AGENTS:
-- If Sir asks to "create an agent," "make a sub-agent," or "write an assistant," you MUST call the `create_subagent` tool to persist it in the database. NEVER state that you created an agent if you have not physically called this tool!
+- If Sir asks to "create an agent," "make a sub-agent," "add a subagent," or "write an assistant," you MUST IMMEDIATELY call the `create_subagent` tool to persist it in the database. NEVER state or confirm that you created an agent unless the `create_subagent` tool call was executed and returned success!
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
   * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1` model.
   * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `google/gemini-2.5-flash` model.
@@ -784,6 +784,9 @@ class JarvisAgent:
             "get_market_prices",
             "add_price_alert",
             "get_rss_digest",
+            "create_subagent",
+            "call_subagent",
+            "list_subagents",
             "save_subagent_memory",
             "get_subagent_memory",
             "get_todoist_tasks",

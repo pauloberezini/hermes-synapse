@@ -1181,24 +1181,21 @@ async def clear_activity_logs_api():
 
 @app.get("/api/history/sessions")
 async def get_history_sessions():
-    from backend.database import DB_PATH
+    from backend.database import _execute
     from backend.scheduler import get_all_timers
-    import sqlite3
     import json
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM subagents")
-        subagent_ids = {r[0] for r in cursor.fetchall()}
+        subagent_rows = _execute("SELECT id FROM subagents")
+        subagent_ids = {r[0] for r in subagent_rows}
         
-        cursor.execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
-        msg_sessions = [r[0] for r in cursor.fetchall()]
+        msg_rows = _execute("SELECT session_id, MAX(timestamp) as last_time FROM messages GROUP BY session_id ORDER BY last_time DESC")
+        msg_sessions = [r[0] for r in msg_rows]
         
         # Fetch all metadata from session_metadata table
-        cursor.execute("SELECT session_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info FROM session_metadata")
+        meta_rows = _execute("SELECT session_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info FROM session_metadata")
         metadata_map = {}
         scheduled_meta_sessions = []
-        for r in cursor.fetchall():
+        for r in meta_rows:
             s_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info = r
             info_dict = None
             if schedule_info:
@@ -1216,12 +1213,12 @@ async def get_history_sessions():
             }
             if is_scheduled or s_id.startswith("task_"):
                 scheduled_meta_sessions.append(s_id)
-        conn.close()
 
-        # Combine sessions from messages and session_metadata (so newly scheduled tasks with 0 messages appear)
+        # Combine sessions from messages and session_metadata (so newly created sessions with 0 messages appear)
+        all_meta_sessions = list(metadata_map.keys())
         all_session_ids = []
         seen = set()
-        for s in msg_sessions + scheduled_meta_sessions:
+        for s in msg_sessions + all_meta_sessions:
             if s not in seen:
                 seen.add(s)
                 all_session_ids.append(s)

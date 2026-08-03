@@ -285,8 +285,12 @@ async def init_bot() -> Application:
     # Initialize and start updater loop
     await telegram_app.initialize()
     await telegram_app.start()
-    await telegram_app.updater.start_polling()
-    logger.info("Telegram Bot active and polling.")
+    try:
+        await telegram_app.bot.delete_webhook(drop_pending_updates=True)
+        await telegram_app.updater.start_polling(drop_pending_updates=True)
+        logger.info("Telegram Bot active and polling.")
+    except Exception as e:
+        logger.warning(f"Telegram Bot polling startup warning (possible duplicate instance or conflict): {e}")
     return telegram_app
 
 async def shutdown_bot():
