@@ -1053,7 +1053,7 @@ def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
         if role == "assistant" and (not content or not content.strip()):
-            content = "Сэр, операция по вашему запросу выполнена успешно."
+            content = "Sir, the operation requested has been completed successfully."
         if not timestamp:
             timestamp = datetime.now(timezone.utc).isoformat()
         return _lastrowid(

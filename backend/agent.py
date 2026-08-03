@@ -557,11 +557,11 @@ class JarvisAgent:
                             if errors:
                                 error_text = ", ".join(errors)
                                 fallback_prompt = (
-                                    f"При выполнении действий произошли ошибки: {error_text}. "
-                                    f"Пожалуйста, сообщите об этом Сэру в вежливом и лаконичном стиле Джарвиса, объяснив причину неудачи."
+                                    f"An error occurred during tool execution: {error_text}. "
+                                    f"Please inform Sir concisely in your signature Jarvis voice explaining the issue."
                                 )
                             else:
-                                fallback_prompt = "Пожалуйста, подтвердите Сэру кратким отчетом в своем фирменном стиле Джарвиса, что действия успешно завершены."
+                                fallback_prompt = "Please confirm to Sir with a concise report in your signature Jarvis voice that actions completed successfully."
                                 
                             messages.append({
                                 "role": "user",
@@ -586,13 +586,13 @@ class JarvisAgent:
                                     response_text = fallback_data["choices"][0]["message"].get("content") or ""
                                     total_completion_tokens += fallback_data.get("usage", {}).get("completion_tokens", 0)
                                 else:
-                                    response_text = "Сэр, операция по вашему запросу выполнена успешно."
+                                    response_text = "Sir, the operation requested has been completed successfully."
                             except Exception as fallback_err:
                                 logger.error(f"Error during verbal confirmation fallback: {fallback_err}")
-                                response_text = "Сэр, операция по вашему запросу выполнена успешно."
+                                response_text = "Sir, the operation requested has been completed successfully."
 
                         if not response_text or not response_text.strip():
-                            response_text = "Сэр, операция по вашему запросу выполнена успешно."
+                            response_text = "Sir, the operation requested has been completed successfully."
                         
                         # Calculate cost
                         cost_usd = calculate_cost(self.model, total_prompt_tokens, total_completion_tokens)
