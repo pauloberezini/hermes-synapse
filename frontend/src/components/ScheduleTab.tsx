@@ -28,6 +28,7 @@ interface ScheduleTabProps {
   handleCancelTimer: (id: string) => void;
   fetchWithAuth?: (url: string, options?: RequestInit) => Promise<Response>;
   onOpenChat?: (sessionId: string) => void;
+  onTaskUpdated?: () => void;
 }
 
 function formatCreatedDate(dateStr?: string) {
@@ -49,6 +50,7 @@ export function ScheduleTab({
   handleCancelTimer,
   fetchWithAuth,
   onOpenChat,
+  onTaskUpdated,
 }: ScheduleTabProps) {
   // Create Form State
   const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
@@ -113,6 +115,7 @@ export function ScheduleTab({
         if (data.status === 'success') {
           setTaskLabel('');
           setTaskPrompt('');
+          onTaskUpdated?.();
           if (onOpenChat && data.id) {
             onOpenChat(`task_${data.id}`);
           }
@@ -166,6 +169,7 @@ export function ScheduleTab({
         setEditSaving(false);
         if (data.status === 'success') {
           setEditTimer(null);
+          onTaskUpdated?.();
         } else {
           alert("Error updating task: " + (data.error || "Failed to save changes"));
         }
@@ -187,6 +191,7 @@ export function ScheduleTab({
         if (data.status === 'triggered') {
           setRunMessage("⚡ Task triggered successfully! Agent is executing instructions...");
           setTimeout(() => setRunMessage(null), 4000);
+          onTaskUpdated?.();
           if (onOpenChat) {
             onOpenChat(`task_${timerId}`);
           }
@@ -208,7 +213,9 @@ export function ScheduleTab({
     })
       .then(res => res.json())
       .then(data => {
-        if (data.status !== 'paused' && data.status !== 'resumed') {
+        if (data.status === 'paused' || data.status === 'resumed') {
+          onTaskUpdated?.();
+        } else {
           alert("Error: " + (data.error || "Failed to toggle pause/resume"));
         }
       })
@@ -224,7 +231,9 @@ export function ScheduleTab({
     })
       .then(res => res.json())
       .then(data => {
-        if (data.status !== 'restarted') {
+        if (data.status === 'restarted') {
+          onTaskUpdated?.();
+        } else {
           alert("Error: " + (data.error || "Failed to restart task"));
         }
       })

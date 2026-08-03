@@ -537,10 +537,10 @@ class JarvisAgent:
                         # Final text response reached
                         response_text = choice_msg.get("content") or ""
                         
-                        # Fallback: if Gemini returned empty text content after executing tools,
-                        # request a verbal confirmation so the user is never left with an empty bubble
-                        if not response_text.strip() and tool_executed:
-                            logger.info("Jarvis returned empty response content after tool execution. Requesting final verbal confirmation...")
+                        # Fallback: if LLM returned empty text content,
+                        # request a verbal confirmation or provide fallback so user is never left with an empty bubble
+                        if not response_text.strip():
+                            logger.info("Jarvis returned empty response content. Requesting final verbal confirmation...")
                             
                             # Check if any tool returned an error
                             errors = []
@@ -590,6 +590,9 @@ class JarvisAgent:
                             except Exception as fallback_err:
                                 logger.error(f"Error during verbal confirmation fallback: {fallback_err}")
                                 response_text = "Сэр, операция по вашему запросу выполнена успешно."
+
+                        if not response_text or not response_text.strip():
+                            response_text = "Сэр, операция по вашему запросу выполнена успешно."
                         
                         # Calculate cost
                         cost_usd = calculate_cost(self.model, total_prompt_tokens, total_completion_tokens)

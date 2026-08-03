@@ -124,9 +124,18 @@ class PostgresBackend(DatabaseBackend):
             from sqlalchemy import create_engine  # noqa: F401
         except ImportError as e:
             raise ImportError(
-                "PostgreSQL backend requires SQLAlchemy and psycopg2.\n"
-                "Install with: uv add sqlalchemy psycopg2-binary"
+                "PostgreSQL backend requires SQLAlchemy and psycopg.\n"
+                "Install with: pip install sqlalchemy psycopg[binary]"
             ) from e
+
+        # Prefer psycopg v3 if installed, else fallback to psycopg2
+        if url.startswith("postgresql://") or url.startswith("postgres://"):
+            try:
+                import psycopg  # noqa: F401
+                url = url.replace("postgresql://", "postgresql+psycopg://", 1).replace("postgres://", "postgresql+psycopg://", 1)
+            except ImportError:
+                pass
+
         self._engine = create_engine(url, pool_pre_ping=True)
 
     @contextmanager
@@ -787,6 +796,39 @@ def _init_postgres_schema():
             )
         """)
 
+        # PostgreSQL Migration helper: verify and add session_metadata columns
+        for col, definition in [
+            ("agent_id", "TEXT"),
+            ("is_scheduled", "INTEGER DEFAULT 0"),
+            ("job_id", "TEXT"),
+            ("schedule_type", "TEXT"),
+            ("schedule_info", "TEXT"),
+            ("daily_budget_usd", "REAL"),
+            ("monthly_budget_usd", "REAL"),
+        ]:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='session_metadata' AND column_name=%s",
+                (col,)
+            )
+            if not cursor.fetchone():
+                cursor.execute(f"ALTER TABLE session_metadata ADD COLUMN {col} {definition}")
+                logger.info(f"PostgreSQL Migration: added column {col} to session_metadata table.")
+
+        # Create approval requests table (Paperclip Governance Approval Queue)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                id SERIAL PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                action_name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'PENDING',
+                created_at TEXT NOT NULL,
+                resolved_at TEXT,
+                resolver_note TEXT
+            )
+        """)
+
         # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
@@ -803,7 +845,104 @@ def _init_postgres_schema():
         """)
 
         conn.commit()
+        _auto_migrate_sqlite_to_postgres(conn)
     logger.info("PostgreSQL Database initialized successfully.")
+
+
+def _auto_migrate_sqlite_to_postgres(pg_conn):
+    """Automatically migrates all data from local SQLite database (hermes.db) into PostgreSQL."""
+    if not os.path.exists(DB_PATH):
+        return
+
+    try:
+        sq_conn = sqlite3.connect(DB_PATH)
+        sq_cur = sq_conn.cursor()
+        pg_cur = pg_conn.cursor()
+
+        # Check if SQLite database has tables
+        sq_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        sq_tables = {row[0] for row in sq_cur.fetchall()}
+        if not sq_tables:
+            sq_conn.close()
+            return
+
+        logger.info(f"Starting automatic data migration from SQLite ({DB_PATH}) to PostgreSQL...")
+
+        tables_to_migrate = [
+            ("app_settings", ["key", "value"], ["key"]),
+            ("subagents", ["id", "name", "system_prompt", "model", "created_at", "agent_type", "parent_id", "skills", "x", "y", "temperature"], ["id"]),
+            ("subagent_memory", ["subagent_id", "key", "value", "updated_at"], ["subagent_id", "key"]),
+            ("session_metadata", ["session_id", "title", "created_at", "updated_at", "agent_id", "is_scheduled", "job_id", "schedule_type", "schedule_info", "daily_budget_usd", "monthly_budget_usd"], ["session_id"]),
+            ("messages", ["id", "session_id", "role", "content", "timestamp", "cost_usd"], ["id"]),
+            ("decision_logs", ["id", "timestamp", "session_id", "model", "latency_ms", "success", "error", "prompt_tokens_estimate", "user_message", "assistant_response", "traces", "agent_id", "completion_tokens_estimate", "cost_usd"], ["id"]),
+            ("graph_nodes", ["id", "name", "type", "description", "doc_id"], ["id"]),
+            ("graph_edges", ["source", "target", "description", "weight", "doc_id"], ["source", "target", "doc_id"]),
+            ("activity_logs", ["id", "timestamp", "type", "source", "message", "token_cost"], ["id"]),
+            ("distilled_skills", ["id", "created_at", "decision_log_id", "session_id", "skill_name", "title", "file_path", "trigger_conditions", "content"], ["id"]),
+            ("agent_events", ["id", "agent_id", "timestamp", "event_type", "message", "status", "task", "metadata"], ["id"]),
+            ("approval_requests", ["id", "agent_id", "action_name", "payload", "description", "status", "created_at", "resolved_at", "resolver_note"], ["id"]),
+            ("tasks", ["id", "title", "description", "status", "assigned_agent_id", "checkout_lock_until", "checkpoint_data", "created_at", "updated_at"], ["id"]),
+        ]
+
+        total_migrated_rows = 0
+        for table_name, _, primary_keys in tables_to_migrate:
+            if table_name not in sq_tables:
+                continue
+
+            # Get PostgreSQL column names for this table
+            pg_cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name=%s ORDER BY ordinal_position",
+                (table_name,)
+            )
+            pg_cols = [row[0] for row in pg_cur.fetchall()]
+
+            # Get SQLite column names for this table
+            sq_cur.execute(f"PRAGMA table_info({table_name})")
+            sq_cols = {row[1] for row in sq_cur.fetchall()}
+
+            # Match common columns in exact PostgreSQL order
+            common_cols = [c for c in pg_cols if c in sq_cols]
+            if not common_cols:
+                continue
+
+            col_str = ", ".join(common_cols)
+            placeholders = ", ".join(["%s"] * len(common_cols))
+            conflict_target = ", ".join(primary_keys)
+
+            sq_cur.execute(f"SELECT {col_str} FROM {table_name}")
+            rows = sq_cur.fetchall()
+            if not rows:
+                continue
+
+            clean_rows = []
+            for row in rows:
+                clean_row = []
+                for col_name, val in zip(common_cols, row):
+                    if isinstance(val, str):
+                        val = val.replace('\x00', '')
+                        if col_name in ("decision_log_id", "agent_id", "daily_budget_usd") and not val.isdigit() and val != "":
+                            val = None
+                    clean_row.append(val)
+                clean_rows.append(tuple(clean_row))
+
+            sql = f"INSERT INTO {table_name} ({col_str}) VALUES ({placeholders}) ON CONFLICT ({conflict_target}) DO NOTHING"
+            pg_cur.executemany(sql, clean_rows)
+            total_migrated_rows += len(clean_rows)
+            logger.info(f"Migrated {len(clean_rows)} rows for table '{table_name}' to PostgreSQL.")
+
+        # Update sequences for SERIAL primary key tables
+        serial_tables = ["messages", "decision_logs", "activity_logs", "distilled_skills", "agent_events", "approval_requests", "tasks"]
+        for table in serial_tables:
+            try:
+                pg_cur.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1))")
+            except Exception as seq_err:
+                logger.debug(f"Could not reset sequence for {table}: {seq_err}")
+
+        pg_conn.commit()
+        sq_conn.close()
+        logger.info(f"SQLite to PostgreSQL migration complete. Total rows processed: {total_migrated_rows}.")
+    except Exception as e:
+        logger.error(f"Error during SQLite to PostgreSQL migration: {e}")
 
 
 def _get_default_agents(default_model: str) -> list:
@@ -913,6 +1052,8 @@ def _get_default_agents_migrations() -> list:
 def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0, timestamp: Optional[str] = None) -> Optional[int]:
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
+        if role == "assistant" and (not content or not content.strip()):
+            content = "Сэр, операция по вашему запросу выполнена успешно."
         if not timestamp:
             timestamp = datetime.now(timezone.utc).isoformat()
         return _lastrowid(
