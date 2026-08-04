@@ -24,6 +24,11 @@ class TestGovernanceModule(unittest.TestCase):
         db.init_db()
 
     def tearDown(self):
+        try:
+            db._execute("DELETE FROM session_metadata WHERE session_id LIKE 'test_session_%'")
+            db._execute("DELETE FROM messages WHERE session_id LIKE 'test_session_%'")
+        except Exception:
+            pass
         shutil.rmtree(self.test_dir, ignore_errors=True)
         db.DB_PATH = self.orig_db_path
         db.DB_DIR = self.orig_db_dir
@@ -32,12 +37,11 @@ class TestGovernanceModule(unittest.TestCase):
     def test_budget_guard_under_limit(self):
         """Verify BudgetGuard allows execution when spend is below cap."""
         session_id = "test_session_1"
-        with db._get_conn() as conn:
-            conn.cursor().execute(
-                "INSERT INTO session_metadata (session_id, title, daily_budget_usd) VALUES (?, ?, ?)",
-                (session_id, "Test Session", 5.0),
-            )
-            conn.commit()
+        db._execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
+        db._execute(
+            "INSERT OR REPLACE INTO session_metadata (session_id, title, daily_budget_usd) VALUES (?, ?, ?)",
+            (session_id, "Test Session", 5.0),
+        )
 
         # Checking estimated $0.05 spend should pass without raising
         BudgetGuard.check(session_id, estimated_cost_usd=0.05)
@@ -45,16 +49,16 @@ class TestGovernanceModule(unittest.TestCase):
     def test_budget_guard_exceeded(self):
         """Verify BudgetGuard raises BudgetExceededError when cap is hit."""
         session_id = "test_session_2"
-        with db._get_conn() as conn:
-            conn.cursor().execute(
-                "INSERT INTO session_metadata (session_id, title, daily_budget_usd) VALUES (?, ?, ?)",
-                (session_id, "Test Session", 0.10),
-            )
-            conn.cursor().execute(
-                "INSERT INTO messages (session_id, role, content, cost_usd) VALUES (?, ?, ?, ?)",
-                (session_id, "assistant", "Spent message", 0.09),
-            )
-            conn.commit()
+        db._execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
+        db._execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        db._execute(
+            "INSERT OR REPLACE INTO session_metadata (session_id, title, daily_budget_usd) VALUES (?, ?, ?)",
+            (session_id, "Test Session", 0.10),
+        )
+        db._execute(
+            "INSERT INTO messages (session_id, role, content, cost_usd) VALUES (?, ?, ?, ?)",
+            (session_id, "assistant", "Spent message", 0.09),
+        )
 
         with self.assertRaises(BudgetExceededError):
             BudgetGuard.check(session_id, estimated_cost_usd=0.02)

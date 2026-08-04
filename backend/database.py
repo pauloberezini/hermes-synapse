@@ -152,7 +152,30 @@ class PostgresBackend(DatabaseBackend):
             raw_conn.close()
 
     def translate_placeholder(self, sql: str) -> str:
-        return sql.replace("?", "%s")
+        s = sql.replace("?", "%s")
+        if "INSERT OR REPLACE INTO subagent_memory" in s:
+            s = s.replace("INSERT OR REPLACE INTO subagent_memory", "INSERT INTO subagent_memory")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (subagent_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
+        elif "INSERT OR REPLACE INTO distilled_skills" in s:
+            s = s.replace("INSERT OR REPLACE INTO distilled_skills", "INSERT INTO distilled_skills")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (skill_name) DO UPDATE SET title = EXCLUDED.title, file_path = EXCLUDED.file_path, trigger_conditions = EXCLUDED.trigger_conditions, content = EXCLUDED.content"
+        elif "INSERT OR REPLACE INTO app_settings" in s:
+            s = s.replace("INSERT OR REPLACE INTO app_settings", "INSERT INTO app_settings")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+        elif "INSERT OR REPLACE INTO subagents" in s:
+            s = s.replace("INSERT OR REPLACE INTO subagents", "INSERT INTO subagents")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, system_prompt = EXCLUDED.system_prompt, tools = EXCLUDED.tools, category = EXCLUDED.category, updated_at = EXCLUDED.updated_at"
+        elif "INSERT OR REPLACE INTO session_metadata" in s:
+            s = s.replace("INSERT OR REPLACE INTO session_metadata", "INSERT INTO session_metadata")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (session_id) DO UPDATE SET title = EXCLUDED.title, agent_id = EXCLUDED.agent_id, is_scheduled = EXCLUDED.is_scheduled, job_id = EXCLUDED.job_id, schedule_type = EXCLUDED.schedule_type, schedule_info = EXCLUDED.schedule_info"
+        elif "INSERT OR REPLACE INTO" in s:
+            s = s.replace("INSERT OR REPLACE INTO", "INSERT INTO")
+        return s
 
     def init_schema(self) -> None:
         _init_postgres_schema()
@@ -259,7 +282,17 @@ def _rowcount(sql: str, params: tuple = ()) -> int:
 
 def init_db():
     """Initializes the database and creates the tables if they don't exist."""
-    _get_backend().init_schema()
+    global _backend
+    _backend = None
+    b = _get_backend()
+    b.init_schema()
+    if isinstance(b, SQLiteBackend):
+        _init_sqlite_schema()
+    else:
+        try:
+            _init_sqlite_schema()
+        except Exception:
+            pass
 
 
 def _init_sqlite_schema():

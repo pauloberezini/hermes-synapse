@@ -1594,3 +1594,215 @@ main.vexa-main {
   box-shadow: 0 0 8px var(--accent-cyan);
   animation: pulse-glow 2s infinite ease-in-out;
 }
+
+/* ===================================================================
+   CYBERPUNK AUTH & SYNAPSE BRANDING STYLES
+   =================================================================== */
+
+.cyber-auth-container {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #020617;
+  background-image: 
+    radial-gradient(circle at 50% 30%, rgba(0, 240, 255, 0.12) 0%, transparent 60%),
+    radial-gradient(circle at 80% 80%, rgba(255, 0, 127, 0.1) 0%, transparent 50%),
+    linear-gradient(rgba(0, 240, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px;
+  position: relative;
+  overflow: hidden;
+  padding: 20px;
+  box-sizing: border-box;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.cyber-grid-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 50%, rgba(0, 240, 255, 0.03) 50%);
+  background-size: 100% 4px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.cyber-auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: rgba(10, 15, 30, 0.85);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  box-shadow: 
+    0 0 30px rgba(0, 240, 255, 0.25),
+    inset 0 0 20px rgba(0, 240, 255, 0.08);
+  clip-path: polygon(
+    0 18px, 
+    18px 0, 
+    calc(100% - 18px) 0, 
+    100% 18px, 
+    100% calc(100% - 18px), 
+    calc(100% - 18px) 100%, 
+    18px 100%, 
+    0 calc(100% - 18px)
+  );
+  padding: 40px 32px;
+  position: relative;
+  z-index: 2;
+  backdrop-filter: blur(16px);
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.cyber-auth-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(255, 0, 127, 0.3);
+  pointer-events: none;
+  clip-path: polygon(
+    0 0, 25px 0, 25px 2px, 2px 2px, 2px 25px, 0 25px,
+    calc(100% - 25px) 0, 100% 0, 100% 25px, calc(100% - 2px) 25px, calc(100% - 2px) 2px, calc(100% - 25px) 2px,
+    100% calc(100% - 25px), 100% 100%, calc(100% - 25px) 100%, calc(100% - 25px) calc(100% - 2px), calc(100% - 2px) calc(100% - 2px), calc(100% - 2px) calc(100% - 25px),
+    0 calc(100% - 25px), 0 100%, 25px 100%, 25px calc(100% - 2px), 2px calc(100% - 2px), 2px calc(100% - 25px)
+  );
+}
+
+.cyber-hud-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: monospace;
+  font-size: 0.7rem;
+  letter-spacing: 1.5px;
+  color: #00f0ff;
+  margin-bottom: 24px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.15);
+  padding-bottom: 10px;
+}
+
+.cyber-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ff007f;
+  text-shadow: 0 0 8px rgba(255, 0, 127, 0.6);
+}
+
+.cyber-title {
+  font-size: 2.8rem;
+  font-weight: 900;
+  letter-spacing: 4px;
+  margin: 0;
+  color: #fff;
+  text-transform: uppercase;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  text-shadow: 
+    0 0 10px #00f0ff, 
+    0 0 20px #00f0ff, 
+    0 0 40px rgba(0, 240, 255, 0.6),
+    0 0 60px rgba(255, 0, 127, 0.4);
+  animation: cyber-title-glow 3s infinite alternate;
+}
+
+@keyframes cyber-title-glow {
+  0% {
+    text-shadow: 0 0 10px #00f0ff, 0 0 20px #00f0ff, 0 0 40px rgba(0, 240, 255, 0.6);
+  }
+  100% {
+    text-shadow: 0 0 12px #00f0ff, 0 0 30px #00f0ff, 0 0 50px #ff007f, 0 0 70px #ff007f;
+  }
+}
+
+.cyber-subtitle {
+  color: #00f0ff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  margin: 6px 0 24px;
+  font-family: monospace;
+  opacity: 0.9;
+}
+
+.cyber-description {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-bottom: 28px;
+  border-left: 2px solid #00f0ff;
+  padding-left: 12px;
+  text-align: left;
+  background: rgba(0, 240, 255, 0.03);
+  padding: 10px 12px;
+  border-radius: 0 6px 6px 0;
+}
+
+.cyber-btn {
+  width: 100%;
+  padding: 16px;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.15), rgba(255, 0, 127, 0.15));
+  border: 1.5px solid #00f0ff;
+  color: #00f0ff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  transition: all 0.25s ease;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.cyber-btn:hover {
+  background: #00f0ff;
+  color: #020617;
+  box-shadow: 0 0 25px rgba(0, 240, 255, 0.7);
+  transform: translateY(-1px);
+}
+
+.cyber-input-otp {
+  width: 100%;
+  padding: 16px;
+  background: rgba(3, 7, 18, 0.9);
+  border: 1.5px solid rgba(0, 240, 255, 0.4);
+  border-radius: 8px;
+  color: #00f0ff;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 14px;
+  text-align: center;
+  font-family: monospace;
+  outline: none;
+  box-shadow: inset 0 0 12px rgba(0, 240, 255, 0.2);
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.cyber-input-otp:focus {
+  border-color: #00f0ff;
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.5), inset 0 0 15px rgba(0, 240, 255, 0.3);
+}
+
+.cyber-hud-footer {
+  margin-top: 24px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: #64748b;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 12px;
+}

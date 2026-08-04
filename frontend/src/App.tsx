@@ -20,7 +20,8 @@ import {
   BarChart3,
   Building2,
   LogOut,
-  Kanban
+  Kanban,
+  ShieldCheck
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -78,10 +79,25 @@ const langToLocale: Record<string, string> = {
 };
 
 export default function App() {
+  const [isOfficeEnabled, setIsOfficeEnabled] = useState<boolean>(() => {
+    const saved = getSafeStorageItem('jarvis_pixel_office_enabled');
+    return saved !== null ? saved === 'true' : false;
+  });
+
   const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'tasks' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
     const saved = getSafeStorageItem('jarvis_active_tab');
+    const officeEnabled = getSafeStorageItem('jarvis_pixel_office_enabled') === 'true';
+    if (saved === 'office' && !officeEnabled) return 'chat';
     return (saved as any) || 'chat';
   });
+
+  const handleToggleOfficeEnabled = (enabled: boolean) => {
+    setIsOfficeEnabled(enabled);
+    setSafeStorageItem('jarvis_pixel_office_enabled', String(enabled));
+    if (!enabled && activeTab === 'office') {
+      setActiveTab('chat');
+    }
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return getSafeStorageItem('jarvis_sidebar_collapsed') === 'true';
@@ -95,7 +111,7 @@ export default function App() {
   const [authStatus, setAuthStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'error' | 'success'>('idle');
   const [authError, setAuthError] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: 'Greetings, Sir. Connection to the Hermes network is complete. Awaiting your instructions.' }
+    { role: 'assistant', content: 'Greetings, Sir. Connection to the Synapse network is complete. Awaiting your instructions.' }
   ]);
   const [logs, setLogs] = useState<DecisionLog[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
@@ -900,7 +916,7 @@ export default function App() {
           setMessages(data);
         } else {
           if (chatId === 'dashboard') {
-            setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Hermes network is complete. Awaiting your instructions.' }]);
+            setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Synapse network is complete. Awaiting your instructions.' }]);
           } else {
             const agent = listToSearch.find((a: any) => a.id === chatId);
             if (chatId.startsWith('chat_')) {
@@ -1375,7 +1391,7 @@ export default function App() {
       if (res.ok) {
         fetchChatSessions();
         if (currentChatId === 'dashboard') {
-          setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Hermes network is complete. Awaiting your instructions.' }]);
+          setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Synapse network is complete. Awaiting your instructions.' }]);
         } else {
           const agent = subagents.find((a: any) => a.id === currentChatId);
           setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || currentChatId}" cleared, Sir. Ready for work.` }]);
@@ -1415,69 +1431,48 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        width: '100vw',
-        background: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)',
-        color: '#e2e8f0',
-        fontFamily: 'Inter, sans-serif',
-        padding: '20px',
-        boxSizing: 'border-box'
-      }} className="scanlines">
-        <div style={{
-          width: '100%',
-          maxWidth: '400px',
-          padding: '40px 30px',
-          borderRadius: '16px',
-          boxShadow: '0 0 40px rgba(6, 182, 212, 0.15)',
-          border: '1px solid rgba(6, 182, 212, 0.2)',
-          textAlign: 'center'
-        }} className="glass-panel">
+      <div className="cyber-auth-container">
+        <div className="cyber-grid-overlay" />
+        <div className="cyber-auth-card">
+          {/* Top Cyber HUD Header */}
+          <div className="cyber-hud-header">
+            <span>[ SYSTEM // SYNAPSE ]</span>
+            <div className="cyber-status-badge">
+              <span className="pulse-dot" style={{ width: 6, height: 6, background: '#ff007f', boxShadow: '0 0 8px #ff007f' }} />
+              <span>SEC_LEVEL: ALPHA</span>
+            </div>
+          </div>
           
-          <div style={{ marginBottom: '30px' }}>
-            <div className="pulse-dot" style={{ width: 16, height: 16, margin: '0 auto 12px' }} />
-            <h1 className="glow-text-cyan" style={{ fontSize: '2.5rem', fontWeight: 800, letterSpacing: '2px', margin: 0 }}>HERMES</h1>
-            <p style={{ color: '#06b6d4', fontSize: '0.9rem', letterSpacing: '4px', margin: '4px 0 0', textTransform: 'uppercase' }}>Secure Access Link</p>
+          <div style={{ marginBottom: '24px' }}>
+            <h1 className="cyber-title">SYNAPSE</h1>
+            <div className="cyber-subtitle">Secure Access Link // Protocol v2.5</div>
           </div>
 
-          <p style={{ color: '#94a3b8', fontSize: '0.95rem', lineHeight: '1.6', marginBottom: '30px' }}>
+          <div className="cyber-description">
             Sir, identity confirmation is required to access the management console.
-          </p>
+          </div>
 
           {authStatus === 'idle' && (
             <button
               onClick={handleRequestOtp}
-              style={{
-                width: '100%',
-                padding: '14px',
-                borderRadius: '8px',
-                border: '1px solid #06b6d4',
-                background: 'rgba(6, 182, 212, 0.1)',
-                color: '#06b6d4',
-                fontWeight: 600,
-                fontSize: '1rem',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-              }}
-              className="glow-btn-cyan"
+              className="cyber-btn"
             >
+              <ShieldCheck size={18} />
               Request code in Telegram
             </button>
           )}
 
           {authStatus === 'sending' && (
-            <p style={{ color: '#06b6d4', fontSize: '0.95rem' }}>Initializing session and sending code...</p>
+            <div style={{ color: '#00f0ff', fontSize: '0.9rem', fontFamily: 'monospace', padding: '16px 0' }}>
+              ⚡ INITIALIZING NEURAL LINK & SENDING CODE...
+            </div>
           )}
 
           {(authStatus === 'sent' || authStatus === 'verifying' || authStatus === 'error') && (
             <form onSubmit={handleVerifyOtp} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <p style={{ color: '#10b981', fontSize: '0.85rem', margin: '0 0 10px' }}>
+              <div style={{ color: '#34d399', fontSize: '0.85rem', fontFamily: 'monospace', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '8px 12px', borderRadius: '6px' }}>
                 ✓ Authorization code sent to your trusted Telegram chat.
-              </p>
+              </div>
               
               <input
                 type="text"
@@ -1485,33 +1480,21 @@ export default function App() {
                 value={otpCode}
                 onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="0 0 0 0 0 0"
-                style={{
-                  width: '100%',
-                  padding: '16px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(6, 182, 212, 0.3)',
-                  background: 'rgba(15, 23, 42, 0.6)',
-                  color: '#fff',
-                  fontSize: '1.5rem',
-                  letterSpacing: '12px',
-                  textAlign: 'center',
-                  outline: 'none',
-                  boxSizing: 'border-box'
-                }}
+                className="cyber-input-otp"
                 disabled={authStatus === 'verifying'}
                 autoFocus
               />
 
               {authError && (
-                <p style={{ color: '#ef4444', fontSize: '0.85rem', margin: 0 }}>
+                <div style={{ color: '#f87171', fontSize: '0.85rem', fontFamily: 'monospace', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '8px 12px', borderRadius: '6px' }}>
                   ⚠️ {authError}
-                </p>
+                </div>
               )}
 
               {authStatus === 'verifying' && (
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '10px 0' }}>
-                  <span className="pulse-dot" style={{ width: 8, height: 8, background: '#06b6d4', boxShadow: '0 0 6px #06b6d4' }} />
-                  <span style={{ color: '#06b6d4', fontSize: '0.9rem', fontFamily: 'var(--font-mono)' }}>VERIFYING CODE...</span>
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                  <span className="pulse-dot" style={{ width: 8, height: 8, background: '#00f0ff', boxShadow: '0 0 10px #00f0ff' }} />
+                  <span style={{ color: '#00f0ff', fontSize: '0.9rem', fontFamily: 'monospace', letterSpacing: '2px' }}>DECRYPTING OTP CODE...</span>
                 </div>
               )}
 
@@ -1522,10 +1505,11 @@ export default function App() {
                   background: 'none',
                   border: 'none',
                   color: '#64748b',
-                  fontSize: '0.85rem',
+                  fontSize: '0.8rem',
+                  fontFamily: 'monospace',
                   cursor: 'pointer',
                   textDecoration: 'underline',
-                  marginTop: '10px'
+                  marginTop: '6px'
                 }}
               >
                 Resend code
@@ -1599,7 +1583,7 @@ export default function App() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div className="pulse-dot" style={{ width: 14, height: 14 }} />
-            {!sidebarCollapsed && <h1 className="glow-text-cyan" style={styles.logoTitle}>HERMES</h1>}
+            {!sidebarCollapsed && <h1 className="glow-text-cyan" style={styles.logoTitle}>SYNAPSE</h1>}
           </div>
           <button
             onClick={() => {
@@ -1655,18 +1639,25 @@ export default function App() {
             {!sidebarCollapsed && <span>Schedules & Automation</span>}
           </button>
 
-          <button
-            style={{
-              ...styles.navBtn,
-              ...(activeTab === 'office' ? styles.navBtnActive : {}),
-              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-            }}
-            onClick={() => { setActiveTab('office'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-            title={sidebarCollapsed ? 'Pixel Office' : undefined}
-          >
-            <Building2 size={18} />
-            {!sidebarCollapsed && <span>Pixel Office</span>}
-          </button>
+          {isOfficeEnabled && (
+            <button
+              style={{
+                ...styles.navBtn,
+                ...(activeTab === 'office' ? styles.navBtnActive : {}),
+                ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
+              }}
+              onClick={() => { setActiveTab('office'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+              title={sidebarCollapsed ? 'Pixel Office [Beta]' : undefined}
+            >
+              <Building2 size={18} />
+              {!sidebarCollapsed && (
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <span>Pixel Office</span>
+                  <span style={{ fontSize: '0.65rem', padding: '1px 5px', background: 'rgba(234, 179, 8, 0.2)', border: '1px solid rgba(234, 179, 8, 0.4)', color: '#eab308', borderRadius: '3px', marginLeft: '6px' }}>BETA</span>
+                </span>
+              )}
+            </button>
+          )}
 
           <button 
             style={{
@@ -2053,6 +2044,8 @@ export default function App() {
                 body: JSON.stringify({ language: lang }),
               }).catch(() => {});
             }}
+            isOfficeEnabled={isOfficeEnabled}
+            onOfficeEnabledChange={handleToggleOfficeEnabled}
           />
         )}
 
@@ -2191,7 +2184,7 @@ export default function App() {
           <TaskBoardTab />
         )}
 
-        {activeTab === 'office' && (
+        {activeTab === 'office' && isOfficeEnabled && (
           <OfficeTab
             t={(key: string) => key}
             isConnected={isConnected}

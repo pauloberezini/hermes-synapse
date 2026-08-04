@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Shield, Activity, Globe } from 'lucide-react';
+import { Cpu, Shield, Activity, Globe, Building2 } from 'lucide-react';
 import { styles } from '../styles';
 
 const LANGUAGES = [
@@ -21,6 +21,8 @@ interface ConfigTabProps {
   models: { id: string; name: string }[];
   language: string;
   onLanguageChange: (lang: string) => void;
+  isOfficeEnabled?: boolean;
+  onOfficeEnabledChange?: (enabled: boolean) => void;
 }
 
 export function ConfigTab({
@@ -33,6 +35,8 @@ export function ConfigTab({
   models,
   language,
   onLanguageChange,
+  isOfficeEnabled = false,
+  onOfficeEnabledChange,
 }: ConfigTabProps) {
   
   // Check if editedModel is part of the returned models list.
@@ -56,7 +60,7 @@ export function ConfigTab({
       <div style={styles.tabHeader}>
         <div>
           <h2 className="glow-text-cyan" style={styles.tabTitle}>SYSTEM CORE PARAMETERS</h2>
-          <p style={styles.tabSubtitle}>Configuration of personality and utilized LLM models</p>
+          <p style={styles.tabSubtitle}>Configuration of personality, language, and experimental features</p>
         </div>
       </div>
 
@@ -81,6 +85,46 @@ export function ConfigTab({
           <span style={styles.formHelp}>
             Agents will respond in this language. Also sets voice (TTS) and microphone (STT) locale. Takes effect immediately — no save required.
           </span>
+        </div>
+      </div>
+
+      {/* ── Experimental Features (Pixel Office [Beta]) ── */}
+      <div className="glass-panel" style={{ ...styles.configForm, marginBottom: '16px' }}>
+        <div style={styles.formGroup}>
+          <label style={styles.formLabel}>
+            <Building2 size={16} style={{ color: '#00f0ff' }} />
+            <span>Experimental Modules & Beta Features</span>
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', background: 'rgba(0, 240, 255, 0.03)', border: '1px solid rgba(0, 240, 255, 0.15)', borderRadius: '8px' }}>
+            <div>
+              <div style={{ fontWeight: 600, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Pixel Office Workspace</span>
+                <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(234, 179, 8, 0.2)', border: '1px solid rgba(234, 179, 8, 0.4)', color: '#eab308', borderRadius: '4px', textTransform: 'uppercase', fontFamily: 'monospace' }}>Beta</span>
+              </div>
+              <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: '#94a3b8', lineHeight: '1.4' }}>
+                Interactive 2D/Isometric office canvas for AI subagents. Disabled by default during active development.
+              </p>
+            </div>
+            <label style={{ position: 'relative', display: 'inline-block', width: 46, height: 24, flexShrink: 0, marginLeft: 16, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!isOfficeEnabled}
+                onChange={(e) => onOfficeEnabledChange?.(e.target.checked)}
+                style={{ opacity: 0, width: 0, height: 0 }}
+              />
+              <span style={{
+                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                backgroundColor: isOfficeEnabled ? '#00f0ff' : 'rgba(255, 255, 255, 0.1)',
+                transition: '0.3s', borderRadius: 24,
+                boxShadow: isOfficeEnabled ? '0 0 10px rgba(0, 240, 255, 0.5)' : 'none'
+              }}>
+                <span style={{
+                  position: 'absolute', content: '""', height: 18, width: 18, left: isOfficeEnabled ? 24 : 3, bottom: 3,
+                  backgroundColor: '#0f172a', transition: '0.3s', borderRadius: '50%'
+                }} />
+              </span>
+            </label>
+          </div>
         </div>
       </div>
 
