@@ -31,7 +31,7 @@ export function LogsTab({
           
           <div style={styles.logsList}>
             {logs.length === 0 ? (
-              <div style={styles.emptyLogs}>No logs at the moment, Sir. Start a conversation with Hermes.</div>
+              <div style={styles.emptyLogs}>No logs at the moment, Sir. Start a conversation with Synapse.</div>
             ) : (
               logs.map((log, index) => (
                 <div 

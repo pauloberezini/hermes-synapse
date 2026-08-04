@@ -452,6 +452,13 @@ def update_timer(
 def pause_timer(item_id: str) -> bool:
     clean_id = item_id.replace("task_", "") if item_id.startswith("task_") else item_id
     job = scheduler.get_job(clean_id) or scheduler.get_job(item_id)
+    if job is None and clean_id not in _timer_meta:
+        from backend.database import _execute
+        session_id = f"task_{clean_id}"
+        rows = _execute("SELECT schedule_info FROM session_metadata WHERE session_id = ? OR job_id = ?", (session_id, clean_id))
+        if not rows or not rows[0][0]:
+            return False
+
     if job is not None:
         job.pause()
     if clean_id not in _timer_meta:
@@ -476,6 +483,13 @@ def pause_timer(item_id: str) -> bool:
 def resume_timer(item_id: str) -> bool:
     clean_id = item_id.replace("task_", "") if item_id.startswith("task_") else item_id
     job = scheduler.get_job(clean_id) or scheduler.get_job(item_id)
+    if job is None and clean_id not in _timer_meta:
+        from backend.database import _execute
+        session_id = f"task_{clean_id}"
+        rows = _execute("SELECT schedule_info FROM session_metadata WHERE session_id = ? OR job_id = ?", (session_id, clean_id))
+        if not rows or not rows[0][0]:
+            return False
+
     if job is not None:
         job.resume()
     if clean_id not in _timer_meta:
@@ -778,11 +792,13 @@ async def _broadcast_ws(payload: Dict) -> None:
 
 async def _run_skill_distillation_loop(interval_seconds: int = 900) -> None:
     logger.info("Starting background skill distillation loop...")
+    # Initial sleep delay so FastAPI startup & Uvicorn HTTP server bind instantly without blocking
+    await asyncio.sleep(10)
     while True:
         try:
             from backend.skill_loop import get_skill_distiller
             distiller = get_skill_distiller()
-            distilled = distiller.process_undistilled_logs(min_steps=3, limit=5)
+            distilled = await asyncio.to_thread(distiller.process_undistilled_logs, min_steps=3, limit=5)
             if distilled:
                 logger.info(f"Skill distillation loop: created {len(distilled)} new skills.")
                 await _broadcast_ws({"type": "skills_distilled", "skills": distilled})

@@ -104,7 +104,30 @@ class HttpProvider(MarketDataProvider):
     async def get_price(self, symbol: str, is_crypto: bool) -> Optional[float]:
         if is_crypto:
             return await self._fetch_coingecko(symbol)
+        
+        # Fast, zero-rate-limit Forex provider for currency pairs (EURUSD, GBPUSD, USDJPY, etc.)
+        s_clean = symbol.upper().replace("=X", "").strip()
+        currencies = {"EUR", "GBP", "USD", "AUD", "NZD", "CAD", "CHF", "JPY", "NOK", "SEK"}
+        if len(s_clean) == 6 and s_clean[:3] in currencies and s_clean[3:] in currencies:
+            fx_price = await self._fetch_forex(s_clean[:3], s_clean[3:])
+            if fx_price is not None:
+                return fx_price
+
         return await self._fetch_yahoo(symbol)
+
+    async def _fetch_forex(self, base: str, quote: str) -> Optional[float]:
+        url = f"https://open.er-api.com/v6/latest/{base}"
+        try:
+            async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    rates = data.get("rates", {})
+                    if quote in rates:
+                        return float(rates[quote])
+        except Exception as exc:
+            logger.warning("HttpProvider: Forex API error for %s/%s: %s", base, quote, exc)
+        return None
 
     async def _fetch_coingecko(self, coin_id: str) -> Optional[float]:
         url = (
@@ -123,22 +146,28 @@ class HttpProvider(MarketDataProvider):
         return None
 
     async def _fetch_yahoo(self, ticker: str) -> Optional[float]:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        try:
-            async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
-                r = await client.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    meta = (
-                        data.get("chart", {})
-                        .get("result", [{}])[0]
-                        .get("meta", {})
-                    )
-                    price = meta.get("regularMarketPrice")
-                    if price is not None:
-                        return float(price)
-        except Exception as exc:
-            logger.warning("HttpProvider: Yahoo Finance error for %s: %s", ticker, exc)
+        t_clean = ticker.strip().upper()
+        tickers_to_try = [ticker]
+        if not t_clean.endswith("=X"):
+            tickers_to_try.append(f"{t_clean}=X")
+
+        for t in tickers_to_try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}"
+            try:
+                async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
+                    r = await client.get(url)
+                    if r.status_code == 200:
+                        data = r.json()
+                        meta = (
+                            data.get("chart", {})
+                            .get("result", [{}])[0]
+                            .get("meta", {})
+                        )
+                        price = meta.get("regularMarketPrice")
+                        if price is not None:
+                            return float(price)
+            except Exception as exc:
+                logger.warning("HttpProvider: Yahoo Finance error for %s: %s", t, exc)
         return None
 
 

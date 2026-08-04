@@ -120,7 +120,7 @@ class BudgetGuard:
             if prefix:
                 sql = backend.translate_placeholder(
                     "SELECT COALESCE(SUM(cost_usd), 0) FROM messages "
-                    "WHERE session_id = ? AND timestamp LIKE ?"
+                    "WHERE session_id = ? AND CAST(timestamp AS TEXT) LIKE ?"
                 )
                 cursor.execute(sql, (session_id, f"{prefix}%"))
             else:
@@ -140,7 +140,7 @@ class BudgetGuard:
             cursor = conn.cursor()
             if prefix:
                 sql = backend.translate_placeholder(
-                    "SELECT COALESCE(SUM(cost_usd), 0) FROM messages WHERE timestamp LIKE ?"
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM messages WHERE CAST(timestamp AS TEXT) LIKE ?"
                 )
                 cursor.execute(sql, (f"{prefix}%",))
             else:

@@ -29,8 +29,8 @@ describe('App Component', () => {
 
   it('renders login screen when unauthenticated', async () => {
     render(<App />);
-    expect(screen.getByText('HERMES')).toBeInTheDocument();
-    expect(screen.getByText('Secure Access Link')).toBeInTheDocument();
+    expect(screen.getByText('SYNAPSE')).toBeInTheDocument();
+    expect(screen.getByText(/Secure Access Link/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /request code in telegram/i })).toBeInTheDocument();
   });
 
@@ -46,7 +46,7 @@ describe('App Component', () => {
     const requestButton = screen.getByRole('button', { name: /request code in telegram/i });
     fireEvent.click(requestButton);
 
-    expect(screen.getByText(/initializing session and sending code/i)).toBeInTheDocument();
+    expect(screen.getByText(/sending code/i)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText(/authorization code sent to your trusted telegram chat/i)).toBeInTheDocument();

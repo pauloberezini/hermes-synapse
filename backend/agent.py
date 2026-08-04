@@ -729,8 +729,6 @@ class JarvisAgent:
         )
 
         history = self.get_history(session_id)
-        from backend import database as db
-        db.save_message(session_id, "user", user_message)
         
         # Search relevant memory chunks in Qdrant (RAG)
         from backend import rag
@@ -807,6 +805,9 @@ class JarvisAgent:
         skill_to_tools = {
             "web_search": ["web_search", "get_current_time_israel", "get_weather", "get_rss_digest"],
             "market_monitor": ["get_market_prices", "add_price_alert"],
+            "forex_provider": ["get_market_prices", "add_price_alert"],
+            "forex": ["get_market_prices", "add_price_alert"],
+            "forex_data": ["get_market_prices", "add_price_alert"],
             "obsidian_rag": ["search_obsidian", "read_obsidian_note", "create_obsidian_note", "sync_obsidian_vault"],
             "todoist_sync": ["get_todoist_tasks", "add_todoist_task", "delete_todoist_task"],
             "google_calendar": ["get_calendar_events", "add_calendar_event"],
@@ -870,6 +871,8 @@ class JarvisAgent:
             allowed_tools = child_allowed
 
         allowed_tools.update(["save_subagent_memory", "get_subagent_memory"])
+        if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
+            allowed_tools.update(["call_subagent", "web_search"])
         subagent_tools = [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed_tools]
 
         start_time = time.time()
@@ -891,6 +894,7 @@ class JarvisAgent:
                     }
                     if "deepseek-r1" not in subagent_model.lower():
                         payload["tools"] = subagent_tools
+                        payload["tool_choice"] = "auto"
                     
                     is_openmodel = "openmodel.ai" in self.api_base
                     url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
