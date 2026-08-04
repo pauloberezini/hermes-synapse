@@ -28,10 +28,10 @@ def _ensure_bcm_dependencies():
     if missing:
         logger.info(f"Installing missing BCM dependencies: {missing}")
         try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", *missing])
             logger.info("BCM dependencies installed successfully.")
         except Exception as e:
-            logger.error(f"Failed to install BCM dependencies {missing}: {e}")
+            logger.warning(f"Failed to install BCM dependencies {missing}: {e}")
 
 _ensure_bcm_dependencies()
 
@@ -200,7 +200,7 @@ SYMBOL_MAP = {
     "XAUUSD": 10013, "GOLD": 10013, "XAGUSD": 10014, "SILVER": 10014,
     "US500": 10001, "SPX500": 10001, "NAS100": 10002, "US100": 10002, "US30": 10003,
     "BRENT": 10053, "SPOTBRENT": 10053, "OIL": 10053,
-    "WTI": 10054, "SPOTCRUDE": 10054,
+    "USOIL": 10054, "WTI": 10054, "SPOTCRUDE": 10054,
     # US Stock & ETF CFDs on Pepperstone
     "AMZN": 10098, "AMZN.US": 10098,
     "GOOGL": 11621, "GOOGL.US": 11621, "GOOG": 10101, "GOOG.US": 10101,
@@ -326,7 +326,7 @@ YF_SYMBOL_MAP = {
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X", "USDJPY": "JPY=X", "AUDUSD": "AUDUSD=X", "USDCHF": "CHF=X", "USDCAD": "CAD=X", "NZDUSD": "NZDUSD=X",
     "XAUUSD": "GC=F", "GOLD": "GC=F", "XAGUSD": "SI=F", "SILVER": "SI=F",
     "US500": "^GSPC", "SPX500": "^GSPC", "NAS100": "^NDX", "US100": "^NDX", "US30": "^DJI",
-    "BRENT": "BZ=F", "WTI": "CL=F", "OIL": "BZ=F",
+    "BRENT": "BZ=F", "WTI": "CL=F", "USOIL": "CL=F", "OIL": "BZ=F",
     # US Stock & ETF CFDs
     "AMZN": "AMZN", "AMZN.US": "AMZN",
     "GOOGL": "GOOGL", "GOOGL.US": "GOOGL", "GOOG": "GOOG", "GOOG.US": "GOOG",

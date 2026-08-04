@@ -8,13 +8,15 @@ if BCM_DIR not in sys.path:
 import json
 import requests
 from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Hardcoded Fund Mandates (Risk Limits)
 MAX_RISK_PER_TRADE_USD = 500  # Example max risk
-ALLOWED_SYMBOLS = ["BTC", "GBPUSD", "US500", "BRENT"]
+ALLOWED_SYMBOLS = ["BTC", "GBPUSD", "US500", "BRENT", "USOIL"]
 MAX_VOLUME_MULTIPLIER = 3  # Max allowed volume vs base volume
 
 class ComplianceOfficer:

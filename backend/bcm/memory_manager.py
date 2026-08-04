@@ -8,8 +8,14 @@ if BCM_DIR not in sys.path:
 import sqlite3
 import json
 from datetime import datetime
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models
+    HAS_QDRANT = True
+except ImportError:
+    QdrantClient = None
+    models = None
+    HAS_QDRANT = False
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(WORKSPACE_ROOT, "logs/bcm_memory.db")

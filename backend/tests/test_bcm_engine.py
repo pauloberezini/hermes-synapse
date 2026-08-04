@@ -1,4 +1,11 @@
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
+
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 try:
     from backend.bcm.compliance_officer import ComplianceOfficer
@@ -8,9 +15,11 @@ except ModuleNotFoundError:
         from bcm.compliance_officer import ComplianceOfficer
         HAS_BCM = True
     except ModuleNotFoundError:
+        ComplianceOfficer = None
         HAS_BCM = False
 
-pytestmark = pytest.mark.skipif(not HAS_BCM, reason="BCM module is a private component ignored in git")
+if pytest and not HAS_BCM:
+    pytestmark = pytest.mark.skipif(True, reason="BCM module is a private component ignored in git")
 
 
 def test_compliance_hard_limits_approved():
@@ -95,3 +104,18 @@ def test_compliance_audit_trade_wait_action():
     )
     assert passed is True
     assert "Action is WAIT" in reason
+
+
+if __name__ == "__main__":
+    print("🚀 Running Compliance Engine Unit Tests...")
+    test_compliance_hard_limits_approved()
+    print("  ✅ test_compliance_hard_limits_approved: PASSED")
+    test_compliance_hard_limits_unapproved_symbol()
+    print("  ✅ test_compliance_hard_limits_unapproved_symbol: PASSED")
+    test_compliance_hard_limits_missing_sl_tp()
+    print("  ✅ test_compliance_hard_limits_missing_sl_tp: PASSED")
+    test_compliance_hard_limits_invalid_sl_direction()
+    print("  ✅ test_compliance_hard_limits_invalid_sl_direction: PASSED")
+    test_compliance_audit_trade_wait_action()
+    print("  ✅ test_compliance_audit_trade_wait_action: PASSED")
+    print("\n🎉 ALL COMPLIANCE ENGINE TESTS PASSED SUCCESSFULLY!")

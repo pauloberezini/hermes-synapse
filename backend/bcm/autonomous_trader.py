@@ -10,7 +10,6 @@ import json
 import requests
 import time
 from datetime import datetime
-from dotenv import load_dotenv
 
 try:
     from backend.bcm.memory_manager import BCMMemory
@@ -22,9 +21,12 @@ try:
 except ImportError:
     from compliance_officer import ComplianceOfficer
 
-# Load configuration from .env
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-load_dotenv(env_path)
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    load_dotenv(env_path)
+except ImportError:
+    pass
 
 # Initialize Memory
 memory = BCMMemory()
@@ -147,6 +149,81 @@ def get_technical_analysis(ticker):
         print(f"⚠️ yfinance Technical Analysis Error: {e}")
         return json.dumps({"rsi": {ticker: 50.0}, "warning": str(e)})
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Mapping between Analysis Ticker (Yahoo format) and Trading ID (Pepperstone cTrader format)
+TICKER_MAP = {
+    "BTC": {"analysis": "BTC-USD", "trade_id": 10028, "volume": 0.01},
+    "GBPUSD": {"analysis": "GBPUSD=X", "trade_id": 2, "volume": 1000},
+    "US500": {"analysis": "^GSPC", "trade_id": 10001, "volume": 0.1},
+    "BRENT": {"analysis": "BZ=F", "trade_id": 10053, "volume": 1},
+    "USOIL": {"analysis": "CL=F", "trade_id": 10054, "volume": 1}
+}
+
+def get_live_ctrader_positions():
+    """Fetch live positions from Pepperstone cTrader API via tools module."""
+    try:
+        try:
+            from backend.bcm.tools import handle_ctrader_get_positions
+        except ImportError:
+            from tools import handle_ctrader_get_positions
+            
+        res = handle_ctrader_get_positions({})
+        if isinstance(res, str):
+            try:
+                res = json.loads(res)
+            except Exception:
+                pass
+        
+        positions = []
+        if isinstance(res, dict):
+            positions = res.get("positions", res.get("data", []))
+        elif isinstance(res, list):
+            positions = res
+            
+        if not isinstance(positions, list) or len(positions) == 0:
+            return [], "LIVE CTRADER OPEN POSITIONS: NONE (0 open positions)."
+
+        formatted_positions = []
+        for p in positions:
+            sym_id = p.get("symbolId") or p.get("symbol_id")
+            pos_id = p.get("positionId") or p.get("id")
+            trade_side = "BUY" if str(p.get("tradeSide") or p.get("side")) in ("1", "BUY", "BUY_SIDE") else "SELL"
+            vol = p.get("volume", 0)
+            entry = p.get("entryPrice", p.get("price", 0))
+            current = p.get("currentPrice", p.get("price", 0))
+            sl = p.get("stopLoss")
+            tp = p.get("takeProfit")
+            pnl = p.get("unrealizedPnl", p.get("pnl", 0))
+            
+            sym_name = f"Symbol-{sym_id}"
+            for k, v in TICKER_MAP.items():
+                if v.get("trade_id") == sym_id:
+                    sym_name = k
+                    break
+
+            formatted_positions.append({
+                "symbol": sym_name,
+                "symbol_id": sym_id,
+                "position_id": pos_id,
+                "side": trade_side,
+                "volume": vol,
+                "entry_price": entry,
+                "current_price": current,
+                "sl": sl,
+                "tp": tp,
+                "unrealized_pnl": pnl
+            })
+
+        summary = f"LIVE CTRADER OPEN POSITIONS ({len(formatted_positions)} active):\n"
+        for item in formatted_positions:
+            summary += f"• {item['symbol']} (ID: {item['position_id']}): {item['side']} {item['volume']} lots @ Entry: {item['entry_price']} | Current: {item['current_price']} | SL: {item['sl']} | TP: {item['tp']} | PnL: ${item['unrealized_pnl']}\n"
+            
+        return formatted_positions, summary
+    except Exception as e:
+        print(f"⚠️ Error fetching live cTrader positions: {e}")
+        return [], f"LIVE CTRADER OPEN POSITIONS: Unavailable ({str(e)})"
+
 def call_llm(role_name, prompt):
     """Generic helper to call LLM with a specific role."""
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
@@ -168,18 +245,28 @@ def call_llm(role_name, prompt):
 
 def ask_ai_decision(ticker, analysis_data):
     """A true Multi-Agent workflow: Analyst -> Risk Manager -> Managing Director."""
+    _, live_pos_summary = get_live_ctrader_positions()
+    positions_guardrail = (
+        f"\n\n--- REAL-TIME PEPPERSTONE CTRADER ACCOUNT POSITIONS ---\n"
+        f"{live_pos_summary}\n"
+        f"CRITICAL MANDATE: You MUST ONLY evaluate real positions listed above. "
+        f"Do NOT assume or hallucinate any other open positions or trades that are not explicitly in this list.\n"
+        f"---------------------------------------------------------\n"
+    )
+
     print("--- 🕵️ Calling QUANT ANALYST ---")
     analyst_prompt = f"""Analyze these indicators and Remizov shift for {ticker}. 
     Focus on momentum and structural shifts. 
-    Check 'past_experience' for historical similarities: {analysis_data}"""
+    Check 'past_experience' for historical similarities: {analysis_data}
+    {positions_guardrail}"""
     analyst_report = call_llm("Quant Analyst", analyst_prompt)
     print(f"Analyst Report Length: {len(str(analyst_report))}")
 
     print("--- 🌍 Calling MACRO ANALYST ---")
     current_date = datetime.now().strftime("%Y-%m-%d")
     oil_context = ""
-    if "BRENT" in ticker or "BZ" in ticker:
-        print("   Fetching Petro-Macro Terminal context for BRENT...")
+    if "BRENT" in ticker or "USOIL" in ticker or "BZ" in ticker or "CL" in ticker:
+        print("   Fetching Petro-Macro Terminal context for Oil...")
         raw_oil = get_brent_oil_context()
         if raw_oil:
             oil_context = f"\n\n--- PETRO-MACRO TERMINAL DATA ---\n{raw_oil[:3000]}\n---"
@@ -189,6 +276,7 @@ def ask_ai_decision(ticker, analysis_data):
     macro_prompt = f"""You are the Macro & Sentiment Analyst for Berezini Capital Management.
     Today is {current_date}. We are analyzing {ticker}.
     {oil_context}
+    {positions_guardrail}
     Please provide a brief assessment of the current macroeconomic environment, central bank policies (Fed/BoE/etc.), geopolitical risks, and overall sentiment that could affect {ticker}. 
     Since you do not have live browsing in this exact call, rely on your latest training data and general structural macro trends for this asset."""
     macro_report = call_llm("Macro Analyst", macro_prompt)
@@ -200,7 +288,8 @@ def ask_ai_decision(ticker, analysis_data):
     CRITICAL: If 'past_experience' shows consistent failures for these conditions, advise WAIT: 
     DATA: {analysis_data} 
     QUANT: {analyst_report}
-    MACRO: {macro_report}"""
+    MACRO: {macro_report}
+    {positions_guardrail}"""
     risk_report = call_llm("Risk Manager", risk_prompt)
     print(f"Risk Report Length: {len(str(risk_report))}")
 
@@ -210,6 +299,7 @@ def ask_ai_decision(ticker, analysis_data):
     QUANT REPORT: {analyst_report}
     MACRO REPORT: {macro_report}
     RISK REPORT: {risk_report}
+    {positions_guardrail}
     
     Respond ONLY in JSON format:
     {{
@@ -227,11 +317,9 @@ def ask_ai_decision(ticker, analysis_data):
     elif "```" in content:
         content = content.split("```")[1].split("```")[0].strip()
     return content
-    
 
 def execute_trade(action, ticker_id, volume):
     """Execute trade via trade.sh script inside the container."""
-    # Absolute path inside the container
     script_path = os.path.join(script_dir, "trade.sh")
     cmd = ["bash", script_path, action, str(ticker_id), str(volume)]
     try:
@@ -240,13 +328,6 @@ def execute_trade(action, ticker_id, volume):
     except Exception as e:
         return f"Trade execution failed: {str(e)}"
 
-# Mapping between Analysis Ticker (Yahoo format) and Trading ID (FIX format)
-TICKER_MAP = {
-    "BTC": {"analysis": "BTC-USD", "trade_id": 10028, "volume": 0.01},
-    "GBPUSD": {"analysis": "GBPUSD=X", "trade_id": 2, "volume": 1000},
-    "US500": {"analysis": "^GSPC", "trade_id": 10013, "volume": 0.1},
-    "BRENT": {"analysis": "BZ=F", "trade_id": 11045, "volume": 1}
-}
 
 def pre_check_indicators(analysis_json, ticker_key, atr_data=None):
     """
@@ -398,9 +479,28 @@ def get_account_balance():
             raw_val = raw if 'raw' in locals() else 'None'
             print(f"Attempt {attempt+1} failed: {str(e)}")
             time.sleep(2)
-            
-    print("⚠️ WARNING: Failed to fetch balance after 3 attempts. Using MOCK balance for analysis.")
-    return 10000.0, 9000.0 # Mock values to allow analysis to continue
+
+    # Direct fallback to cTrader API tool if n8n/mcporter failed
+    try:
+        try:
+            from backend.bcm.tools import handle_ctrader_get_balance
+        except ImportError:
+            from tools import handle_ctrader_get_balance
+
+        bal_res = handle_ctrader_get_balance({})
+        if isinstance(bal_res, str):
+            bal_res = json.loads(bal_res)
+        if isinstance(bal_res, dict):
+            eq = float(bal_res.get("equity", bal_res.get("balance", 0)))
+            fm = float(bal_res.get("freeMargin", bal_res.get("free_margin", eq)))
+            if eq > 0:
+                print(f"✅ Account balance loaded from cTrader API: Equity=${eq:.2f}, FreeMargin=${fm:.2f}")
+                return eq, fm
+    except Exception as cbe:
+        print(f"⚠️ cTrader direct balance fetch error: {cbe}")
+
+    print("⚠️ WARNING: Failed to fetch balance from Pepperstone API. Using fallback evaluation balance.")
+    return 10000.0, 9000.0
 
 def calculate_lot_size(equity, risk_pct, distance, symbol_key):
     """
@@ -460,9 +560,11 @@ def run_autonomous_cycle(symbol_key):
     analysis_ticker = config['analysis']
     trade_id = config['trade_id']
 
-    # Guard: skip if we already have an open position for this symbol
-    if memory.has_open_position(symbol_key):
-        print(f"⏸️ {symbol_key}: Open position already tracked in memory — skipping cycle.")
+    # Guard: skip if we already have an active live position for this symbol
+    live_positions, pos_summary = get_live_ctrader_positions()
+    has_live_pos = any(p.get("symbol") == symbol_key for p in live_positions)
+    if has_live_pos or memory.has_open_position(symbol_key):
+        print(f"⏸️ {symbol_key}: Open position active in Pepperstone cTrader / memory — skipping new cycle.")
         return
 
     print(f"--- Starting PROFESSIONAL cycle for {symbol_key} ---")

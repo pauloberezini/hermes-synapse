@@ -19,7 +19,7 @@ from backend.bcm.tools import (
 
 def test_symbol_mappings():
     """Verify all Pepperstone symbols have valid FIX Symbol IDs and Yahoo Finance tickers."""
-    expected_symbols = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT", "WTI", "AMZN", "GOOGL", "NVDA", "TSLA", "AAPL", "MSFT", "META", "SPY", "QQQ", "USO"]
+    expected_symbols = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT", "USOIL", "WTI", "AMZN", "GOOGL", "NVDA", "TSLA", "AAPL", "MSFT", "META", "SPY", "QQQ", "USO"]
     
     for sym in expected_symbols:
         assert sym in SYMBOL_MAP, f"Missing FIX symbol ID for {sym}"
@@ -35,7 +35,15 @@ def test_yf_symbol_normalization():
     assert _normalize_yf_symbol("XAUUSD") == "GC=F"
     assert _normalize_yf_symbol("US500") == "^GSPC"
     assert _normalize_yf_symbol("BRENT") == "BZ=F"
+    assert _normalize_yf_symbol("USOIL") == "CL=F"
     assert _normalize_yf_symbol("WTI") == "CL=F"
+
+def test_get_live_ctrader_positions_helper():
+    """Verify get_live_ctrader_positions function loads safely without crashing."""
+    from backend.bcm.autonomous_trader import get_live_ctrader_positions
+    positions, summary = get_live_ctrader_positions()
+    assert isinstance(positions, list)
+    assert isinstance(summary, str)
 
 def test_bcm_technical_indicators_all_assets():
     """Verify technical indicators fetch successfully for all 6 Pepperstone assets."""
@@ -62,6 +70,8 @@ if __name__ == "__main__":
     print("  ✅ test_symbol_mappings: PASSED")
     test_yf_symbol_normalization()
     print("  ✅ test_yf_symbol_normalization: PASSED")
+    test_get_live_ctrader_positions_helper()
+    print("  ✅ test_get_live_ctrader_positions_helper: PASSED")
     test_bcm_technical_indicators_all_assets()
     print("  ✅ test_bcm_technical_indicators_all_assets: PASSED")
     test_bcm_remizov_shift_all_assets()
