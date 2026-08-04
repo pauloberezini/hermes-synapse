@@ -214,6 +214,84 @@ SYMBOL_MAP = {
     "USO": 11973, "USO.US": 11973,
 }
 
+# Volume conversion: cTrader API units → lots
+# Empirically derived from live account data:
+#   SpotBrent (10053): volume=600 → 0.06 lots  → factor=10000
+#   BTCUSD   (10028): volume=1   → 0.01 lots  → factor=100
+VOLUME_FACTOR = {
+    # Crypto CFDs: 1 lot = 1 coin, step 0.01, API units = lots × 100
+    10028: 100,   # BTCUSD
+    10029: 100,   # ETHUSD
+    # Commodity CFDs: 1 lot = 100 barrels/oz, step 0.01, API units = lots × 10000
+    10053: 10000, # SpotBrent
+    10054: 10000, # SpotCrude/WTI
+    10013: 10000, # XAUUSD (Gold)
+    10014: 10000, # XAGUSD (Silver)
+    # Index CFDs
+    10001: 100,   # US500
+    10002: 100,   # NAS100
+    10003: 100,   # US30
+}
+FX_VOLUME_FACTOR = 100000  # FX pairs: 1 lot = 100,000 base currency units
+
+# Reverse lookup: symbolId → canonical display name
+SYMBOL_ID_TO_NAME = {
+    1: "EURUSD", 2: "GBPUSD", 3: "EURGBP", 4: "EURJPY", 5: "USDJPY",
+    6: "AUDUSD", 7: "USDCHF", 8: "USDCAD", 9: "NZDUSD",
+    10028: "BTCUSD", 10029: "ETHUSD",
+    10013: "XAUUSD", 10014: "XAGUSD",
+    10001: "US500", 10002: "NAS100", 10003: "US30",
+    10053: "SpotBrent",  # Brent Crude — NOT USOIL/WTI
+    10054: "SpotCrude",  # WTI Crude — NOT Brent
+}
+
+
+def format_live_positions_guardrail(positions_data: dict) -> str:
+    """Convert raw cTrader positions JSON into an authoritative guardrail string.
+
+    Converts internal volume units → lots using VOLUME_FACTOR per symbolId,
+    adds the canonical symbol name, and formats for LLM injection.
+    Returns a plain-text block to prepend to the bcm_orchestrator prompt.
+    """
+    positions = positions_data.get("positions", []) if isinstance(positions_data, dict) else []
+    orders = positions_data.get("orders", []) if isinstance(positions_data, dict) else []
+
+    if not positions:
+        return (
+            "[LIVE CTRADER POSITIONS — AUTHORITATIVE]\n"
+            "NO OPEN POSITIONS. Account is flat. Do NOT invent any positions.\n"
+        )
+
+    lines = ["[LIVE CTRADER POSITIONS — AUTHORITATIVE]",
+             "These are the ONLY real open positions. Do NOT invent or hallucinate any others.",
+             ""]
+    for i, p in enumerate(positions, 1):
+        sym_id = p.get("symbolId", "?")
+        sym_name = SYMBOL_ID_TO_NAME.get(sym_id, f"ID:{sym_id}")
+        factor = VOLUME_FACTOR.get(sym_id, FX_VOLUME_FACTOR)
+        raw_vol = p.get("volume", 0)
+        lots = round(raw_vol / factor, 4)
+        side = p.get("tradeSide", "?")
+        entry = p.get("entryPrice", "?")
+        sl = p.get("stopLoss", "none")
+        tp = p.get("takeProfit", "none")
+        pos_id = p.get("positionId", "?")
+        lines.append(
+            f"  Position {i}: {sym_name} (symbolId={sym_id}, positionId={pos_id})"
+        )
+        lines.append(
+            f"    {side} {lots} lots | Entry: {entry} | SL: {sl} | TP: {tp}"
+        )
+    if orders:
+        lines.append("")
+        lines.append(f"  Pending orders: {len(orders)} (STOP orders on SpotBrent)")
+    lines.append("")
+    lines.append("CRITICAL: Use EXACTLY the above symbol names, lot sizes, and prices.")
+    lines.append("Do NOT use USOIL for SpotBrent. Do NOT fabricate lot sizes.")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def handle_ctrader_place_order(args):
     try:
         import subprocess

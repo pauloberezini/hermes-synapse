@@ -729,7 +729,25 @@ async def _trigger_agent_task(
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
-        response_text = await agent_instance.respond(prompt, session_id=session_id, override_agent_id=agent_id)
+        # ── Live positions guardrail for BCM orchestrator ─────────────────
+        # Fetch real cTrader positions and inject as authoritative context
+        # BEFORE the LLM runs, to prevent it from using stale session memory
+        # with hallucinated lot sizes or wrong symbol names.
+        effective_prompt = prompt
+        if agent_id == "bcm_orchestrator":
+            try:
+                from backend.bcm.tools import handle_ctrader_get_positions, format_live_positions_guardrail
+                pos_data = await asyncio.get_event_loop().run_in_executor(
+                    None, handle_ctrader_get_positions, {}
+                )
+                guardrail = format_live_positions_guardrail(pos_data)
+                effective_prompt = guardrail + prompt
+                logger.info(f"BCM positions guardrail injected ({len(pos_data.get('positions', []))} positions)")
+            except Exception as _pe:
+                logger.warning(f"BCM positions guardrail fetch failed: {_pe}; proceeding without guardrail")
+        # ─────────────────────────────────────────────────────────────────
+
+        response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
         if not response_text or not response_text.strip():
             response_text = "Sir, the scheduled automation task completed successfully."
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
