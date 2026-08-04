@@ -736,15 +736,39 @@ async def _trigger_agent_task(
         effective_prompt = prompt
         if agent_id == "bcm_orchestrator":
             try:
-                from backend.bcm.tools import handle_ctrader_get_positions, format_live_positions_guardrail
+                from backend.bcm.tools import (
+                    handle_ctrader_get_positions,
+                    handle_ctrader_get_spot_prices,
+                    format_live_positions_guardrail,
+                )
                 pos_data = await asyncio.get_event_loop().run_in_executor(
                     None, handle_ctrader_get_positions, {}
                 )
                 guardrail = format_live_positions_guardrail(pos_data)
+
+                # Also fetch live spot prices for the core watchlist
+                spot_data = await asyncio.get_event_loop().run_in_executor(
+                    None, handle_ctrader_get_spot_prices, {"symbol_ids": [10028, 10053, 10054, 10013]}
+                )
+                if isinstance(spot_data, dict) and spot_data.get("prices"):
+                    price_lines = []
+                    for p in spot_data["prices"]:
+                        price_lines.append(
+                            f"  {p['name']} (ID {p['symbolId']}): bid={p['bid']}, ask={p['ask']}, mid={p['mid']}"
+                        )
+                    guardrail += (
+                        "\n[LIVE PEPPERSTONE SPOT PRICES — AUTHORITATIVE]\n"
+                        + "\n".join(price_lines)
+                        + "\nUse these as the ONLY source for current market prices.\n\n"
+                    )
+
                 effective_prompt = guardrail + prompt
-                logger.info(f"BCM positions guardrail injected ({len(pos_data.get('positions', []))} positions)")
+                n_pos = len(pos_data.get("positions", [])) if isinstance(pos_data, dict) else 0
+                n_prices = len(spot_data.get("prices", [])) if isinstance(spot_data, dict) else 0
+                logger.info(f"BCM guardrail injected: {n_pos} positions, {n_prices} live prices")
             except Exception as _pe:
                 logger.warning(f"BCM positions guardrail fetch failed: {_pe}; proceeding without guardrail")
+
         # ─────────────────────────────────────────────────────────────────
 
         response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)

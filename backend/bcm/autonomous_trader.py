@@ -164,9 +164,9 @@ def get_live_ctrader_positions():
     """Fetch live positions from Pepperstone cTrader API via tools module."""
     try:
         try:
-            from backend.bcm.tools import handle_ctrader_get_positions
+            from backend.bcm.tools import handle_ctrader_get_positions, VOLUME_FACTOR, FX_VOLUME_FACTOR
         except ImportError:
-            from tools import handle_ctrader_get_positions
+            from tools import handle_ctrader_get_positions, VOLUME_FACTOR, FX_VOLUME_FACTOR
             
         res = handle_ctrader_get_positions({})
         if isinstance(res, str):
@@ -184,14 +184,24 @@ def get_live_ctrader_positions():
         if not isinstance(positions, list) or len(positions) == 0:
             return [], "LIVE CTRADER OPEN POSITIONS: NONE (0 open positions)."
 
+        # Enrich positions with live spot prices from Pepperstone
+        sym_ids = list({p.get("symbolId") or p.get("symbol_id") for p in positions
+                        if p.get("symbolId") or p.get("symbol_id")})
+        live_prices = get_live_spot_prices(sym_ids) if sym_ids else {}
+
         formatted_positions = []
         for p in positions:
             sym_id = p.get("symbolId") or p.get("symbol_id")
             pos_id = p.get("positionId") or p.get("id")
             trade_side = "BUY" if str(p.get("tradeSide") or p.get("side")) in ("1", "BUY", "BUY_SIDE") else "SELL"
-            vol = p.get("volume", 0)
+            # Convert raw volume units -> lots using per-symbol VOLUME_FACTOR
+            raw_vol = p.get("volume", 0)
+            factor = VOLUME_FACTOR.get(sym_id, FX_VOLUME_FACTOR)
+            vol = round(raw_vol / factor, 4)
             entry = p.get("entryPrice", p.get("price", 0))
-            current = p.get("currentPrice", p.get("price", 0))
+            # Use live mid/bid price as current_price; fall back to entry price
+            live_p = live_prices.get(sym_id, {})
+            current = live_p.get("mid") or live_p.get("bid") or p.get("currentPrice", entry)
             sl = p.get("stopLoss")
             tp = p.get("takeProfit")
             pnl = p.get("unrealizedPnl", p.get("pnl", 0))
@@ -224,6 +234,43 @@ def get_live_ctrader_positions():
         print(f"⚠️ Error fetching live cTrader positions: {e}")
         return [], f"LIVE CTRADER OPEN POSITIONS: Unavailable ({str(e)})"
 
+
+def get_live_spot_prices(symbol_ids: list = None):
+    """Запросить текущие bid/ask котировки напрямую с Pepperstone cTrader.
+
+    Returns:
+        dict: {symbolId: {'bid': float, 'ask': float, 'mid': float, 'name': str}, ...}
+    """
+    if symbol_ids is None:
+        # Default watchlist: BTC, SpotBrent, SpotCrude, Gold
+        symbol_ids = [10028, 10053, 10054, 10013]
+    try:
+        try:
+            from backend.bcm.tools import handle_ctrader_get_spot_prices
+        except ImportError:
+            from tools import handle_ctrader_get_spot_prices
+
+        res = handle_ctrader_get_spot_prices({"symbol_ids": symbol_ids})
+        if isinstance(res, str):
+            res = json.loads(res)
+
+        price_map = {}
+        for p in res.get("prices", []):
+            sid = p.get("symbolId")
+            if sid:
+                price_map[sid] = {
+                    "bid":  p.get("bid"),
+                    "ask":  p.get("ask"),
+                    "mid":  p.get("mid"),
+                    "high": p.get("high"),
+                    "low":  p.get("low"),
+                    "name": p.get("name", f"ID:{sid}"),
+                }
+        return price_map
+    except Exception as e:
+        print(f"⚠️ Error fetching live spot prices: {e}")
+        return {}
+
 def call_llm(role_name, prompt):
     """Generic helper to call LLM with a specific role."""
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
@@ -246,12 +293,38 @@ def call_llm(role_name, prompt):
 def ask_ai_decision(ticker, analysis_data):
     """A true Multi-Agent workflow: Analyst -> Risk Manager -> Managing Director."""
     _, live_pos_summary = get_live_ctrader_positions()
+
+    # Fetch live spot prices for the ticker being analysed + key watchlist symbols
+    ticker_id = TICKER_MAP.get(ticker, {}).get("trade_id")
+    spot_ids = [10028, 10053, 10054, 10013]  # BTC, SpotBrent, SpotCrude, Gold
+    if ticker_id and ticker_id not in spot_ids:
+        spot_ids.insert(0, ticker_id)
+    live_prices = get_live_spot_prices(spot_ids)
+
+    # Format live prices block for LLM context
+    if live_prices:
+        price_lines = []
+        for sid, pdata in live_prices.items():
+            price_lines.append(
+                f"  {pdata['name']} (ID {sid}): bid={pdata['bid']}, ask={pdata['ask']}, mid={pdata['mid']}"
+            )
+        live_price_block = (
+            "\n\n--- LIVE PEPPERSTONE SPOT PRICES (FROM CTRADER) ---\n"
+            + "\n".join(price_lines)
+            + "\n---------------------------------------------------\n"
+            "Use these prices as the AUTHORITATIVE current market prices. "
+            "Do NOT use any other price sources.\n"
+        )
+    else:
+        live_price_block = "\n[WARNING: Live spot prices unavailable from Pepperstone — use caution]\n"
+
     positions_guardrail = (
         f"\n\n--- REAL-TIME PEPPERSTONE CTRADER ACCOUNT POSITIONS ---\n"
         f"{live_pos_summary}\n"
         f"CRITICAL MANDATE: You MUST ONLY evaluate real positions listed above. "
         f"Do NOT assume or hallucinate any other open positions or trades that are not explicitly in this list.\n"
         f"---------------------------------------------------------\n"
+        f"{live_price_block}"
     )
 
     print("--- 🕵️ Calling QUANT ANALYST ---")

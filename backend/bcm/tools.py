@@ -73,6 +73,21 @@ BCM_TOOLS = [
         }
     },
     {
+        "name": "ctrader_get_spot_prices",
+        "description": "Получить текущие bid/ask котировки с Pepperstone cTrader для одного или нескольких символов по их ID.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Массив ID символов, например [10028, 10053] для BTC и SpotBrent"
+                }
+            },
+            "required": ["symbol_ids"]
+        }
+    },
+    {
         "name": "ctrader_place_order",
         "description": "Открыть новую рыночную сделку (BUY/SELL) с указанием объема, SL и TP. Side: 1=BUY, 2=SELL.",
         "inputSchema": {
@@ -194,6 +209,111 @@ def handle_ctrader_get_positions(args):
         return res
     return _run_async(_action())
 
+def handle_ctrader_get_spot_prices(args):
+    """Fetch live bid/ask spot prices from Pepperstone cTrader for given symbol IDs.
+
+    Args:
+        args: dict with key 'symbol_ids' (list[int]) or 'symbol_id' (int/list).
+              Accepts symbol names too (e.g. 'BTC', 'BRENT') and resolves via SYMBOL_MAP.
+
+    Returns:
+        dict: {
+            prices: [
+                {symbolId, name, bid, ask, mid, high, low, sessionClose, timestamp},
+                ...
+            ]
+        }
+    """
+    # Resolve symbol_ids from args — accept list of ints, single int, or symbol names
+    raw_ids = args.get("symbol_ids") or args.get("symbol_id") or []
+    if isinstance(raw_ids, (int, str)):
+        raw_ids = [raw_ids]
+
+    # Build final list of integer symbol IDs
+    resolved_ids = []
+    for s in raw_ids:
+        if isinstance(s, int):
+            resolved_ids.append(s)
+        elif isinstance(s, str) and s.isdigit():
+            resolved_ids.append(int(s))
+        else:
+            # Try resolving by name using SYMBOL_MAP (populated after this function in file)
+            # We use a local lookup here to avoid forward-reference
+            _local_map = {
+                "EURUSD": 1, "GBPUSD": 2, "EURGBP": 3, "EURJPY": 4, "USDJPY": 5,
+                "AUDUSD": 6, "USDCHF": 7, "USDCAD": 8, "NZDUSD": 9,
+                "BTCUSD": 10028, "BTC": 10028, "ETHUSD": 10029, "ETH": 10029,
+                "XAUUSD": 10013, "GOLD": 10013, "XAGUSD": 10014, "SILVER": 10014,
+                "US500": 10001, "SPX500": 10001, "NAS100": 10002, "US30": 10003,
+                "BRENT": 10053, "SPOTBRENT": 10053, "OIL": 10053,
+                "USOIL": 10054, "WTI": 10054, "SPOTCRUDE": 10054,
+            }
+            sid = _local_map.get(str(s).upper())
+            if sid:
+                resolved_ids.append(sid)
+            else:
+                logger.warning(f"handle_ctrader_get_spot_prices: unknown symbol '{s}', skipping")
+
+    if not resolved_ids:
+        # Default: return prices for the core watchlist
+        resolved_ids = [10028, 10053, 10054, 10013, 1, 2]
+
+    async def _action():
+        from backend.mcp_client import MCPServerClient
+        token = os.environ.get(
+            "CTRADER_TOKEN",
+            "eyJwbGFudCI6InBlcHBlcnN0b25lIiwiZW52aXJvbm1lbnQiOiJkZW1vIiwidG9rZW4iOiJJV2lzRnZWNC82Q2pLdGlYdXQ1OWVZQlRUZHFlT1NPUUp0S3hZMFJmbEkwPSJ9"
+        )
+        config = {
+            'url': 'https://mcp.ctrader.com/trading/mcp',
+            'headers': {'Authorization': f'Bearer {token}'}
+        }
+        client = MCPServerClient('ctrader', config)
+        await client.start()
+        raw = await client.call_tool('get_spot_prices', {'symbolId': resolved_ids})
+        if isinstance(raw, str):
+            import json as _json
+            raw = _json.loads(raw)
+        return raw
+
+    raw_result = _run_async(_action())
+
+    # Normalise raw integer prices → human-readable floats
+    # cTrader encodes all prices as integers with 5 implied decimal places (÷ 100000)
+    if isinstance(raw_result, dict) and 'prices' in raw_result:
+        _id_to_name = {
+            10028: "BTCUSD", 10029: "ETHUSD",
+            10013: "XAUUSD", 10014: "XAGUSD",
+            10001: "US500",  10002: "NAS100", 10003: "US30",
+            10053: "SpotBrent", 10054: "SpotCrude",
+            1: "EURUSD", 2: "GBPUSD", 3: "EURGBP", 4: "EURJPY", 5: "USDJPY",
+            6: "AUDUSD", 7: "USDCHF", 8: "USDCAD", 9: "NZDUSD",
+        }
+        normalised = []
+        for p in raw_result['prices']:
+            sid = p.get('symbolId', 0)
+            div = PRICE_DIVISOR.get(sid, DEFAULT_PRICE_DIVISOR)
+            bid  = round(p['bid']  / div, 5) if p.get('bid')  else None
+            ask  = round(p['ask']  / div, 5) if p.get('ask')  else None
+            mid  = round((bid + ask) / 2, 5) if bid is not None and ask is not None else None
+            high = round(p['high'] / div, 5) if p.get('high') else None
+            low  = round(p['low']  / div, 5) if p.get('low')  else None
+            sess_close = round(p['sessionClose'] / div, 5) if p.get('sessionClose') else None
+            normalised.append({
+                'symbolId':     sid,
+                'name':         _id_to_name.get(sid, f'ID:{sid}'),
+                'bid':          bid,
+                'ask':          ask,
+                'mid':          mid,
+                'high':         high,
+                'low':          low,
+                'sessionClose': sess_close,
+                'timestamp':    p.get('timestamp'),
+            })
+        return {'prices': normalised}
+
+    return raw_result if raw_result else {'error': 'get_spot_prices returned empty result'}
+
 SYMBOL_MAP = {
     "EURUSD": 1, "GBPUSD": 2, "EURGBP": 3, "EURJPY": 4, "USDJPY": 5, "AUDUSD": 6, "USDCHF": 7, "USDCAD": 8, "NZDUSD": 9,
     "BTCUSD": 10028, "BTC": 10028, "ETHUSD": 10029, "ETH": 10029,
@@ -213,6 +333,30 @@ SYMBOL_MAP = {
     "QQQ": 11827, "QQQ.US": 11827,
     "USO": 11973, "USO.US": 11973,
 }
+
+# ---------------------------------------------------------------------------
+# Price divisors: cTrader raw integer price → float price
+# cTrader sends prices as integers with 5 decimal places of precision:
+#   e.g. BTCUSD:  6428304000 / 100000 = 64283.04
+#        Brent:     8040500  / 100000 = 80.405
+#        EURUSD:    1085420  / 100000 = 1.08542
+# Most symbols use 100000 (5 dp). FX majors also use 100000.
+# ---------------------------------------------------------------------------
+PRICE_DIVISOR: dict[int, int] = {
+    10028: 100000,  # BTCUSD
+    10029: 100000,  # ETHUSD
+    10053: 100000,  # SpotBrent
+    10054: 100000,  # SpotCrude/WTI
+    10013: 100000,  # XAUUSD (Gold)
+    10014: 100000,  # XAGUSD (Silver)
+    10001: 100000,  # US500
+    10002: 100000,  # NAS100
+    10003: 100000,  # US30
+    # FX pairs
+    1: 100000, 2: 100000, 3: 100000, 4: 100000, 5: 100000,
+    6: 100000, 7: 100000, 8: 100000, 9: 100000,
+}
+DEFAULT_PRICE_DIVISOR = 100000
 
 # Volume conversion: cTrader API units → lots
 # Empirically derived from live account data:
@@ -510,6 +654,8 @@ def bcm_execute_tool(name: str, arguments: dict) -> str:
         res = handle_ctrader_get_balance(arguments)
     elif name == "ctrader_get_positions":
         res = handle_ctrader_get_positions(arguments)
+    elif name == "ctrader_get_spot_prices":
+        res = handle_ctrader_get_spot_prices(arguments)
     elif name == "ctrader_place_order":
         res = handle_ctrader_place_order(arguments)
     elif name == "ctrader_close_position":
