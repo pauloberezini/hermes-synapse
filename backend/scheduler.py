@@ -771,7 +771,49 @@ async def _trigger_agent_task(
 
         # ─────────────────────────────────────────────────────────────────
 
-        response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
+        if agent_id == "bcm_orchestrator":
+            try:
+                from backend.bcm.autonomous_trader import ask_ai_decision, get_technical_analysis
+                target_sym = "BTCUSD"
+                for sym_key in ["BTCUSD", "SpotBrent", "SpotCrude", "XAUUSD", "US500", "GBPUSD", "EURUSD", "BTC", "BRENT", "USOIL", "GOLD"]:
+                    if sym_key.lower() in prompt.lower():
+                        target_sym = "BTCUSD" if sym_key in ("BTC", "BTCUSD") else ("SpotBrent" if sym_key in ("BRENT", "SpotBrent") else ("SpotCrude" if sym_key in ("USOIL", "SpotCrude") else ("XAUUSD" if sym_key in ("GOLD", "XAUUSD") else sym_key)))
+                        break
+
+                analysis_raw = await asyncio.get_event_loop().run_in_executor(
+                    None, get_technical_analysis, target_sym
+                )
+                analysis_data = {}
+                try:
+                    analysis_data = json.loads(analysis_raw)
+                except Exception:
+                    analysis_data = {"ticker": target_sym, "rsi_14": 50.0}
+
+                md_json_str = await asyncio.get_event_loop().run_in_executor(
+                    None, ask_ai_decision, target_sym, analysis_data
+                )
+
+                try:
+                    md_data = json.loads(md_json_str)
+                    acc_sum = md_data.get("account_summary", {})
+                    response_text = (
+                        f"🏛️ **BCM EXECUTIVE AUTONOMOUS DECISION ({target_sym})**\n\n"
+                        f"• **Decision**: `{md_data.get('decision', 'WAIT').upper()}` (Confidence: {md_data.get('confidence', 0)}%)\n"
+                        f"• **Recommended SL**: {md_data.get('recommended_sl') or 'N/A'}\n"
+                        f"• **Recommended TP**: {md_data.get('recommended_tp') or 'N/A'}\n\n"
+                        f"📋 **Account & Equity Audit**:\n{acc_sum.get('equity_status', 'N/A')}\n\n"
+                        f"📊 **Active Positions Audit**:\n{acc_sum.get('open_positions_audit', 'N/A')}\n\n"
+                        f"🎓 **Historical Closed Trade Learnings**:\n{acc_sum.get('historical_learnings', 'N/A')}\n\n"
+                        f"🔍 **Executive Analysis & Rationale**:\n{md_data.get('reasoning', '')}"
+                    )
+                except Exception:
+                    response_text = md_json_str
+            except Exception as _bcm_err:
+                logger.error(f"Error running BCM multi-agent cycle in scheduler: {_bcm_err}")
+                response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
+        else:
+            response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
+
         if not response_text or not response_text.strip():
             response_text = "Sir, the scheduled automation task completed successfully."
 
