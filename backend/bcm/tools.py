@@ -88,6 +88,18 @@ BCM_TOOLS = [
         }
     },
     {
+        "name": "bcm_graphrag_ask",
+        "description": "Запросить историческую аналитику, сетапы, трейды и лог сделок из базы знаний Pride-GraphRAG по названию тикера или паттерну.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Вопрос или поисковый запрос (например: 'Логика по SPY в апреле 2024')"},
+                "channel": {"type": "string", "description": "Фильтр канала: 'pride-premium' или 'trading-plan' (необязательно)"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "ctrader_place_order",
         "description": "Открыть новую рыночную сделку (BUY/SELL) с указанием объема, SL и TP. Side: 1=BUY, 2=SELL.",
         "inputSchema": {
@@ -646,6 +658,37 @@ def handle_bcm_run_autonomous_cycle(args):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def handle_graphrag_query(args: dict) -> dict:
+    """Query Pride-GraphRAG Q&A API (http://localhost:8088/api/v1/analytics/ask).
+
+    Args:
+        args: {"query": str, "channel": Optional[str]}
+
+    Returns:
+        dict: API response with synthesized answer and source citations
+    """
+    query = args.get("query", "")
+    channel = args.get("channel")
+    if not query:
+        return {"error": "Query parameter is required"}
+
+    import requests
+    url = os.environ.get("GRAPHRAG_API_URL", "http://localhost:8088/api/v1/analytics/ask")
+    payload = {"query": query}
+    if channel:
+        payload["channel"] = channel
+
+    timeout_val = int(args.get("timeout", 10))
+    try:
+        resp = requests.post(url, json=payload, timeout=timeout_val)
+        if resp.status_code == 200:
+            return resp.json()
+        return {"error": f"GraphRAG API returned HTTP {resp.status_code}: {resp.text[:300]}"}
+    except Exception as e:
+        logger.warning(f"GraphRAG API error: {e}")
+        return {"error": f"Failed to connect to Pride-GraphRAG API ({url}): {e}"}
+
+
 # Main router
 def bcm_execute_tool(name: str, arguments: dict) -> str:
     logger.info(f"BCM local tool router: {name} with {arguments}")
@@ -668,6 +711,8 @@ def bcm_execute_tool(name: str, arguments: dict) -> str:
         res = handle_bcm_get_technical_indicators(arguments)
     elif name == "bcm_get_market_experience":
         res = handle_bcm_get_market_experience(arguments)
+    elif name == "bcm_graphrag_ask":
+        res = handle_graphrag_query(arguments)
     elif name == "bcm_run_autonomous_cycle":
         res = handle_bcm_run_autonomous_cycle(arguments)
     else:

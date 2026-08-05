@@ -774,6 +774,12 @@ async def _trigger_agent_task(
         response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
         if not response_text or not response_text.strip():
             response_text = "Sir, the scheduled automation task completed successfully."
+
+        # Strip unwanted system log header prefixes requested by user
+        for prefix in ["[SYSTEM LOG: AUTONOMOUS CYCLE COMPLETED]", "SYSTEM LOG: AUTONOMOUS CYCLE COMPLETED", "[SYSTEM LOG]", "SYSTEM LOG:"]:
+            if response_text.startswith(prefix):
+                response_text = response_text[len(prefix):].lstrip("\n: ")
+
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
         suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
         saved_ids = agent_instance.last_saved_ids.get(session_id, {})

@@ -271,14 +271,131 @@ def get_live_spot_prices(symbol_ids: list = None):
         print(f"⚠️ Error fetching live spot prices: {e}")
         return {}
 
+def get_macro_terminal_context(ticker: str) -> str:
+    """Fetch live news, sentiment, and macro context from Macro Terminal MCP server."""
+    try:
+        from backend.mcp_client import MCPServerClient
+        import asyncio
+
+        config = {'url': 'http://localhost:8100/mcp', 'headers': {}}
+        client = MCPServerClient('macro-terminal', config)
+
+        async def _fetch():
+            await client.start()
+            blocks = []
+            # 1. Ticker specific news
+            try:
+                raw_news = await client.call_tool('macro_get_ai_ticker_news', {'ticker': ticker})
+                if raw_news:
+                    blocks.append(f"TICKER NEWS & SENTIMENT ({ticker}):\n{str(raw_news)[:1500]}")
+            except Exception as _ne:
+                print(f"⚠️ Macro Terminal ticker news error: {_ne}")
+
+            # 2. General news sentiment summary
+            try:
+                raw_sent = await client.call_tool('macro_get_sentiment_summary', {})
+                if raw_sent:
+                    blocks.append(f"MARKET SENTIMENT SUMMARY:\n{str(raw_sent)[:1000]}")
+            except Exception as _se:
+                print(f"⚠️ Macro Terminal sentiment error: {_se}")
+
+            return "\n\n".join(blocks)
+
+        # Run async call safely
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(lambda: asyncio.run(_fetch())).result(timeout=10)
+            else:
+                return loop.run_until_complete(_fetch())
+        except Exception:
+            return asyncio.run(_fetch())
+    except Exception as e:
+        print(f"⚠️ Macro Terminal context fetch error: {e}")
+        return ""
+
+
+def fetch_graphrag_playbook(ticker: str) -> str:
+    """Fetch historical trading channel playbook & retrospectives from Pride-GraphRAG."""
+    try:
+        try:
+            from backend.bcm.tools import handle_graphrag_query
+        except ImportError:
+            from tools import handle_graphrag_query
+
+        res = handle_graphrag_query({"query": f"Историческая логика, сетапы и результаты по {ticker}"})
+        if isinstance(res, dict) and "answer" in res:
+            return res.get("answer", "")
+        elif isinstance(res, dict) and "error" not in res:
+            return str(res)
+        return ""
+    except Exception as e:
+        print(f"⚠️ Pride-GraphRAG playbook fetch error: {e}")
+        return ""
+
+
+# Per-role AI model selection (overrideable via environment variables)
+DEFAULT_MODEL = os.environ.get("BCM_MODEL", "deepseek/deepseek-chat")
+ROLE_MODELS = {
+    "Quant Analyst": os.environ.get("BCM_MODEL_QUANT", DEFAULT_MODEL),
+    "Macro Analyst": os.environ.get("BCM_MODEL_MACRO", DEFAULT_MODEL),
+    "Risk Manager": os.environ.get("BCM_MODEL_RISK", DEFAULT_MODEL),
+    "Managing Director": os.environ.get("BCM_MODEL_MD", DEFAULT_MODEL),
+}
+
+# Role-specific institutional system pre-prompts
+ROLE_SYSTEM_PROMPTS = {
+    "Quant Analyst": (
+        "You are the Lead Quantitative & Technical Analyst at Berezini Capital Management (BCM). "
+        "Your mandate is to perform rigorous technical analysis, price action evaluation, and momentum assessment. "
+        "Analyze technical indicators (RSI, ATR, Keltner Channels), structural price shifts, and historical setup patterns from GraphRAG. "
+        "Provide a data-driven report with clear support/resistance zones, trend bias, and momentum signals."
+    ),
+    "Macro Analyst": (
+        "You are the Senior Macro & Geopolitical Strategist at Berezini Capital Management (BCM). "
+        "Your mandate is to evaluate global macroeconomic drivers, central bank interest rate policies, energy market trends, "
+        "and live news sentiment from Berezini Macro Terminal. "
+        "Provide a clear macro risk assessment (Bullish / Bearish / Neutral) and highlight tail-risk events."
+    ),
+    "Risk Manager": (
+        "You are the Chief Risk Officer (CRO) at Berezini Capital Management (BCM). "
+        "Your sole mandate is capital preservation, strict risk containment, and drawdown prevention. "
+        "You MUST verify ATR volatility safety margins, check for a minimum 1:1.5 Risk-to-Reward ratio for proposed SL/TP, "
+        "review active cTrader open positions to prevent duplicate exposure, and veto any high-risk setup."
+    ),
+    "Managing Director": (
+        "You are the Managing Director & Chief Investment Officer (CIO) at Berezini Capital Management (BCM). "
+        "Your mandate is executive portfolio leadership, multi-agent synthesis, and continuous learning from trade execution outcomes. "
+        "You MUST produce a comprehensive, detailed, in-depth analytical breakdown covering: "
+        "1. ACCOUNT & PORTFOLIO HEALTH: Detailed audit of Balance, Equity, Margin Usage, Free Margin, and Floating PnL. "
+        "2. ACTIVE POSITIONS & ORDERS AUDIT: Thorough evaluation of every open trade, volume, entry vs current price, SL/TP safety. "
+        "3. HISTORICAL CLOSED TRADES & LEARNING: Analysis of past completed trades, realized PnL, win-rate %, and lessons learned from past mistakes. "
+        "4. MULTI-AGENT SYNTHESIS: Cross-referencing Quant Analyst, Macro Analyst, and Risk Manager reports. "
+        "5. EXECUTIVE ACTION PLAN: A binding decision ('buy'|'sell'|'wait') with a detailed, in-depth reasoning essay and confidence rating. "
+        "Your output MUST be valid JSON with keys: 'decision', 'reasoning', 'confidence', 'account_summary', 'recommended_sl', 'recommended_tp'."
+    ),
+}
+
+
 def call_llm(role_name, prompt):
-    """Generic helper to call LLM with a specific role."""
+    """Generic helper to call LLM with a specific role, system pre-prompt, and targeted model."""
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Select role-specific model and system prompt
+    model_to_use = ROLE_MODELS.get(role_name, DEFAULT_MODEL)
+    sys_prompt = ROLE_SYSTEM_PROMPTS.get(
+        role_name,
+        f"You are the {role_name} at Berezini Capital Management. Current Time: {current_time}"
+    )
+    full_system_content = f"{sys_prompt}\n\nCurrent UTC Time: {current_time}"
+
     payload = {
-        "model": MODEL,
+        "model": model_to_use,
         "messages": [
-            {"role": "system", "content": f"You are the {role_name} at Remizov Quantum Capital. Current Time: {current_time}"},
+            {"role": "system", "content": full_system_content},
             {"role": "user", "content": prompt}
         ]
     }
@@ -290,6 +407,60 @@ def call_llm(role_name, prompt):
     except Exception as e:
         return f"Agent {role_name} Error: {str(e)}"
 
+
+def get_completed_trades_summary(limit=10) -> str:
+    """Fetch completed/closed trades history from SQLite database memory."""
+    try:
+        import sqlite3
+        workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_path = os.path.join(workspace_root, "logs/bcm_memory.db")
+        if not os.path.exists(db_path):
+            return "HISTORICAL CLOSED TRADES: No recorded past trade history yet (clean database)."
+
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("""
+            SELECT trade_id, timestamp, symbol, side, volume, entry_price, exit_price, pnl, status, reasoning 
+            FROM trades 
+            WHERE status='CLOSED' OR pnl IS NOT NULL 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        """, (limit,))
+        rows = c.fetchall()
+
+        c.execute("SELECT COUNT(*), SUM(pnl), SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) FROM trades WHERE status='CLOSED'")
+        summary_row = c.fetchone()
+        conn.close()
+
+        total_closed = summary_row[0] or 0
+        total_pnl = summary_row[1] or 0.0
+        winning_trades = summary_row[2] or 0
+        win_rate = (winning_trades / total_closed * 100.0) if total_closed > 0 else 0.0
+
+        if not rows:
+            return (
+                f"HISTORICAL CLOSED TRADES SUMMARY:\n"
+                f"• Total Closed Trades: {total_closed}\n"
+                f"• Total Realized PnL: ${total_pnl:.2f}\n"
+                f"• Historical Win Rate: {win_rate:.1f}%\n"
+                f"• Status: No individual closed trade post-mortems logged yet."
+            )
+
+        trade_lines = [
+            f"HISTORICAL CLOSED TRADES & LEARNING LOG (Total Closed: {total_closed}, Win Rate: {win_rate:.1f}%, Realized PnL: ${total_pnl:.2f}):"
+        ]
+        for r in rows:
+            t_id, ts, sym, side, vol, entry, exit_p, pnl, st, reason = r
+            pnl_val = pnl or 0.0
+            pnl_str = f"+${pnl_val:.2f}" if pnl_val >= 0 else f"-${abs(pnl_val):.2f}"
+            trade_lines.append(
+                f"  • [{ts[:16]}] {sym} {side} {vol} lots | Entry: {entry} -> Exit: {exit_p} | PnL: {pnl_str} | Post-mortem/Reasoning: {reason[:150]}"
+            )
+        return "\n".join(trade_lines)
+    except Exception as e:
+        return f"⚠️ Error fetching closed trades history: {e}"
+
+
 def ask_ai_decision(ticker, analysis_data):
     """A true Multi-Agent workflow: Analyst -> Risk Manager -> Managing Director."""
     _, live_pos_summary = get_live_ctrader_positions()
@@ -300,6 +471,17 @@ def ask_ai_decision(ticker, analysis_data):
     if ticker_id and ticker_id not in spot_ids:
         spot_ids.insert(0, ticker_id)
     live_prices = get_live_spot_prices(spot_ids)
+
+    # Fetch account equity & margin balance
+    equity, free_margin = get_account_balance()
+    closed_trades_history = get_completed_trades_summary(limit=10)
+
+    # Fetch Pride-GraphRAG historical playbook & trade retrospectives
+    graphrag_playbook = fetch_graphrag_playbook(ticker)
+    graphrag_block = (
+        f"\n\n--- PRIDE-GRAPHRAG HISTORICAL PLAYBOOK & RETROSPECTIVES ({ticker}) ---\n{graphrag_playbook}\n---------------------------------------------------------------\n"
+        if graphrag_playbook else ""
+    )
 
     # Format live prices block for LLM context
     if live_prices:
@@ -327,10 +509,22 @@ def ask_ai_decision(ticker, analysis_data):
         f"{live_price_block}"
     )
 
+    account_audit_block = (
+        f"\n\n--- BCM ACCOUNT EQUITY & MARGIN AUDIT ---\n"
+        f"• Total Account Equity: ${equity:,.2f}\n"
+        f"• Free Available Margin: ${free_margin:,.2f}\n"
+        f"• Active Positions Summary:\n{live_pos_summary}\n"
+        f"-----------------------------------------\n"
+        f"\n--- CLOSED TRADES LEARNING LOG & PERFORMANCE ---\n"
+        f"{closed_trades_history}\n"
+        f"-------------------------------------------------\n"
+    )
+
     print("--- 🕵️ Calling QUANT ANALYST ---")
     analyst_prompt = f"""Analyze these indicators and Remizov shift for {ticker}. 
     Focus on momentum and structural shifts. 
     Check 'past_experience' for historical similarities: {analysis_data}
+    {graphrag_block}
     {positions_guardrail}"""
     analyst_report = call_llm("Quant Analyst", analyst_prompt)
     print(f"Analyst Report Length: {len(str(analyst_report))}")
@@ -346,13 +540,23 @@ def ask_ai_decision(ticker, analysis_data):
             print(f"   Oil context fetched ({len(raw_oil)} chars)")
         else:
             print("   WARNING: Petro-Macro Terminal unavailable, using training data")
+
+    # Fetch live Macro Terminal MCP context (news sentiment, ticker insights)
+    macro_terminal_data = get_macro_terminal_context(ticker)
+    macro_terminal_block = (
+        f"\n\n--- LIVE BEREZINI MACRO TERMINAL ANALYTICS ---\n{macro_terminal_data}\n-----------------------------------------------\n"
+        if macro_terminal_data else ""
+    )
+
     macro_prompt = f"""You are the Macro & Sentiment Analyst for Berezini Capital Management.
     Today is {current_date}. We are analyzing {ticker}.
     {oil_context}
+    {macro_terminal_block}
     {positions_guardrail}
     Please provide a brief assessment of the current macroeconomic environment, central bank policies (Fed/BoE/etc.), geopolitical risks, and overall sentiment that could affect {ticker}. 
-    Since you do not have live browsing in this exact call, rely on your latest training data and general structural macro trends for this asset."""
+    Incorporate the live Macro Terminal sentiment and news data provided above into your analysis."""
     macro_report = call_llm("Macro Analyst", macro_prompt)
+
     print(f"Macro Report Length: {len(str(macro_report))}")
 
     print("--- 🛡️ Calling RISK MANAGER ---")
@@ -362,23 +566,44 @@ def ask_ai_decision(ticker, analysis_data):
     DATA: {analysis_data} 
     QUANT: {analyst_report}
     MACRO: {macro_report}
+    {graphrag_block}
     {positions_guardrail}"""
     risk_report = call_llm("Risk Manager", risk_prompt)
+
     print(f"Risk Report Length: {len(str(risk_report))}")
 
     print("--- 🏦 Calling MANAGING DIRECTOR ---")
     md_prompt = f"""
-    Final decision for {ticker} based on BCM Team reports and historical experience.
+    You are the Managing Director & CIO of Berezini Capital Management.
+    Make the final binding executive decision for {ticker} based on complete team reports, account health, active positions, and lessons from completed trades.
+
+    === TEAM REPORTS ===
     QUANT REPORT: {analyst_report}
     MACRO REPORT: {macro_report}
     RISK REPORT: {risk_report}
+
+    === ACCOUNT HEALTH & POSITIONS AUDIT ===
+    {account_audit_block}
+
     {positions_guardrail}
-    
-    Respond ONLY in JSON format:
+
+    === MANDATE FOR DETAILED EXECUTIVE RESPONSE ===
+    1. Conduct a thorough, in-depth evaluation of current open positions, unrealized PnL, and account margin safety.
+    2. Review the closed trades learning log and historical win rate to ensure past mistakes are not repeated.
+    3. Synthesize Quant, Macro, and Risk reports to decide whether to open a trade or wait.
+
+    Respond ONLY in valid JSON format with this exact structure:
     {{
       "decision": "buy" | "sell" | "wait",
-      "reasoning": "summary of why you chose this, referencing past experience if relevant",
-      "confidence": 0-100 (Avoid generic scores like 50/75. Be precise based on signal strength)
+      "reasoning": "Comprehensive, highly detailed executive analysis covering account equity status, active positions audit, past trade lessons learned, and clear technical/macro justification.",
+      "confidence": 0-100,
+      "account_summary": {{
+        "equity_status": "Status of account equity, margin, and capital preservation",
+        "open_positions_audit": "Detailed audit of active open positions, unrealized PnL, and SL/TP status",
+        "historical_learnings": "Key takeaways from past closed trades and historical win rate"
+      }},
+      "recommended_sl": <number or null>,
+      "recommended_tp": <number or null>
     }}
     """
     final_decision_raw = call_llm("Managing Director", md_prompt)
