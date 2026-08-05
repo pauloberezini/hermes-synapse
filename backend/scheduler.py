@@ -748,7 +748,7 @@ async def _trigger_agent_task(
 
                 # Also fetch live spot prices for the core watchlist
                 spot_data = await asyncio.get_event_loop().run_in_executor(
-                    None, handle_ctrader_get_spot_prices, {"symbol_ids": [10028, 10053, 10054, 10013]}
+                    None, handle_ctrader_get_spot_prices, {"symbol_ids": [10028, 10053, 10054, 10013, 10001, 2, 1]}
                 )
                 if isinstance(spot_data, dict) and spot_data.get("prices"):
                     price_lines = []

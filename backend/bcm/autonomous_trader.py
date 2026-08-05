@@ -155,9 +155,11 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 TICKER_MAP = {
     "BTC": {"analysis": "BTC-USD", "trade_id": 10028, "volume": 0.01},
     "GBPUSD": {"analysis": "GBPUSD=X", "trade_id": 2, "volume": 1000},
+    "EURUSD": {"analysis": "EURUSD=X", "trade_id": 1, "volume": 1000},
     "US500": {"analysis": "^GSPC", "trade_id": 10001, "volume": 0.1},
     "BRENT": {"analysis": "BZ=F", "trade_id": 10053, "volume": 1},
-    "USOIL": {"analysis": "CL=F", "trade_id": 10054, "volume": 1}
+    "USOIL": {"analysis": "CL=F", "trade_id": 10054, "volume": 1},
+    "GOLD": {"analysis": "GC=F", "trade_id": 10013, "volume": 1}
 }
 
 def get_live_ctrader_positions():
@@ -467,7 +469,7 @@ def ask_ai_decision(ticker, analysis_data):
 
     # Fetch live spot prices for the ticker being analysed + key watchlist symbols
     ticker_id = TICKER_MAP.get(ticker, {}).get("trade_id")
-    spot_ids = [10028, 10053, 10054, 10013]  # BTC, SpotBrent, SpotCrude, Gold
+    spot_ids = [10028, 10053, 10054, 10013, 10001, 2, 1]  # BTC, SpotBrent, SpotCrude, Gold, US500, GBPUSD, EURUSD
     if ticker_id and ticker_id not in spot_ids:
         spot_ids.insert(0, ticker_id)
     live_prices = get_live_spot_prices(spot_ids)
