@@ -22,6 +22,8 @@ import {
   Download,
   Clock,
   Zap,
+  Maximize2,
+  Check,
   X as XIcon
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig, ChatSession } from '../types';
@@ -221,6 +223,19 @@ export function ChatTab({
   };
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  const [fullscreenMsg, setFullscreenMsg] = React.useState<ChatMessage | null>(null);
+  const [copiedFullscreen, setCopiedFullscreen] = React.useState(false);
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && fullscreenMsg) {
+        setFullscreenMsg(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullscreenMsg]);
 
   // Auto-resize textarea as content changes
   React.useEffect(() => {
@@ -888,6 +903,29 @@ export function ChatTab({
                               : <Play size={12} fill="currentColor" />}
                           </button>
                         )}
+                        {/* Maximize / Fullscreen button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFullscreenMsg(msg);
+                          }}
+                          title="Развернуть ответ на весь экран (Fullscreen)"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '2px 4px',
+                            borderRadius: '4px',
+                            color: 'rgba(0, 240, 255, 0.45)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            transition: 'color 0.2s, transform 0.15s'
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-cyan)')}
+                          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(0, 240, 255, 0.45)')}
+                        >
+                          <Maximize2 size={12} />
+                        </button>
                         {msg.id && (
                           <span style={styles.chatIdLabel}>ID: {msg.id}</span>
                         )}
@@ -896,7 +934,13 @@ export function ChatTab({
                         </span>
                       </div>
                     </div>
-                    <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                    <div 
+                      style={{ ...styles.msgText, cursor: 'pointer' }}
+                      onDoubleClick={() => setFullscreenMsg(msg)}
+                      title="Двойной клик — развернуть ответ на весь экран"
+                    >
+                      {renderMarkdown(msg.content)}
+                    </div>
                     {/* Inline missing-env configuration card */}
                     {msg.role === 'assistant' && (() => {
                       const missingKey = detectMissingEnvKey(msg.content);
@@ -1057,6 +1101,131 @@ export function ChatTab({
           </div>
         </div>
       </div>
+
+      {/* Fullscreen Message View Modal */}
+      {fullscreenMsg && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 99999,
+            backgroundColor: 'rgba(3, 10, 20, 0.96)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            display: 'flex',
+            flexDirection: 'column',
+            animation: 'fadeIn 0.15s ease-out'
+          }}
+        >
+          {/* Top Bar */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '16px 36px',
+            borderBottom: '1px solid rgba(0, 240, 255, 0.15)',
+            backgroundColor: 'rgba(0, 240, 255, 0.03)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <span style={{
+                padding: '4px 12px',
+                borderRadius: '6px',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                fontFamily: 'var(--font-mono)',
+                letterSpacing: '0.5px',
+                backgroundColor: fullscreenMsg.role === 'user' ? 'rgba(255, 159, 0, 0.15)' : 'rgba(0, 240, 255, 0.15)',
+                color: fullscreenMsg.role === 'user' ? 'var(--accent-orange)' : 'var(--accent-cyan)',
+                border: `1px solid ${fullscreenMsg.role === 'user' ? 'rgba(255, 159, 0, 0.3)' : 'rgba(0, 240, 255, 0.3)'}`
+              }}>
+                {fullscreenMsg.role === 'user' ? 'CREATOR' : 'JARVIS ASSISTANT'}
+              </span>
+              {fullscreenMsg.id && (
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                  ID: {fullscreenMsg.id}
+                </span>
+              )}
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                {formatMessageTimestamp(fullscreenMsg.timestamp || fullscreenMsg.created_at)}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* Copy Button */}
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(fullscreenMsg.content);
+                  setCopiedFullscreen(true);
+                  setTimeout(() => setCopiedFullscreen(false), 2000);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  color: copiedFullscreen ? '#10b981' : 'var(--text-primary)',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                title="Копировать текст сообщения"
+              >
+                {copiedFullscreen ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                <span>{copiedFullscreen ? 'Скопировано!' : 'Копировать'}</span>
+              </button>
+
+              {/* Close Button */}
+              <button
+                onClick={() => setFullscreenMsg(null)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 18px',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#ef4444',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                title="Закрыть полноэкранный режим (Esc)"
+              >
+                <XIcon size={16} />
+                <span>Закрыть (Esc)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Fullscreen Body Scroll */}
+          <div style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '40px 60px',
+            maxWidth: '1280px',
+            width: '100%',
+            margin: '0 auto',
+            boxSizing: 'border-box'
+          }}>
+            <div style={{
+              fontSize: '1.05rem',
+              lineHeight: 1.7,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-main)'
+            }}>
+              {renderMarkdown(fullscreenMsg.content)}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
