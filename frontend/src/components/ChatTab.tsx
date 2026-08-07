@@ -886,7 +886,11 @@ export function ChatTab({
                     <div style={styles.msgHeader}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={msg.role === 'user' ? styles.userLabel : styles.assistantLabel}>
-                          {msg.role === 'user' ? 'CREATOR' : 'JARVIS'}
+                          {msg.role === 'user' ? 'CREATOR' : (() => {
+                            const activeSessionAgentId = chatSessions.find(s => s.id === currentChatId)?.agent_id || currentChatId;
+                            const matchedAgent = (Array.isArray(subagents) ? subagents : []).find(a => a.id === activeSessionAgentId);
+                            return matchedAgent ? matchedAgent.name.toUpperCase() : 'JARVIS';
+                          })()}
                         </span>
                         {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
                           <span style={{
