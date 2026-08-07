@@ -417,12 +417,13 @@ export function TaskBoardTab() {
             />
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Initial Status</label>
                 <select
                   value={newStatus}
                   onChange={e => setNewStatus(e.target.value as Task['status'])}
                   className="form-input"
+                  style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}
                 >
                   {COLUMNS.map(c => (
                     <option key={c.id} value={c.id}>{c.title}</option>
@@ -430,20 +431,26 @@ export function TaskBoardTab() {
                 </select>
               </div>
 
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Assign Agent / Orchestrator</label>
                 <select
                   value={newAssignee}
                   onChange={e => setNewAssignee(e.target.value)}
                   className="form-input"
                   style={{
+                    width: '100%',
+                    maxWidth: '100%',
+                    boxSizing: 'border-box',
                     backgroundColor: '#0a0e1a',
                     color: '#fff',
                     border: '1px solid rgba(0, 240, 255, 0.3)',
                     borderRadius: '6px',
                     padding: '8px 10px',
                     fontSize: '0.8rem',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden'
                   }}
                 >
                   <option value="">-- Unassigned --</option>

@@ -13,6 +13,7 @@ import { LayerSandboxDrawer } from './architecture/LayerSandboxDrawer';
 export const SKILLS_LIST = [
   { id: 'web_search', name: 'Web Search', desc: 'DuckDuckGo search, weather, RSS news', color: 'var(--accent-cyan, #06b6d4)' },
   { id: 'market_monitor', name: 'Market Monitor', desc: 'Stock quotes and alerts', color: '#10b981' },
+  { id: 'bcm', name: 'BCM Trading Engine', desc: 'cTrader FIX API, Pepperstone execution & risk', color: '#f43f5e' },
   { id: 'obsidian_rag', name: 'Obsidian Vault', desc: 'Read and write Obsidian notes', color: '#8b5cf6' },
   { id: 'todoist_sync', name: 'Todoist Tasks', desc: 'Sync Todoist task lists', color: '#ef4444' },
   { id: 'google_calendar', name: 'Google Calendar', desc: 'Calendar scheduling', color: '#f59e0b' },
@@ -569,7 +570,7 @@ export function NetworkTab({
             {/* Direct Orchestrator to Child Connections */}
             {visibleSubagentNodes.map(node => {
               if (node.parent_id) {
-                const parentNode = subagents.find(p => p.id === node.parent_id);
+                const parentNode = visibleSubagentNodes.find(p => p.id === node.parent_id);
                 if (parentNode) {
                   const x1 = (parentNode.x || 100) + 230;
                   const y1 = (parentNode.y || 100) + 50;
@@ -599,6 +600,7 @@ export function NetworkTab({
               const nodeSkillIds = node.skills.split(',').map((s: string) => s.trim()).filter(Boolean);
               return nodeSkillIds.map((skId: string) => {
                 const skIndex = SKILLS_LIST.findIndex(s => s.id === skId);
+                if (skIndex === -1 && !skillPositions[skId]) return null;
                 const pos = skillPositions[skId] || { x: 1050, y: 50 + skIndex * 120 };
                 const x1 = (node.x || 100) + 230;
                 const y1 = (node.y || 100) + 50;

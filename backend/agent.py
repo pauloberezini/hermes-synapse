@@ -508,6 +508,7 @@ class JarvisAgent:
                         "model": self.model,
                         "messages": messages,
                         "temperature": 0.7,
+                        "max_tokens": 4096,
                     }
                     if "deepseek-r1" not in self.model.lower():
                         payload["tools"] = TOOLS_SCHEMA
@@ -901,6 +902,7 @@ class JarvisAgent:
                         "model": subagent_model,
                         "messages": messages,
                         "temperature": subagent.get("temperature", 0.7),
+                        "max_tokens": 4096,
                     }
                     if "deepseek-r1" not in subagent_model.lower():
                         payload["tools"] = subagent_tools

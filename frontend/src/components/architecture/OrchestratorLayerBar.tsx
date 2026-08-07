@@ -1,7 +1,5 @@
 import React from 'react';
 import { 
-  Layers, 
-  Globe, 
   ChevronRight, 
   Plus, 
   Maximize2, 
@@ -16,8 +14,8 @@ export interface BreadcrumbItem {
 }
 
 interface OrchestratorLayerBarProps {
-  viewMode: 'layer' | 'mesh';
-  setViewMode: (mode: 'layer' | 'mesh') => void;
+  viewMode?: 'layer' | 'mesh';
+  setViewMode?: (mode: 'layer' | 'mesh') => void;
   activeOrchestratorId: string;
   setActiveOrchestratorId: (id: string) => void;
   breadcrumbs: BreadcrumbItem[];
@@ -32,8 +30,6 @@ interface OrchestratorLayerBarProps {
 }
 
 export function OrchestratorLayerBar({
-  viewMode,
-  setViewMode,
   activeOrchestratorId,
   setActiveOrchestratorId,
   breadcrumbs,
@@ -58,111 +54,57 @@ export function OrchestratorLayerBar({
       flexWrap: 'wrap',
       zIndex: 10
     }}>
-      {/* Left: View Mode Toggle & Breadcrumbs */}
+      {/* Left: Active Orchestrator Selector & Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Mode Switcher */}
-        <div style={{
-          display: 'flex',
-          background: 'rgba(0,0,0,0.3)',
-          borderRadius: '8px',
-          padding: '3px',
-          border: '1px solid rgba(255,255,255,0.08)'
-        }}>
-          <button
-            onClick={() => setViewMode('layer')}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted, #6b7280)', fontWeight: 500 }}>
+            Active Orchestrator:
+          </span>
+          <select
+            value={activeOrchestratorId}
+            onChange={(e) => setActiveOrchestratorId(e.target.value)}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 12px',
+              background: 'rgba(15, 23, 42, 0.8)',
+              color: '#f3f4f6',
+              border: '1px solid rgba(255,255,255,0.15)',
               borderRadius: '6px',
+              padding: '5px 10px',
               fontSize: '13px',
-              fontWeight: 500,
-              border: 'none',
-              cursor: 'pointer',
-              background: viewMode === 'layer' ? 'var(--accent-cyan, #06b6d4)' : 'transparent',
-              color: viewMode === 'layer' ? '#000' : 'var(--text-secondary, #9ca3af)',
-              transition: 'all 0.2s ease'
+              outline: 'none',
+              cursor: 'pointer'
             }}
           >
-            <Layers size={14} />
-            Layer Builder
-          </button>
+            {orchestrators.map(orch => (
+              <option key={orch.id} value={orch.id}>
+                {orch.name} ({orch.id})
+              </option>
+            ))}
+          </select>
 
           <button
-            onClick={() => setViewMode('mesh')}
+            onClick={onNewOrchestrator}
+            title="Add New Orchestrator"
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              padding: '6px 12px',
+              gap: '4px',
+              background: 'rgba(139, 92, 246, 0.2)',
+              color: '#a78bfa',
+              border: '1px solid rgba(139, 92, 246, 0.4)',
               borderRadius: '6px',
-              fontSize: '13px',
-              fontWeight: 500,
-              border: 'none',
+              padding: '5px 10px',
+              fontSize: '12px',
               cursor: 'pointer',
-              background: viewMode === 'mesh' ? 'var(--accent-cyan, #06b6d4)' : 'transparent',
-              color: viewMode === 'mesh' ? '#000' : 'var(--text-secondary, #9ca3af)',
-              transition: 'all 0.2s ease'
+              fontWeight: 500
             }}
           >
-            <Globe size={14} />
-            Global Mesh
+            <Plus size={14} />
+            Orchestrator
           </button>
         </div>
 
-        {/* Orchestrator Select Dropdown (when in layer mode) */}
-        {viewMode === 'layer' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted, #6b7280)', fontWeight: 500 }}>
-              Active Orchestrator:
-            </span>
-            <select
-              value={activeOrchestratorId}
-              onChange={(e) => setActiveOrchestratorId(e.target.value)}
-              style={{
-                background: 'rgba(15, 23, 42, 0.8)',
-                color: '#f3f4f6',
-                border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: '6px',
-                padding: '5px 10px',
-                fontSize: '13px',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              {orchestrators.map(orch => (
-                <option key={orch.id} value={orch.id}>
-                  {orch.name} ({orch.id})
-                </option>
-              ))}
-            </select>
-
-            <button
-              onClick={onNewOrchestrator}
-              title="Add New Orchestrator"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                background: 'rgba(139, 92, 246, 0.2)',
-                color: '#a78bfa',
-                border: '1px solid rgba(139, 92, 246, 0.4)',
-                borderRadius: '6px',
-                padding: '5px 10px',
-                fontSize: '12px',
-                cursor: 'pointer',
-                fontWeight: 500
-              }}
-            >
-              <Plus size={14} />
-              Orchestrator
-            </button>
-          </div>
-        )}
-
         {/* Breadcrumb Trail */}
-        {viewMode === 'layer' && breadcrumbs.length > 1 && (
+        {breadcrumbs.length > 1 && (
           <div style={{
             display: 'flex',
             alignItems: 'center',

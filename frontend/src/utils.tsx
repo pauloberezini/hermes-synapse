@@ -482,7 +482,8 @@ export const formatMessageTimestamp = (timestamp?: string): string => {
     if (isoStr.includes(' ') && !isoStr.includes('T')) {
       isoStr = isoStr.replace(' ', 'T');
     }
-    if (!isoStr.endsWith('Z') && !isoStr.includes('+') && !isoStr.includes('-')) {
+    const timePart = isoStr.includes('T') ? isoStr.split('T')[1] : isoStr;
+    if (!isoStr.endsWith('Z') && !timePart.includes('+') && !timePart.includes('-')) {
       isoStr += 'Z';
     }
     d = new Date(isoStr);
