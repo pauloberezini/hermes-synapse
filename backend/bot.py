@@ -119,6 +119,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_text = update.message.text
     
+    # ⚡ FAST-First CLI v2.0 (Stage 4)
+    if user_text.startswith("/") and user_text.lower() in ["/pnl", "/positions", "/risk", "/balance"]:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        try:
+            import json
+            from backend.bcm.tools import handle_ctrader_get_positions, handle_ctrader_get_balance
+            if user_text.lower() in ["/pnl", "/balance"]:
+                res = handle_ctrader_get_balance({})
+            elif user_text.lower() == "/positions":
+                res = handle_ctrader_get_positions({})
+            else:
+                res = {"status": "Fast command recognized but not fully mapped yet."}
+            
+            reply_text = f"⚡ **FAST EXECUTION** ({user_text}):\n```json\n{json.dumps(res, indent=2, ensure_ascii=False)}\n```"
+            await update.message.reply_text(reply_text, parse_mode="Markdown")
+        except Exception as e:
+            await update.message.reply_text(f"⚡ FAST EXECUTION ERROR: {e}")
+        return
+    
     # Broadcast user's message to dashboard UI immediately
     await manager.broadcast({
         "type": "chat_message",
@@ -263,6 +282,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "logs": DECISION_LOGS[:20]  # Send last 20 logs
     })
 
+async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Global Telegram error handler for handling Conflict and background network issues gracefully."""
+    from telegram.error import Conflict, NetworkError, TimedOut
+    err = context.error
+    if isinstance(err, Conflict):
+        logger.error(
+            "Telegram Conflict error: Terminated by another getUpdates request. "
+            "Make sure only one bot instance is running with this token."
+        )
+    elif isinstance(err, (NetworkError, TimedOut)):
+        logger.warning(f"Telegram network warning: {err}")
+    else:
+        logger.error(f"Telegram exception during update processing: {err}", exc_info=err)
+
 async def init_bot() -> Application:
     """Initializes the Telegram bot application, binds handlers, and starts polling."""
     global telegram_app
@@ -273,6 +306,7 @@ async def init_bot() -> Application:
         
     logger.info("Initializing Telegram bot...")
     telegram_app = ApplicationBuilder().token(token).build()
+    telegram_app.add_error_handler(telegram_error_handler)
     
     # Bind commands
     telegram_app.add_handler(CommandHandler("start", start_command))

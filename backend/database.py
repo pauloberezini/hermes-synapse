@@ -288,11 +288,6 @@ def init_db():
     b.init_schema()
     if isinstance(b, SQLiteBackend):
         _init_sqlite_schema()
-    else:
-        try:
-            _init_sqlite_schema()
-        except Exception:
-            pass
 
 
 def _init_sqlite_schema():
@@ -878,7 +873,9 @@ def _init_postgres_schema():
         """)
 
         conn.commit()
-        _auto_migrate_sqlite_to_postgres(conn)
+        # Remove automatic SQLite to PostgreSQL migration since migration is fully complete
+        # and this causes startup crashes if the old SQLite file is corrupted.
+        # _auto_migrate_sqlite_to_postgres(conn)
     logger.info("PostgreSQL Database initialized successfully.")
 
 
@@ -1898,17 +1895,13 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
 def db_create_task(title: str, description: str = "", status: str = "BACKLOG", assigned_agent_id: str = "") -> int:
     """Create a new Kanban task. Returns created task ID."""
     now = datetime.now(timezone.utc).isoformat()
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO tasks (title, description, status, assigned_agent_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (title, description, status, assigned_agent_id, now, now),
-        )
-        conn.commit()
-        return cursor.lastrowid
+    return _lastrowid(
+        """
+        INSERT INTO tasks (title, description, status, assigned_agent_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (title, description, status, assigned_agent_id, now, now),
+    ) or 0
 
 
 def db_get_tasks(status: Optional[str] = None, assigned_agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -1926,12 +1919,9 @@ def db_get_tasks(status: Optional[str] = None, assigned_agent_id: Optional[str] 
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY id DESC"
 
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, tuple(params))
-        cols = ["id", "title", "description", "status", "assigned_agent_id", "checkout_lock_until", "checkpoint_data", "created_at", "updated_at"]
-        rows = cursor.fetchall()
-        return [dict(zip(cols, r)) for r in rows]
+    rows = _execute(query, tuple(params))
+    cols = ["id", "title", "description", "status", "assigned_agent_id", "checkout_lock_until", "checkpoint_data", "created_at", "updated_at"]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def db_checkout_task(task_id: int, agent_id: str, lock_duration_seconds: int = 300) -> Dict[str, Any]:
@@ -1944,37 +1934,33 @@ def db_checkout_task(task_id: int, agent_id: str, lock_duration_seconds: int = 3
     now_str = now_dt.isoformat()
     lock_until_str = datetime.fromtimestamp(now_dt.timestamp() + lock_duration_seconds, tz=timezone.utc).isoformat()
 
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT checkout_lock_until, assigned_agent_id FROM tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
-        if not row:
-            return {"status": "error", "message": f"Task #{task_id} not found."}
+    rows = _execute("SELECT checkout_lock_until, assigned_agent_id FROM tasks WHERE id = ?", (task_id,))
+    if not rows:
+        return {"status": "error", "message": f"Task #{task_id} not found."}
 
-        existing_lock, existing_agent = row
-        # Check if active lock by another agent exists
-        if existing_lock and existing_lock > now_str and existing_agent and existing_agent != agent_id:
-            return {
-                "status": "locked",
-                "message": f"Task #{task_id} is locked by agent '{existing_agent}' until {existing_lock}."
-            }
-
-        cursor.execute(
-            """
-            UPDATE tasks
-            SET status = 'IN_PROGRESS', assigned_agent_id = ?, checkout_lock_until = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (agent_id, lock_until_str, now_str, task_id),
-        )
-        conn.commit()
-
+    existing_lock, existing_agent = rows[0]
+    # Check if active lock by another agent exists
+    if existing_lock and existing_lock > now_str and existing_agent and existing_agent != agent_id:
         return {
-            "status": "success",
-            "task_id": task_id,
-            "assigned_agent_id": agent_id,
-            "checkout_lock_until": lock_until_str
+            "status": "locked",
+            "message": f"Task #{task_id} is locked by agent '{existing_agent}' until {existing_lock}."
         }
+
+    _rowcount(
+        """
+        UPDATE tasks
+        SET status = 'IN_PROGRESS', assigned_agent_id = ?, checkout_lock_until = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (agent_id, lock_until_str, now_str, task_id),
+    )
+
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "assigned_agent_id": agent_id,
+        "checkout_lock_until": lock_until_str
+    }
 
 
 def db_update_task(task_id: int, title: Optional[str] = None, description: Optional[str] = None,
@@ -2008,20 +1994,12 @@ def db_update_task(task_id: int, title: Optional[str] = None, description: Optio
     params.append(task_id)
 
     query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, tuple(params))
-        conn.commit()
-        return cursor.rowcount > 0
+    return _rowcount(query, tuple(params)) > 0
 
 
 def db_delete_task(task_id: int) -> bool:
     """Delete a task by ID."""
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    return _rowcount("DELETE FROM tasks WHERE id = ?", (task_id,)) > 0
 
 # Auto-initialize database schema on import to prevent missing tables
 init_db()

@@ -153,6 +153,11 @@ export default function App() {
     return getSafeStorageItem('jarvis_mic_enabled') === 'true';
   });
   const [micState, setMicState] = useState<'off' | 'listening' | 'capturing'>('off');
+  const [timerSoundEnabled, setTimerSoundEnabled] = useState<boolean>(() => {
+    const saved = getSafeStorageItem('jarvis_timer_sound_enabled');
+    return saved !== null ? saved === 'true' : false;
+  });
+
   
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
@@ -231,7 +236,11 @@ export default function App() {
   useEffect(() => {
     setSafeStorageItem('jarvis_mic_enabled', String(micEnabled));
   }, [micEnabled]);
+  useEffect(() => {
+    setSafeStorageItem('jarvis_timer_sound_enabled', String(timerSoundEnabled));
+  }, [timerSoundEnabled]);
   useEffect(() => { appSettingsRef.current = appSettings; }, [appSettings]);
+
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
@@ -517,6 +526,27 @@ export default function App() {
     });
   }, []);
 
+  const fetchChatSessions = useCallback(() => {
+    if (!isAuthenticated) return;
+    fetchWithAuth('http://localhost:8000/api/history/sessions')
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => {
+        if (Array.isArray(data)) {
+          setChatSessions(data);
+        }
+      })
+      .catch(err => console.log('Error fetching sessions:', err));
+  }, [isAuthenticated, fetchWithAuth]);
+
+  const fetchTimersData = useCallback(() => {
+    if (!isAuthenticated) return;
+    fetchWithAuth('http://localhost:8000/api/timers')
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => { if (Array.isArray(data)) setTimers(data); })
+      .catch(err => console.log('Error fetching timers:', err));
+  }, [isAuthenticated, fetchWithAuth]);
+
+
   const handleRequestOtp = async () => {
     setAuthStatus('sending');
     setAuthError('');
@@ -687,6 +717,16 @@ export default function App() {
                 });
               }
             }
+            fetchChatSessions();
+          } else if (data.type === 'scheduled_task_executed') {
+            fetchChatSessions();
+            fetchTimersData();
+            if (data.session_id && data.session_id === currentChatIdRef.current) {
+              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+                .then(res => res.ok ? res.json() : Promise.reject(res))
+                .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
+                .catch(err => console.error('Error refreshing session history on task exec:', err));
+            }
           } else if (data.type === 'user_message_id_update') {
             const msgChatId = data.chat_id || 'dashboard';
             if (msgChatId === currentChatIdRef.current) {
@@ -721,8 +761,18 @@ export default function App() {
               }
               return [...prev, { ...data.timer, time_left: 0, status: 'completed' }];
             });
-            playAlarmSound();
-            speakText(`Sir, the timer "${data.timer.label}" is complete.`);
+            fetchChatSessions();
+            fetchTimersData();
+            if (data.session_id && data.session_id === currentChatIdRef.current) {
+              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+                .then(res => res.ok ? res.json() : Promise.reject(res))
+                .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
+                .catch(err => console.error('Error refreshing session history on timer completed:', err));
+            }
+            if (timerSoundEnabled) {
+              playAlarmSound();
+              speakText(`Sir, the timer "${data.timer.label}" is complete.`);
+            }
           } else if (data.type === 'alarm_fired') {
             setTimers((prev) => {
               const exists = prev.some(t => t.id === data.alarm.id);
@@ -731,9 +781,30 @@ export default function App() {
               }
               return [...prev, { ...data.alarm, time_left: 0, status: 'completed' }];
             });
-            playAlarmSound();
-            speakText(`Sir, the alarm "${data.alarm.label}" has gone off.`);
+            fetchChatSessions();
+            fetchTimersData();
+            if (data.session_id && data.session_id === currentChatIdRef.current) {
+              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+                .then(res => res.ok ? res.json() : Promise.reject(res))
+                .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
+                .catch(err => console.error('Error refreshing session history on alarm fired:', err));
+            }
+            if (timerSoundEnabled) {
+              playAlarmSound();
+              speakText(`Sir, the alarm "${data.alarm.label}" has gone off.`);
+            }
+
+          } else if (data.type === 'reminder_fired') {
+            fetchChatSessions();
+            fetchTimersData();
+            if (data.session_id && data.session_id === currentChatIdRef.current) {
+              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+                .then(res => res.ok ? res.json() : Promise.reject(res))
+                .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
+                .catch(err => console.error('Error refreshing session history on reminder fired:', err));
+            }
           } else if (data.type === 'trace_update') {
+
             if (data.trace.agent !== 'Router') {
               setMessages((prev) => [...prev, {
                 role: 'system',
@@ -806,17 +877,6 @@ export default function App() {
       .catch(err => console.log('Error fetching uploads:', err));
   };
 
-  const fetchChatSessions = () => {
-    if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/history/sessions')
-      .then(res => res.ok ? res.json() : Promise.reject(res))
-      .then(data => {
-        if (Array.isArray(data)) {
-          setChatSessions(data);
-        }
-      })
-      .catch(err => console.log('Error fetching sessions:', err));
-  };
 
   const getSessionLabel = (id: string) => {
     if (id === 'dashboard') return 'Main Terminal';
@@ -2003,6 +2063,9 @@ export default function App() {
             setMicEnabled={setMicEnabled}
             isTTSEnabled={isTTSEnabled}
             setIsTTSEnabled={setIsTTSEnabled}
+            timerSoundEnabled={timerSoundEnabled}
+            setTimerSoundEnabled={setTimerSoundEnabled}
+
             isGenerating={isGenerating}
             playingMsgIndex={playingMsgIndex}
             setPlayingMsgIndex={setPlayingMsgIndex}
@@ -2106,7 +2169,10 @@ export default function App() {
             onTaskUpdated={() => {
               fetchChatSessions();
             }}
+            timerSoundEnabled={timerSoundEnabled}
+            setTimerSoundEnabled={setTimerSoundEnabled}
           />
+
         )}
 
         {activeTab === 'tools' && (

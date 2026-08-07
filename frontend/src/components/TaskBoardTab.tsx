@@ -23,8 +23,24 @@ const COLUMNS: { id: Task['status']; title: string; color: string }[] = [
   { id: 'BLOCKED',     title: 'Blocked',     color: '#ef4444' },
 ];
 
+interface AgentOption {
+  id: string;
+  name: string;
+  agent_type?: 'orchestrator' | 'agent' | 'subagent' | string;
+}
+
+const DEFAULT_AGENTS: AgentOption[] = [
+  { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'agent' },
+  { id: 'bcm_orchestrator', name: 'CIO Orchestrator (BCM)', agent_type: 'orchestrator' },
+  { id: 'quant_analyst', name: 'Quant Analyst', agent_type: 'agent' },
+  { id: 'macro_analyst', name: 'Macro Analyst', agent_type: 'agent' },
+  { id: 'risk_manager', name: 'Risk Manager', agent_type: 'agent' },
+  { id: 'compliance_officer', name: 'Compliance Officer', agent_type: 'agent' },
+];
+
 export function TaskBoardTab() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [agentsList, setAgentsList] = useState<AgentOption[]>(DEFAULT_AGENTS);
   const [loading, setLoading] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -48,8 +64,37 @@ export function TaskBoardTab() {
     }
   };
 
+  const fetchSubagents = async () => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    try {
+      const res = await fetch('http://localhost:8000/api/subagents', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const fetchedMap = new Map<string, AgentOption>();
+          DEFAULT_AGENTS.forEach(a => fetchedMap.set(a.id, a));
+          data.forEach((sa: any) => {
+            if (sa.id) {
+              fetchedMap.set(sa.id, {
+                id: sa.id,
+                name: sa.name || sa.id,
+                agent_type: sa.agent_type || 'subagent'
+              });
+            }
+          });
+          setAgentsList(Array.from(fetchedMap.values()));
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch subagents for task board:', e);
+    }
+  };
+
   useEffect(() => {
     fetchTasks();
+    fetchSubagents();
   }, []);
 
   const handleCreateTask = async (e: React.FormEvent) => {
@@ -78,6 +123,25 @@ export function TaskBoardTab() {
       }
     } catch (err) {
       console.error('Failed to create task:', err);
+    }
+  };
+
+  const handleUpdateAssignee = async (taskId: number, assigned_agent_id: string) => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    try {
+      const res = await fetch(`http://localhost:8000/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ assigned_agent_id }),
+      });
+      if (res.ok) {
+        fetchTasks();
+      }
+    } catch (err) {
+      console.error('Failed to update task assignee:', err);
     }
   };
 
@@ -130,6 +194,9 @@ export function TaskBoardTab() {
     }
   };
 
+  const orchestrators = agentsList.filter(a => a.agent_type === 'orchestrator' || a.id.includes('orchestrator'));
+  const regularAgents = agentsList.filter(a => !orchestrators.some(o => o.id === a.id));
+
   return (
     <div style={styles.tabWrapper}>
       {/* Header */}
@@ -147,7 +214,7 @@ export function TaskBoardTab() {
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
-            onClick={fetchTasks}
+            onClick={() => { fetchTasks(); fetchSubagents(); }}
             style={{
               display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px',
               borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)',
@@ -168,14 +235,14 @@ export function TaskBoardTab() {
             }}
           >
             <Plus size={14} />
-            <span>New Ticket</span>
+            <span>New Task</span>
           </button>
         </div>
       </div>
 
       {/* Kanban Board Columns */}
       <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px',
+        display: 'grid', gridTemplateColumns: 'repeat(6, minmax(220px, 1fr))', gap: '12px',
         flex: 1, minHeight: 0, overflowX: 'auto', paddingBottom: '10px'
       }}>
         {COLUMNS.map(col => {
@@ -259,15 +326,36 @@ export function TaskBoardTab() {
                         </span>
                       )}
 
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
-                        {task.assigned_agent_id ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', color: 'var(--accent-cyan)' }}>
-                            <User size={10} />
-                            <span>{task.assigned_agent_id}</span>
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>Unassigned</span>
-                        )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <User size={10} style={{ color: task.assigned_agent_id ? 'var(--accent-cyan)' : 'var(--text-dim)' }} />
+                          <select
+                            value={task.assigned_agent_id || ''}
+                            onChange={e => handleUpdateAssignee(task.id, e.target.value)}
+                            style={{
+                              fontSize: '0.65rem', padding: '2px 4px', borderRadius: '4px',
+                              backgroundColor: 'rgba(0,0,0,0.5)', border: '1px solid rgba(0,240,255,0.2)',
+                              color: task.assigned_agent_id ? 'var(--accent-cyan)' : 'var(--text-dim)',
+                              cursor: 'pointer', maxWidth: '110px'
+                            }}
+                          >
+                            <option value="">Unassigned</option>
+                            {orchestrators.length > 0 && (
+                              <optgroup label="Orchestrators">
+                                {orchestrators.map(a => (
+                                  <option key={a.id} value={a.id}>{a.name}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {regularAgents.length > 0 && (
+                              <optgroup label="Agents">
+                                {regularAgents.map(a => (
+                                  <option key={a.id} value={a.id}>{a.name}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        </div>
 
                         <select
                           value={task.status}
@@ -343,14 +431,41 @@ export function TaskBoardTab() {
               </div>
 
               <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Assign Agent ID</label>
-                <input
-                  type="text"
-                  placeholder="e.g. quant_analyst"
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Assign Agent / Orchestrator</label>
+                <select
                   value={newAssignee}
                   onChange={e => setNewAssignee(e.target.value)}
                   className="form-input"
-                />
+                  style={{
+                    backgroundColor: '#0a0e1a',
+                    color: '#fff',
+                    border: '1px solid rgba(0, 240, 255, 0.3)',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    fontSize: '0.8rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="">-- Unassigned --</option>
+                  {orchestrators.length > 0 && (
+                    <optgroup label="⚡ Orchestrators">
+                      {orchestrators.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.id})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {regularAgents.length > 0 && (
+                    <optgroup label="🤖 Agents & Subagents">
+                      {regularAgents.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.id})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
               </div>
             </div>
 

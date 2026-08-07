@@ -47,3 +47,15 @@ async def test_admin_only_unauthorized():
         update.message.reply_text.assert_called_once_with(
             "Access denied, Sir. I only respond to my designated Creator."
         )
+
+@pytest.mark.asyncio
+async def test_telegram_error_handler_conflict():
+    from backend.bot import telegram_error_handler
+    from telegram.error import Conflict
+    
+    update = MagicMock(spec=Update)
+    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+    context.error = Conflict("Conflict: terminated by other getUpdates request")
+    
+    # Should catch and log conflict error without raising exception
+    await telegram_error_handler(update, context)
