@@ -82,19 +82,30 @@ async def _job_one_shot(
 ) -> None:
     logger.info(f"One-shot timer fired: '{label}' ({duration}s)")
     from backend.activity_logger import log_activity
+    from backend.websocket_manager import manager
+    from backend.database import save_message
     task_session_id = f"task_{job_id}"
     _timer_meta[job_id]["status"] = "completed"
     _register_scheduled_session(job_id, label, "one-shot", agent_id, prompt, status="completed", extra={"duration": duration})
 
+    completion_msg = f"⏰ Timer complete: '{label}' ({duration}s)"
     if agent_id and prompt:
         asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"✅ Timer complete: '{label}'")
+        save_message(task_session_id, "assistant", completion_msg)
         await _send_telegram_alert(
             chat_id,
             f"🏛️ **ATTENTION, SIR**\n\nTimer complete:\n"
             f"• Event: **{label}**\n• Duration: {duration} sec\n• Status: ✅ Completed",
         )
+        await manager.broadcast({
+            "type": "chat_message",
+            "role": "assistant",
+            "content": completion_msg,
+            "chat_id": task_session_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
     await _broadcast_ws({"type": "timer_completed", "timer": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
 
 
@@ -112,20 +123,32 @@ async def _job_alarm(
 ) -> None:
     logger.info(f"Alarm fired: '{label}'")
     from backend.activity_logger import log_activity
+    from backend.websocket_manager import manager
+    from backend.database import save_message
     task_session_id = f"task_{job_id}"
     _timer_meta[job_id]["status"] = "completed"
     _register_scheduled_session(job_id, label, "alarm", agent_id, prompt, status="completed", extra={"target_time": target_time_str})
 
+    completion_msg = f"⏰ Alarm fired: '{label}' ({target_time_str})"
     if agent_id and prompt:
         asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"🔔 Alarm triggered: '{label}'")
+        save_message(task_session_id, "assistant", completion_msg)
         await _send_telegram_alert(
             chat_id,
             f"⏰ **ALARM, SIR**\n\n"
             f"• Event: **{label}**\n• Trigger time: {target_time_str}\n• Status: ✅ Completed",
         )
+        await manager.broadcast({
+            "type": "chat_message",
+            "role": "assistant",
+            "content": completion_msg,
+            "chat_id": task_session_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
     await _broadcast_ws({"type": "alarm_fired", "alarm": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
+
 
 
 async def _job_recurring(
@@ -228,7 +251,15 @@ def add_timer(
                 "created_at": created_at, "task_type": "one-shot"},
         id=timer_id, name=label, replace_existing=True,
     )
-    _timer_meta[timer_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds, "status": "running"}
+    _timer_meta[timer_id] = {
+        "type": "one-shot",
+        "created_at": created_at,
+        "duration": duration_seconds,
+        "status": "running",
+        "agent_id": agent_id,
+        "prompt": prompt,
+        "label": label,
+    }
     _register_scheduled_session(timer_id, label, "one-shot", agent_id, prompt, status="running", extra={"duration": duration_seconds})
     logger.info(f"One-shot timer scheduled: '{label}' in {duration_seconds}s (id={timer_id})")
     return timer_id
@@ -276,7 +307,15 @@ def add_alarm(
                 "created_at": created_at, "task_type": "alarm"},
         id=alarm_id, name=label, replace_existing=True,
     )
-    _timer_meta[alarm_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str, "status": "running"}
+    _timer_meta[alarm_id] = {
+        "type": "alarm",
+        "created_at": created_at,
+        "target_time": target_time_str,
+        "status": "running",
+        "agent_id": agent_id,
+        "prompt": prompt,
+        "label": label,
+    }
     _register_scheduled_session(alarm_id, label, "alarm", agent_id, prompt, status="running", extra={"target_time": target_time_str})
     logger.info(f"Alarm scheduled: '{label}' at {target_time_str} (id={alarm_id})")
     return alarm_id
@@ -299,7 +338,16 @@ def add_recurring_reminder(
                 "created_at": created_at, "task_type": "recurring"},
         id=reminder_id, name=label, replace_existing=True,
     )
-    _timer_meta[reminder_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours, "status": "running"}
+    _timer_meta[reminder_id] = {
+        "type": "recurring",
+        "created_at": created_at,
+        "interval_hours": interval_hours,
+        "status": "running",
+        "agent_id": agent_id,
+        "prompt": prompt,
+        "label": label,
+    }
+
     _register_scheduled_session(reminder_id, label, "recurring", agent_id, prompt, status="running", extra={"interval_hours": interval_hours})
 
     from backend.activity_logger import log_activity
@@ -648,19 +696,53 @@ def get_all_timers() -> List[Dict[str, Any]]:
     jobs = scheduler.get_jobs()
     now_tz = datetime.now(scheduler.timezone)
     result = []
+    seen_ids = set()
+
+    # Pre-fetch session_metadata table for fallback prompt/agent_id lookup
+    db_info_map = {}
+    try:
+        from backend.database import _execute
+        import json
+        rows = _execute("SELECT session_id, title, agent_id, schedule_type, schedule_info FROM session_metadata WHERE is_scheduled = 1")
+        for r in rows:
+            session_id, title, db_agent, schedule_type, schedule_info_raw = r
+            j_id = session_id.replace("task_", "") if session_id and session_id.startswith("task_") else (r[0] or "")
+            if j_id and schedule_info_raw:
+                try:
+                    info = json.loads(schedule_info_raw) if isinstance(schedule_info_raw, str) else schedule_info_raw
+                    db_info_map[j_id] = {
+                        "prompt": info.get("prompt"),
+                        "agent_id": info.get("agent_id") or db_agent,
+                        "label": info.get("label") or title,
+                        "status": info.get("status"),
+                        "created_at": info.get("created_at"),
+                        "interval_hours": info.get("interval_hours"),
+                        "duration": info.get("duration"),
+                        "target_time": info.get("target_time"),
+                        "task_type": schedule_type or info.get("task_type"),
+                    }
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"Error building db_info_map in get_all_timers: {e}")
+
     for job in jobs:
         if job.id == "skill_distillation":
             continue
+        seen_ids.add(job.id)
         kwargs = job.kwargs or {}
         job_id = job.id
-        label = kwargs.get("label", job.name or job_id)
+        db_fallback = db_info_map.get(job_id, {})
+        label = kwargs.get("label") or db_fallback.get("label") or job.name or job_id
         meta = _timer_meta.get(job_id, {})
-        job_type = meta.get("type") or kwargs.get("task_type") or _infer_type(job)
-        created_at = meta.get("created_at") or kwargs.get("created_at", "")
+        job_type = meta.get("type") or kwargs.get("task_type") or db_fallback.get("task_type") or _infer_type(job)
+        created_at = meta.get("created_at") or kwargs.get("created_at") or db_fallback.get("created_at") or ""
         next_run = getattr(job, "next_run_time", None)
         time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
 
         status = meta.get("status", "paused" if next_run is None else "running")
+        agent_id = kwargs.get("agent_id") or meta.get("agent_id") or db_fallback.get("agent_id") or "jarvis"
+        prompt = kwargs.get("prompt") or meta.get("prompt") or db_fallback.get("prompt") or ""
 
         entry: Dict[str, Any] = {
             "id": job_id,
@@ -669,21 +751,62 @@ def get_all_timers() -> List[Dict[str, Any]]:
             "time_left": time_left,
             "type": job_type,
             "created_at": created_at,
-            "agent_id": kwargs.get("agent_id"),
-            "prompt": kwargs.get("prompt"),
+            "agent_id": agent_id,
+            "prompt": prompt,
         }
         if job_type == "recurring":
-            entry["interval_hours"] = kwargs.get("interval_hours") or meta.get("interval_hours")
+            entry["interval_hours"] = kwargs.get("interval_hours") or meta.get("interval_hours") or db_fallback.get("interval_hours")
             entry["fire_count"] = _fire_counts.get(job_id, 0)
         elif job_type == "alarm":
-            entry["target_time"] = kwargs.get("target_time_str") or meta.get("target_time")
+            entry["target_time"] = kwargs.get("target_time_str") or meta.get("target_time") or db_fallback.get("target_time")
         elif job_type == "one-shot":
-            entry["duration"] = kwargs.get("duration") or meta.get("duration")
+            entry["duration"] = kwargs.get("duration") or meta.get("duration") or db_fallback.get("duration")
 
         result.append(entry)
 
-    result.sort(key=lambda x: x.get("time_left", 0))
+    # Also query completed/paused items from session_metadata DB table
+    for j_id, info in db_info_map.items():
+        if not j_id or j_id in seen_ids or j_id == "skill_distillation":
+            continue
+
+        seen_ids.add(j_id)
+        meta = _timer_meta.get(j_id, {})
+        label = info.get("label") or j_id
+        if label.startswith("⏰ "):
+            label = label[2:]
+        elif label.startswith("🔔 "):
+            label = label[2:]
+
+        status = meta.get("status") or info.get("status") or "completed"
+        job_type = info.get("task_type") or meta.get("type") or "one-shot"
+        created_at = meta.get("created_at") or info.get("created_at") or ""
+        agent_id = meta.get("agent_id") or info.get("agent_id") or "jarvis"
+        prompt = meta.get("prompt") or info.get("prompt") or ""
+
+        entry: Dict[str, Any] = {
+            "id": j_id,
+            "label": label,
+            "status": status,
+            "time_left": 0,
+            "type": job_type,
+            "created_at": created_at,
+            "agent_id": agent_id,
+            "prompt": prompt,
+        }
+        if job_type == "recurring":
+            entry["interval_hours"] = info.get("interval_hours") or meta.get("interval_hours")
+            entry["fire_count"] = _fire_counts.get(j_id, 0)
+        elif job_type == "alarm":
+            entry["target_time"] = info.get("target_time") or meta.get("target_time")
+        elif job_type == "one-shot":
+            entry["duration"] = info.get("duration") or meta.get("duration")
+
+        result.append(entry)
+
+    result.sort(key=lambda x: (x.get("status") == "completed", x.get("time_left", 0)))
     return result
+
+
 
 
 def get_all_reminders() -> List[Dict[str, Any]]:
@@ -771,43 +894,42 @@ async def _trigger_agent_task(
 
         # ─────────────────────────────────────────────────────────────────
 
+        bcm_executed = False
         if agent_id == "bcm_orchestrator":
             try:
-                from backend.bcm.autonomous_trader import ask_ai_decision, get_technical_analysis
-                target_sym = "BTCUSD"
+                from backend.bcm.autonomous_trader import ask_ai_decision, get_technical_analysis, format_md_decision_summary, TICKER_MAP
+                requested_syms = []
                 for sym_key in ["BTCUSD", "SpotBrent", "SpotCrude", "XAUUSD", "US500", "GBPUSD", "EURUSD", "BTC", "BRENT", "USOIL", "GOLD"]:
                     if sym_key.lower() in prompt.lower():
-                        target_sym = "BTCUSD" if sym_key in ("BTC", "BTCUSD") else ("SpotBrent" if sym_key in ("BRENT", "SpotBrent") else ("SpotCrude" if sym_key in ("USOIL", "SpotCrude") else ("XAUUSD" if sym_key in ("GOLD", "XAUUSD") else sym_key)))
-                        break
+                        norm_sym = "BTC" if sym_key in ("BTC", "BTCUSD") else ("BRENT" if sym_key in ("BRENT", "SpotBrent") else ("USOIL" if sym_key in ("USOIL", "SpotCrude") else ("GOLD" if sym_key in ("GOLD", "XAUUSD") else sym_key)))
+                        if norm_sym in TICKER_MAP and norm_sym not in requested_syms:
+                            requested_syms.append(norm_sym)
 
-                analysis_raw = await asyncio.get_event_loop().run_in_executor(
-                    None, get_technical_analysis, target_sym
-                )
-                analysis_data = {}
-                try:
-                    analysis_data = json.loads(analysis_raw)
-                except Exception:
-                    analysis_data = {"ticker": target_sym, "rsi_14": 50.0}
-
-                md_json_str = await asyncio.get_event_loop().run_in_executor(
-                    None, ask_ai_decision, target_sym, analysis_data
-                )
-
-                try:
-                    md_data = json.loads(md_json_str)
-                    acc_sum = md_data.get("account_summary", {})
-                    response_text = (
-                        f"🏛️ **BCM EXECUTIVE AUTONOMOUS DECISION ({target_sym})**\n\n"
-                        f"• **Decision**: `{md_data.get('decision', 'WAIT').upper()}` (Confidence: {md_data.get('confidence', 0)}%)\n"
-                        f"• **Recommended SL**: {md_data.get('recommended_sl') or 'N/A'}\n"
-                        f"• **Recommended TP**: {md_data.get('recommended_tp') or 'N/A'}\n\n"
-                        f"📋 **Account & Equity Audit**:\n{acc_sum.get('equity_status', 'N/A')}\n\n"
-                        f"📊 **Active Positions Audit**:\n{acc_sum.get('open_positions_audit', 'N/A')}\n\n"
-                        f"🎓 **Historical Closed Trade Learnings**:\n{acc_sum.get('historical_learnings', 'N/A')}\n\n"
-                        f"🔍 **Executive Analysis & Rationale**:\n{md_data.get('reasoning', '')}"
+                symbols_to_run = requested_syms if requested_syms else list(TICKER_MAP.keys())
+                reports = []
+                for target_sym in symbols_to_run:
+                    analysis_raw = await asyncio.get_event_loop().run_in_executor(
+                        None, get_technical_analysis, target_sym
                     )
-                except Exception:
-                    response_text = md_json_str
+                    analysis_data = {}
+                    try:
+                        analysis_data = json.loads(analysis_raw)
+                    except Exception:
+                        analysis_data = {"ticker": target_sym, "rsi_14": 50.0}
+
+                    md_json_str = await asyncio.get_event_loop().run_in_executor(
+                        None, ask_ai_decision, target_sym, analysis_data
+                    )
+
+                    try:
+                        from backend.bcm.autonomous_trader import format_any_bcm_response
+                        formatted_report = format_any_bcm_response(md_json_str, symbol=target_sym)
+                    except Exception:
+                        formatted_report = str(md_json_str)
+                    reports.append(formatted_report)
+
+                response_text = "\n\n---\n\n".join(reports)
+                bcm_executed = True
             except Exception as _bcm_err:
                 logger.error(f"Error running BCM multi-agent cycle in scheduler: {_bcm_err}")
                 response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
@@ -824,9 +946,16 @@ async def _trigger_agent_task(
 
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
         suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
-        saved_ids = agent_instance.last_saved_ids.get(session_id, {})
-        user_msg_id = saved_ids.get("user")
-        assistant_msg_id = saved_ids.get("assistant")
+
+        if bcm_executed:
+            from backend.database import save_message
+            user_msg_id = save_message(session_id, "user", user_prompt_display)
+            assistant_msg_id = save_message(session_id, "assistant", response_text)
+        else:
+            saved_ids = agent_instance.last_saved_ids.get(session_id, {})
+            user_msg_id = saved_ids.get("user")
+            assistant_msg_id = saved_ids.get("assistant")
+
 
         await manager.broadcast({
             "type": "chat_message",
@@ -952,6 +1081,9 @@ def restore_state() -> None:
                 "status": status,
             }
 
+            if status == "completed":
+                continue
+
             existing_job = scheduler.get_job(job_id)
             if not existing_job:
                 if task_type == "recurring":
@@ -998,6 +1130,7 @@ def restore_state() -> None:
                     if status == "paused":
                         job.pause()
                     restored_count += 1
+
         logger.info(f"Scheduler: restored {restored_count} tasks from session_metadata DB table.")
     except Exception as e:
         logger.error(f"Error in restore_state from DB: {e}")

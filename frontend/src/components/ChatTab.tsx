@@ -4,6 +4,8 @@ import {
   MicOff, 
   Volume2, 
   VolumeX, 
+  Bell,
+  BellOff,
   Trash2, 
   Plus, 
   MessageSquare, 
@@ -43,6 +45,8 @@ interface ChatTabProps {
   setMicEnabled: (val: boolean | ((prev: boolean) => boolean)) => void;
   isTTSEnabled: boolean;
   setIsTTSEnabled: (val: boolean | ((prev: boolean) => boolean)) => void;
+  timerSoundEnabled?: boolean;
+  setTimerSoundEnabled?: (val: boolean | ((prev: boolean) => boolean)) => void;
   isGenerating: boolean;
   playingMsgIndex: number | null;
   setPlayingMsgIndex: (idx: number | null) => void;
@@ -174,7 +178,10 @@ export function ChatTab({
   setMicEnabled,
   isTTSEnabled,
   setIsTTSEnabled,
+  timerSoundEnabled = false,
+  setTimerSoundEnabled,
   isGenerating,
+
   playingMsgIndex,
   setPlayingMsgIndex,
   config,
@@ -355,6 +362,26 @@ export function ChatTab({
             {isTTSEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
             <span>{isTTSEnabled ? 'Voice on' : 'Voice off'}</span>
           </button>
+          {/* Timer Alarm Sound Toggle */}
+          <button
+            id="timer-sound-toggle-btn"
+            onClick={() => setTimerSoundEnabled && setTimerSoundEnabled(v => !v)}
+            className="btn-primary"
+            title={timerSoundEnabled ? 'Turn off timer alarm sound' : 'Turn on timer alarm sound (off by default)'}
+            style={{
+              padding: '6px 12px',
+              border: timerSoundEnabled
+                ? '1px solid rgba(0, 240, 255, 0.4)'
+                : '1px solid rgba(255,255,255,0.15)',
+              color: timerSoundEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
+              boxShadow: timerSoundEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
+              transition: 'all 0.2s',
+            }}
+          >
+            {timerSoundEnabled ? <Bell size={14} /> : <BellOff size={14} />}
+            <span>{timerSoundEnabled ? 'Timer Sound on' : 'Timer Sound off'}</span>
+          </button>
+
           <button onClick={handleClearChat} className="btn-primary" style={{ padding: '6px 12px', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444' }}>
             <Trash2 size={14} />
             <span>Clear Chat</span>

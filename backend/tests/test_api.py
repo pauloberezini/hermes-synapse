@@ -88,9 +88,9 @@ def test_auth_flow():
     import os
     from unittest.mock import AsyncMock, MagicMock
     
-    # 1. Test unauthorized request
+    # 1. Test unauthorized request on protected route
     clean_client = TestClient(app)
-    resp = clean_client.get("/api/status")
+    resp = clean_client.get("/api/config")
     assert resp.status_code == 401
     
     # 2. Test request code

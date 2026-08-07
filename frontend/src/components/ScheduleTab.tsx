@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, Trash2, Info, Edit3, Play, Pause, RotateCcw, X, Check, MessageSquare } from 'lucide-react';
+import { Clock, Trash2, Info, Edit3, Play, Pause, RotateCcw, X, Check, MessageSquare, Bell, BellOff } from 'lucide-react';
 import { styles } from '../styles';
 import { formatTimeLeft } from '../utils';
 
@@ -29,7 +29,10 @@ interface ScheduleTabProps {
   fetchWithAuth?: (url: string, options?: RequestInit) => Promise<Response>;
   onOpenChat?: (sessionId: string) => void;
   onTaskUpdated?: () => void;
+  timerSoundEnabled?: boolean;
+  setTimerSoundEnabled?: (val: boolean | ((prev: boolean) => boolean)) => void;
 }
+
 
 function formatCreatedDate(dateStr?: string) {
   if (!dateStr) return '';
@@ -51,7 +54,10 @@ export function ScheduleTab({
   fetchWithAuth,
   onOpenChat,
   onTaskUpdated,
+  timerSoundEnabled = false,
+  setTimerSoundEnabled,
 }: ScheduleTabProps) {
+
   // Create Form State
   const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
   const [taskLabel, setTaskLabel] = useState('');
@@ -245,12 +251,34 @@ export function ScheduleTab({
 
   return (
     <div style={styles.tabWrapper}>
-      <div style={styles.tabHeader}>
+      <div style={{ ...styles.tabHeader, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 className="glow-text-cyan" style={styles.tabTitle}>SCHEDULES & AUTOMATION</h2>
           <p style={styles.tabSubtitle}>Automate tasks, background processes, and agent actions on a schedule</p>
         </div>
+        <button
+          onClick={() => setTimerSoundEnabled && setTimerSoundEnabled(v => !v)}
+          className="btn-primary"
+          title={timerSoundEnabled ? 'Turn off timer alarm sound' : 'Turn on timer alarm sound (off by default)'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 14px',
+            fontSize: '0.8rem',
+            border: timerSoundEnabled
+              ? '1px solid rgba(0, 240, 255, 0.4)'
+              : '1px solid rgba(255,255,255,0.15)',
+            color: timerSoundEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
+            boxShadow: timerSoundEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
+            transition: 'all 0.2s',
+          }}
+        >
+          {timerSoundEnabled ? <Bell size={16} /> : <BellOff size={16} />}
+          <span>{timerSoundEnabled ? 'Alarm Sound: ON' : 'Alarm Sound: OFF'}</span>
+        </button>
       </div>
+
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '24px', flex: 1, minHeight: 0 }}>
         {/* Left Column: Create Form */}

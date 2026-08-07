@@ -123,7 +123,8 @@ class BCMMemory:
                             "symbol": row[2],
                             "pnl": pnl,
                             "side": side,
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now().isoformat(),
+                            "paradigm": f"Trade closed with PnL {pnl}. Re-evaluate technical entries similar to this condition."
                         }
                     )
                 ]
@@ -157,3 +158,24 @@ class BCMMemory:
         except Exception as e:
             print(f"⚠️ Memory Search Failed: {e}")
             return []
+
+    def extract_paradigms_for_context(self, current_context_data):
+        """Extract paradigms (lessons) from similar past trades for dynamic prompt injection."""
+        experiences = self.get_similar_experience(current_context_data)
+        if not experiences:
+            return "No specific paradigms found for this market context."
+        
+        paradigms = []
+        for exp in experiences:
+            pnl = exp.get("pnl", 0)
+            side = exp.get("side", "UNKNOWN")
+            sym = exp.get("symbol", "UNKNOWN")
+            paradigm_text = exp.get("paradigm", "")
+            
+            if pnl < 0:
+                result = f"📉 AVOID PAST MISTAKE (Lost ${abs(pnl)} on {side} {sym}): {paradigm_text}"
+            else:
+                result = f"📈 SUCCESS PATTERN (Won ${pnl} on {side} {sym}): {paradigm_text}"
+            paradigms.append(result)
+            
+        return "\n".join(paradigms)

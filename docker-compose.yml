@@ -17,6 +17,7 @@ services:
       - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-pro}
       - QDRANT_HOST=qdrant
       - OBSIDIAN_HOST=host.docker.internal
+      - GRAPHRAG_API_URL=${GRAPHRAG_API_URL:-http://host.docker.internal:8088/api/v1/analytics/ask}
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/hermes}
     extra_hosts:
       - "host.docker.internal:host-gateway"

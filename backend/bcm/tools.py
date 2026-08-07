@@ -619,13 +619,14 @@ def handle_bcm_get_market_experience(args):
             from autonomous_trader import get_technical_analysis, calculate_remizov_shift, calculate_atr_keltner
             from memory_manager import BCMMemory
         import yfinance as yf
-        symbol = args.get("symbol")
-        ticker = yf.Ticker(symbol)
+        raw_symbol = args.get("symbol")
+        yf_symbol = _normalize_yf_symbol(raw_symbol)
+        ticker = yf.Ticker(yf_symbol)
         df = ticker.history(period="30d", interval="1d")
-        tech_json = get_technical_analysis(symbol)
+        tech_json = get_technical_analysis(yf_symbol)
         tech_data = json.loads(tech_json) if isinstance(tech_json, str) else tech_json
         shift, _ = calculate_remizov_shift(df)
-        atr_data = calculate_atr_keltner(symbol)
+        atr_data = calculate_atr_keltner(yf_symbol)
         
         context = {
             "rsi": list(tech_data.get("rsi", {}).values())[0] if tech_data.get("rsi") else 50.0,
@@ -638,15 +639,16 @@ def handle_bcm_get_market_experience(args):
         }
         mem = BCMMemory()
         results = mem.get_similar_experience(context)
-        return {"symbol": symbol, "experiences": results}
+        return {"symbol": raw_symbol, "yf_symbol": yf_symbol, "experiences": results}
     except Exception as e:
         return {"error": str(e)}
 
 def handle_bcm_run_autonomous_cycle(args):
     try:
-        from autonomous_trader import run_autonomous_cycle
+        from autonomous_trader import run_autonomous_cycle, format_any_bcm_response
         import io
         import sys
+        import re
         symbol = args.get("symbol")
         old_stdout = sys.stdout
         sys.stdout = buffer = io.StringIO()
@@ -654,9 +656,12 @@ def handle_bcm_run_autonomous_cycle(args):
             run_autonomous_cycle(symbol)
         finally:
             sys.stdout = old_stdout
-        return {"success": True, "output": buffer.getvalue()}
+        raw_output = buffer.getvalue()
+        raw_output = format_any_bcm_response(raw_output, symbol=symbol or "BTC")
+        return {"success": True, "output": raw_output}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
 
 def handle_graphrag_query(args: dict) -> dict:
     """Query Pride-GraphRAG Q&A API (http://localhost:8088/api/v1/analytics/ask).
@@ -673,18 +678,29 @@ def handle_graphrag_query(args: dict) -> dict:
         return {"error": "Query parameter is required"}
 
     import requests
-    url = os.environ.get("GRAPHRAG_API_URL", "http://localhost:8088/api/v1/analytics/ask")
+    default_host = "host.docker.internal" if os.path.exists("/.dockerenv") else "localhost"
+    default_url = f"http://{default_host}:8088/api/v1/analytics/ask"
+    url = os.environ.get("GRAPHRAG_API_URL", default_url)
     payload = {"query": query}
     if channel:
         payload["channel"] = channel
 
-    timeout_val = int(args.get("timeout", 10))
+    timeout_val = int(args.get("timeout", 60))
     try:
         resp = requests.post(url, json=payload, timeout=timeout_val)
         if resp.status_code == 200:
             return resp.json()
         return {"error": f"GraphRAG API returned HTTP {resp.status_code}: {resp.text[:300]}"}
     except Exception as e:
+        if "localhost" in url or "127.0.0.1" in url:
+            alt_url = url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+            try:
+                resp = requests.post(alt_url, json=payload, timeout=timeout_val)
+                if resp.status_code == 200:
+                    return resp.json()
+                return {"error": f"GraphRAG API returned HTTP {resp.status_code}: {resp.text[:300]}"}
+            except Exception:
+                pass
         logger.warning(f"GraphRAG API error: {e}")
         return {"error": f"Failed to connect to Pride-GraphRAG API ({url}): {e}"}
 

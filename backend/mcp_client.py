@@ -2,11 +2,44 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from typing import Dict, Any, List
 
 logger = logging.getLogger("hermes.mcp_client")
+
+def _find_executable(cmd: str) -> str:
+    """Find executable path in system PATH or common installation locations."""
+    if not cmd:
+        return cmd
+    found = shutil.which(cmd)
+    if found:
+        return found
+    
+    common_paths = [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/bin",
+        os.path.expanduser("~/.nvm/versions/node"),
+        os.path.expanduser("~/.nvm/current/bin"),
+        os.path.expanduser("~/.local/bin"),
+        os.path.expanduser("~/.cargo/bin"),
+    ]
+    for path in common_paths:
+        if os.path.isdir(path):
+            candidate = os.path.join(path, cmd)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+            for root, dirs, files in os.walk(path):
+                if cmd in files:
+                    full_p = os.path.join(root, cmd)
+                    if os.access(full_p, os.X_OK):
+                        return full_p
+                if root.count(os.sep) - path.count(os.sep) >= 2:
+                    dirs.clear()
+    return cmd
 
 class MCPServerClient:
     def __init__(self, name: str, config: Dict[str, Any]):
@@ -28,12 +61,26 @@ class MCPServerClient:
         try:
             if self.url:
                 logger.info(f"Connecting HTTP/SSE MCP server '{self.name}': {self.url}")
-                await self._initialize_http()
-                await self._list_tools_http()
+                try:
+                    await self._initialize_http()
+                    await self._list_tools_http()
+                except Exception as http_err:
+                    if "localhost" in self.url or "127.0.0.1" in self.url:
+                        alt_url = self.url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+                        logger.info(f"Retrying HTTP/SSE MCP server '{self.name}' via host gateway: {alt_url}")
+                        self.url = alt_url
+                        await self._initialize_http()
+                        await self._list_tools_http()
+                    else:
+                        raise http_err
             else:
-                logger.info(f"Starting MCP server '{self.name}': {self.command} {' '.join(self.args)}")
+                exec_cmd = _find_executable(self.command)
+                if not shutil.which(exec_cmd) and not (os.path.isabs(exec_cmd) and os.path.exists(exec_cmd)):
+                    logger.error(f"Executable '{self.command}' for MCP server '{self.name}' not found in PATH or system locations.")
+                    return
+                logger.info(f"Starting MCP server '{self.name}': {exec_cmd} {' '.join(self.args)}")
                 self.process = await asyncio.create_subprocess_exec(
-                    self.command,
+                    exec_cmd,
                     *self.args,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
@@ -52,6 +99,8 @@ class MCPServerClient:
                 # List tools
                 await self._list_tools()
             logger.info(f"MCP server '{self.name}' successfully initialized with {len(self.tools)} tools.")
+        except FileNotFoundError as fnf_err:
+            logger.error(f"Executable '{self.command}' for MCP server '{self.name}' not found: {fnf_err}")
         except Exception as e:
             logger.error(f"Failed to start MCP server '{self.name}': {e}")
 
@@ -172,6 +221,8 @@ class MCPServerClient:
         self.tools = res.get("result", {}).get("tools", [])
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+        if not self.url and (not self.process or self.process.returncode is not None):
+            return json.dumps({"error": f"MCP server '{self.name}' is not running (failed to start)"}, ensure_ascii=False)
         if self.url:
             res = await self.send_request_http("tools/call", {
                 "name": tool_name,

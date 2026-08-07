@@ -58,6 +58,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hermes.main")
 
+# Silence noisy third-party HTTP pollers (Telegram bot getUpdates, etc.)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Filter out routine status healthcheck & timer polling noise from uvicorn console logs
+class EndpointLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "GET /api/status" in msg or "GET /api/timers" in msg:
+            return False
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(EndpointLogFilter())
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
@@ -144,8 +158,8 @@ from fastapi.responses import JSONResponse
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    # Allow public auth routes and plots (images)
-    if path in ("/api/auth/request-code", "/api/auth/verify-code") or path.startswith("/api/plots/"):
+    # Allow public auth routes, status endpoint, and plots (images)
+    if path in ("/api/auth/request-code", "/api/auth/verify-code", "/api/status") or path.startswith("/api/plots/"):
         return await call_next(request)
         
     # Apply auth only to API routes
@@ -582,15 +596,10 @@ async def save_subagent_api(subagent: SubagentUpdate):
 
 @app.post("/api/subagents/positions")
 async def update_subagent_positions_api(update: SubagentPositionsUpdate):
-    from backend.database import DB_PATH
-    import sqlite3
+    from backend.database import _rowcount
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
         for pos in update.positions:
-            cursor.execute("UPDATE subagents SET x = ?, y = ? WHERE id = ?", (pos.x, pos.y, pos.id))
-        conn.commit()
-        conn.close()
+            _rowcount("UPDATE subagents SET x = ?, y = ? WHERE id = ?", (pos.x, pos.y, pos.id))
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Error updating positions: {e}")
@@ -639,14 +648,11 @@ async def get_budget_api(session_id: str):
 
 @app.post("/api/governance/budget/{session_id}")
 async def update_budget_api(session_id: str, body: BudgetUpdateRequest):
-    from backend.database import _get_conn
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE session_metadata SET daily_budget_usd = ?, monthly_budget_usd = ? WHERE session_id = ?",
-            (body.daily_budget_usd, body.monthly_budget_usd, session_id)
-        )
-        conn.commit()
+    from backend.database import _rowcount
+    _rowcount(
+        "UPDATE session_metadata SET daily_budget_usd = ?, monthly_budget_usd = ? WHERE session_id = ?",
+        (body.daily_budget_usd, body.monthly_budget_usd, session_id)
+    )
     return {"status": "success", "session_id": session_id}
 
 @app.get("/api/subagents/presets")
@@ -1357,15 +1363,10 @@ async def export_session_trajectory(
 @app.post("/api/history/{session_id}/archive")
 async def archive_history_session(session_id: str):
     """Archives a session by renaming its session_id in the DB."""
-    from backend.database import DB_PATH
-    import sqlite3
+    from backend.database import _rowcount
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE messages SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
-        cursor.execute("UPDATE session_metadata SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
-        conn.commit()
-        conn.close()
+        _rowcount("UPDATE messages SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
+        _rowcount("UPDATE session_metadata SET session_id = ? WHERE session_id = ?", (f"archive_{session_id}", session_id))
         return {"status": "success", "message": f"Session {session_id} archived"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1373,19 +1374,14 @@ async def archive_history_session(session_id: str):
 @app.post("/api/history/{session_id}/fork")
 async def fork_history_session(session_id: str):
     """Forks a session by duplicating its messages to a new session_id."""
-    from backend.database import DB_PATH, get_session_title, save_session_title
-    import sqlite3
+    from backend.database import _execute, get_session_title, save_session_title
     import time
     new_session_id = f"{session_id}_fork_{int(time.time())}"
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        _execute("""
             INSERT INTO messages (session_id, role, content, cost_usd) 
             SELECT ?, role, content, cost_usd FROM messages WHERE session_id = ? ORDER BY id ASC
         """, (new_session_id, session_id))
-        conn.commit()
-        conn.close()
         
         # Fork custom title metadata
         old_title = get_session_title(session_id)

@@ -116,6 +116,14 @@ def get_technical_analysis(ticker):
     import yfinance as yf
     import pandas as pd
     try:
+        try:
+            from backend.bcm.tools import _normalize_yf_symbol
+        except ImportError:
+            try:
+                from tools import _normalize_yf_symbol
+            except ImportError:
+                _normalize_yf_symbol = lambda s: s
+        ticker = _normalize_yf_symbol(ticker)
         print(f"DEBUG: Fetching yfinance data for {ticker}...")
         # 1h interval: 120 candles over 5 days — enough for RSI-14/MACD, better for intraday sessions
         df = yf.download(ticker, period="5d", interval="1h", progress=False)
@@ -159,6 +167,8 @@ TICKER_MAP = {
     "US500": {"analysis": "^GSPC", "trade_id": 10001, "volume": 0.1},
     "BRENT": {"analysis": "BZ=F", "trade_id": 10053, "volume": 1},
     "USOIL": {"analysis": "CL=F", "trade_id": 10054, "volume": 1},
+    "WTI": {"analysis": "CL=F", "trade_id": 10054, "volume": 1},
+    "OIL": {"analysis": "BZ=F", "trade_id": 10053, "volume": 1},
     "GOLD": {"analysis": "GC=F", "trade_id": 10013, "volume": 1}
 }
 
@@ -270,8 +280,58 @@ def get_live_spot_prices(symbol_ids: list = None):
                 }
         return price_map
     except Exception as e:
-        print(f"⚠️ Error fetching live spot prices: {e}")
         return {}
+
+def check_liquidity_layer_0(symbol: str) -> dict:
+    """
+    Cognitive Cycle v5.0 - Layer 0: Liquidity & Market Structure.
+    Checks spread, active trading session, and sweeps before allowing LLM/Tech analysis.
+    Returns: {"passed": bool, "reason": str, "spread": float}
+    """
+    import datetime
+    now_utc = datetime.datetime.utcnow()
+    hour = now_utc.hour
+
+    # 1. Simple Session check (avoiding dead zones like 21:00-23:00 UTC for FX)
+    if "EURUSD" in symbol or "GBPUSD" in symbol or "GOLD" in symbol or "XAU" in symbol:
+        if 21 <= hour <= 23:
+            return {"passed": False, "reason": f"Dead zone (Hour {hour} UTC). Low liquidity.", "spread": 0}
+
+    # 2. Check live spread via Pepperstone if available
+    try:
+        trade_id = None
+        for k, v in TICKER_MAP.items():
+            if k == symbol or v.get("analysis") == symbol:
+                trade_id = v.get("trade_id")
+                break
+        
+        if trade_id:
+            prices = get_live_spot_prices([trade_id])
+            if trade_id in prices:
+                p = prices[trade_id]
+                bid = p.get("bid")
+                ask = p.get("ask")
+                if bid and ask:
+                    spread = ask - bid
+                    
+                    # Hardcoded spread thresholds
+                    max_spread = 2.0
+                    if "EURUSD" in symbol or "GBPUSD" in symbol:
+                        max_spread = 0.00030 # 3 pips max
+                    elif "BTC" in symbol:
+                        max_spread = 50.0
+                    elif "GOLD" in symbol or "XAU" in symbol:
+                        max_spread = 0.50 # 50 cents max
+
+                    if spread > max_spread:
+                        return {"passed": False, "reason": f"Spread too high: {spread:.5f} (max {max_spread})", "spread": spread}
+                    
+                    return {"passed": True, "reason": "Liquidity OK", "spread": spread}
+    except Exception as e:
+        print(f"Layer 0 Spread check error: {e}")
+        pass
+
+    return {"passed": True, "reason": "Liquidity assumed OK", "spread": 0}
 
 def get_macro_terminal_context(ticker: str) -> str:
     """Fetch live news, sentiment, and macro context from Macro Terminal MCP server."""
@@ -575,39 +635,35 @@ def ask_ai_decision(ticker, analysis_data):
     print(f"Risk Report Length: {len(str(risk_report))}")
 
     print("--- 🏦 Calling MANAGING DIRECTOR ---")
-    md_prompt = f"""
-    You are the Managing Director & CIO of Berezini Capital Management.
-    Make the final binding executive decision for {ticker} based on complete team reports, account health, active positions, and lessons from completed trades.
+    import os
+    base_prompt_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+    
+    with open(os.path.join(base_prompt_dir, "system_core.md"), "r") as f:
+        system_core = f.read()
+    with open(os.path.join(base_prompt_dir, "cognitive_playbook.md"), "r") as f:
+        cognitive_playbook = f.read()
+    with open(os.path.join(base_prompt_dir, "context_state.md"), "r") as f:
+        context_state = f.read()
 
-    === TEAM REPORTS ===
-    QUANT REPORT: {analyst_report}
-    MACRO REPORT: {macro_report}
-    RISK REPORT: {risk_report}
+    # Fetch Paradigms from memory
+    try:
+        current_context_data = json.loads(analysis_json) if isinstance(analysis_json, str) else analysis_json
+        paradigms_text = memory.extract_paradigms_for_context(current_context_data)
+    except Exception:
+        paradigms_text = "[No Paradigms Yet]"
 
-    === ACCOUNT HEALTH & POSITIONS AUDIT ===
-    {account_audit_block}
+    # Fill context_state variables
+    context_state = context_state.format(
+        ticker=ticker,
+        analyst_report=analyst_report,
+        macro_report=macro_report,
+        risk_report=risk_report,
+        account_audit_block=account_audit_block,
+        positions_guardrail=positions_guardrail,
+        paradigms_block=paradigms_text
+    )
 
-    {positions_guardrail}
-
-    === MANDATE FOR DETAILED EXECUTIVE RESPONSE ===
-    1. Conduct a thorough, in-depth evaluation of current open positions, unrealized PnL, and account margin safety.
-    2. Review the closed trades learning log and historical win rate to ensure past mistakes are not repeated.
-    3. Synthesize Quant, Macro, and Risk reports to decide whether to open a trade or wait.
-
-    Respond ONLY in valid JSON format with this exact structure:
-    {{
-      "decision": "buy" | "sell" | "wait",
-      "reasoning": "Comprehensive, highly detailed executive analysis covering account equity status, active positions audit, past trade lessons learned, and clear technical/macro justification.",
-      "confidence": 0-100,
-      "account_summary": {{
-        "equity_status": "Status of account equity, margin, and capital preservation",
-        "open_positions_audit": "Detailed audit of active open positions, unrealized PnL, and SL/TP status",
-        "historical_learnings": "Key takeaways from past closed trades and historical win rate"
-      }},
-      "recommended_sl": <number or null>,
-      "recommended_tp": <number or null>
-    }}
-    """
+    md_prompt = f"{system_core}\n\n{context_state}\n\n{cognitive_playbook}"
     final_decision_raw = call_llm("Managing Director", md_prompt)
     
     # Extract JSON
@@ -617,6 +673,121 @@ def ask_ai_decision(ticker, analysis_data):
     elif "```" in content:
         content = content.split("```")[1].split("```")[0].strip()
     return content
+
+def format_md_decision_summary(decision_data, symbol="BTC") -> str:
+    """Format Managing Director decision dictionary or JSON string into a best-practice UI/UX Markdown executive report."""
+    if isinstance(decision_data, str):
+        try:
+            cleaned = decision_data.strip()
+            if "```json" in cleaned:
+                cleaned = cleaned.split("```json")[1].split("```")[0].strip()
+            elif "```" in cleaned:
+                cleaned = cleaned.split("```")[1].split("```")[0].strip()
+            decision_data = json.loads(cleaned)
+        except Exception:
+            return decision_data
+
+    if not isinstance(decision_data, dict):
+        return str(decision_data)
+
+    action = str(decision_data.get("decision", "wait")).upper()
+    action_emoji = "🚀" if action == "BUY" else "🔻" if action == "SELL" else "⏸️"
+    alert_type = "IMPORTANT" if action in ("BUY", "SELL") else "NOTE"
+    confidence = decision_data.get("confidence", 0)
+    try:
+        conf_val = float(confidence)
+        conf_str = f"{conf_val:.1f}%"
+    except Exception:
+        conf_str = f"{confidence}%"
+
+    reasoning = decision_data.get("reasoning", "No reasoning provided.")
+    
+    sl = decision_data.get("recommended_sl")
+    tp = decision_data.get("recommended_tp")
+    sl_str = f"`{sl}`" if sl is not None else "`N/A`"
+    tp_str = f"`{tp}`" if tp is not None else "`N/A`"
+
+    account_sum = decision_data.get("account_summary", {})
+    if isinstance(account_sum, dict):
+        eq_status = account_sum.get("equity_status", "")
+        pos_audit = account_sum.get("openpositionsaudit") or account_sum.get("open_positions_audit", "")
+        learnings = account_sum.get("historical_learnings", "")
+    else:
+        eq_status = str(account_sum) if account_sum else ""
+        pos_audit = ""
+        learnings = ""
+
+    lines = [
+        f"# 🏛️ Autonomous AI Hedge Fund Manager",
+        "",
+        f"> [{alert_type}]",
+        f"> **Executive Verdict:** {action_emoji} **{action}** | **Asset:** `{symbol}` | **Confidence Level:** `{conf_str}`",
+        "",
+        "### 📊 **Trade Parameters & Quorum Metrics**",
+        "",
+        "| Metric | Value | Description |",
+        "| :--- | :--- | :--- |",
+        f"| **Action Verdict** | {action_emoji} **{action}** | Multi-Agent Quorum Consensus |",
+        f"| **Confidence Level** | **{conf_str}** | Weighted Quant + Macro + Volatility Shift |",
+        f"| **Stop Loss (SL)** | {sl_str} | Algorithmic Risk Limit |",
+        f"| **Take Profit (TP)** | {tp_str} | Target Profit Boundary |",
+        "",
+        "---",
+        "",
+        "### 💬 **Managing Director Executive Analysis**",
+        "",
+        f"{reasoning}",
+    ]
+
+    if eq_status or pos_audit or learnings:
+        lines.extend([
+            "",
+            "---",
+            "",
+            "### 💼 **Portfolio & Account Health Audit**",
+        ])
+        if eq_status:
+            lines.append(f"- 🛡️ **Equity & Margin**: {eq_status}")
+        if pos_audit:
+            lines.append(f"- 📈 **Active Positions**: {pos_audit}")
+        if learnings:
+            lines.append(f"- 🎓 **Historical Playbook**: {learnings}")
+
+    lines.extend([
+        "",
+        "---",
+        "*Berezini Capital Management (BCM) Autonomous Trading Engine*",
+    ])
+
+    return "\n".join(lines)
+
+
+def format_any_bcm_response(raw_text: str, symbol="BTC") -> str:
+    """Detects raw JSON decision strings and converts them to formatted Executive UI/UX Markdown."""
+    if not raw_text or not isinstance(raw_text, str):
+        return raw_text
+    
+    cleaned = raw_text.strip()
+    if ("\"decision\"" in cleaned or "'decision'" in cleaned) and ("\"confidence\"" in cleaned or "'confidence'" in cleaned or "\"reasoning\"" in cleaned or "'reasoning'" in cleaned):
+        try:
+            match_json = cleaned
+            if "```json" in cleaned:
+                match_json = cleaned.split("```json")[1].split("```")[0].strip()
+            elif "```" in cleaned:
+                match_json = cleaned.split("```")[1].split("```")[0].strip()
+            elif "{" in cleaned and "}" in cleaned:
+                s_idx = cleaned.find("{")
+                e_idx = cleaned.rfind("}") + 1
+                match_json = cleaned[s_idx:e_idx]
+            
+            parsed = json.loads(match_json)
+            if isinstance(parsed, dict) and "decision" in parsed:
+                return format_md_decision_summary(parsed, symbol=symbol)
+        except Exception:
+            pass
+            
+    return raw_text
+
 
 def execute_trade(action, ticker_id, volume):
     """Execute trade via trade.sh script inside the container."""
@@ -672,6 +843,14 @@ def calculate_atr_keltner(ticker):
     import yfinance as yf
     import pandas as pd
     try:
+        try:
+            from backend.bcm.tools import _normalize_yf_symbol
+        except ImportError:
+            try:
+                from tools import _normalize_yf_symbol
+            except ImportError:
+                _normalize_yf_symbol = lambda s: s
+        ticker = _normalize_yf_symbol(ticker)
         print(f"DEBUG: Calculating extra indicators for {ticker} using yfinance...", flush=True)
         # ponytail: Daily ATR for swing SL/TP — 1H ATR is 4-5x smaller and would stop out on normal intraday noise
         # RSI/MACD entry signals stay on 1H (get_technical_analysis) for precise timing
@@ -875,6 +1054,12 @@ def run_autonomous_cycle(symbol_key):
         print("Error: Could not fetch account data.")
         return
     print(f"Equity: ${equity:.2f} | Free Margin: ${free_margin:.2f}")
+
+    print("Step 1.5: [Layer 0] Liquidity & Market Structure check...")
+    liq_res = check_liquidity_layer_0(symbol_key)
+    if not liq_res.get("passed", True):
+        print(f"⏸️ [Layer 0 BLOCKED] {symbol_key}: {liq_res.get('reason')}. Skipping cycle.")
+        return
 
     print(f"Step 2: Getting technical analysis for {analysis_ticker}...")
     analysis_json = get_technical_analysis(analysis_ticker)

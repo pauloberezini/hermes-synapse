@@ -243,6 +243,10 @@ CRITICAL RULES FOR OBSIDIAN:
     Jarvis         — service records without a clear category
 - NEVER ask Sir where to store a note — decide on your own. Subfolders are encouraged (e.g., Research/AI, Projects/Jarvis).
 
+CRITICAL RULES FOR BCM & TRADING DECISIONS / TOOL OUTPUTS:
+- NEVER output raw JSON blocks or unformatted JSON strings to Sir when presenting market analysis, trading decisions, or scheduled reports.
+- Always parse and format JSON trading decisions into an executive, beautifully formatted Markdown summary with emojis (e.g. ⏸️ WAIT / 🚀 BUY / 🔻 SELL), confidence %, equity health, key indicators, and clear reasoning.
+
 If Sir asks what you can do, or requests info about a specific skill, describe its capabilities in a detailed, polite, and signature manner using these user-friendly names. Never use technical function names like "get_weather" in dialogue unless Sir explicitly asks for them.
 """
 
@@ -712,6 +716,12 @@ class JarvisAgent:
         except Exception as db_err:
             logger.error(f"Failed to save decision log to DB: {db_err}")
 
+        try:
+            from backend.bcm.autonomous_trader import format_any_bcm_response
+            response_text = format_any_bcm_response(response_text)
+        except Exception:
+            pass
+
         return response_text
 
     async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None) -> str:
@@ -1010,6 +1020,12 @@ class JarvisAgent:
             save_decision_log(log_entry)
         except Exception as db_err:
             logger.error(f"Failed to save subagent decision log to DB: {db_err}")
+
+        try:
+            from backend.bcm.autonomous_trader import format_any_bcm_response
+            response_text = format_any_bcm_response(response_text)
+        except Exception:
+            pass
 
         return response_text
 

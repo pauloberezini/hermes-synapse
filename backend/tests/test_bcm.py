@@ -46,8 +46,8 @@ def test_get_live_ctrader_positions_helper():
     assert isinstance(summary, str)
 
 def test_bcm_technical_indicators_all_assets():
-    """Verify technical indicators fetch successfully for all 6 Pepperstone assets."""
-    assets = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT"]
+    """Verify technical indicators fetch successfully for all Pepperstone assets including USOIL and WTI."""
+    assets = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT", "USOIL", "WTI"]
     for asset in assets:
         res = handle_bcm_get_technical_indicators({"symbol": asset})
         assert isinstance(res, dict), f"Indicators for {asset} must be a dict"
@@ -55,14 +55,24 @@ def test_bcm_technical_indicators_all_assets():
         assert len(res) > 0, f"Indicators for {asset} cannot be empty"
 
 def test_bcm_remizov_shift_all_assets():
-    """Verify Remizov Shift volatility calculation for all 6 Pepperstone assets."""
-    assets = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT"]
+    """Verify Remizov Shift volatility calculation for all Pepperstone assets including USOIL."""
+    assets = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD", "US500", "BRENT", "USOIL"]
     for asset in assets:
         res = handle_bcm_calculate_remizov_shift({"symbol": asset})
         assert isinstance(res, dict), f"Remizov Shift for {asset} must be a dict"
         assert "error" not in res, f"Remizov Shift for {asset} failed: {res.get('error')}"
         assert "remizov_shift" in res, f"Missing remizov_shift key for {asset}"
         assert isinstance(res["remizov_shift"], (int, float)), f"Remizov Shift value for {asset} must be numeric"
+
+def test_autonomous_trader_usoil_normalization():
+    """Verify get_technical_analysis handles USOIL without errors."""
+    from backend.bcm.autonomous_trader import get_technical_analysis, calculate_atr_keltner
+    tech = get_technical_analysis("USOIL")
+    assert isinstance(tech, str)
+    assert "CL=F" in tech or "rsi" in tech
+    
+    atr_data = calculate_atr_keltner("USOIL")
+    assert isinstance(atr_data, dict)
 
 if __name__ == "__main__":
     print("🚀 Running BCM Unit Tests...")
