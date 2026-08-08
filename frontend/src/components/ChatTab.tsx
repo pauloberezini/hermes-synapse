@@ -256,54 +256,57 @@ export function ChatTab({
   return (
     <div style={styles.tabWrapper}>
       <div style={styles.tabHeader}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
           <div>
             <h2 className="glow-text-cyan" style={styles.tabTitle}>COMMUNICATION LINK</h2>
             <p style={styles.tabSubtitle}>Voice and text control stream for the assistant</p>
           </div>
-          {/* Active Session Label */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '16px', background: 'rgba(255, 255, 255, 0.02)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>SESSION:</span>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
-              {currentChatId === 'dashboard' ? 'Main Terminal' : getSessionLabel(currentChatId)}
-            </span>
+
+          {/* Active Session Metadata Group */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255, 255, 255, 0.03)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>SESSION:</span>
+              <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
+                {currentChatId === 'dashboard' ? 'Main Terminal' : getSessionLabel(currentChatId)}
+              </span>
+            </div>
+
+            {/* Active Session Orchestrator Selector */}
+            {currentChatId !== 'dashboard' && !subagents.some(a => a.id === currentChatId) && (
+              <AgentSelect
+                labelPrefix="ORCHESTRATOR:"
+                value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
+                onChange={(agentId) => handleSetSessionAgent(currentChatId, agentId)}
+                agents={[
+                  { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                  ...(Array.isArray(subagents) ? subagents : [])
+                ]}
+              />
+            )}
+
+            {/* TTS speaking pulse indicator */}
+            {isSpeaking && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0, 240, 255, 0.08)', padding: '5px 10px', borderRadius: '6px', border: '1px solid rgba(0, 240, 255, 0.2)' }}>
+                <span className="pulse-dot" style={{ width: 8, height: 8 }} />
+                <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>SPEAKING</span>
+              </div>
+            )}
+            {/* Mic state indicator */}
+            {micState === 'listening' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0, 240, 255, 0.08)', padding: '5px 10px', borderRadius: '6px', border: '1px solid rgba(0, 240, 255, 0.2)' }}>
+                <span className="pulse-dot" style={{ width: 8, height: 8, background: '#00f0ff', boxShadow: '0 0 6px #00f0ff' }} />
+                <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>MIC LISTENING</span>
+              </div>
+            )}
+            {micState === 'capturing' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255, 159, 0, 0.1)', padding: '5px 10px', borderRadius: '6px', border: '1px solid rgba(255, 159, 0, 0.3)' }}>
+                <span className="pulse-dot" style={{ width: 8, height: 8, background: '#ff9f00', boxShadow: '0 0 8px #ff9f00' }} />
+                <span style={{ fontSize: '0.72rem', color: '#ff9f00', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>REC...</span>
+              </div>
+            )}
           </div>
-
-          {/* Active Session Orchestrator Selector */}
-          {currentChatId !== 'dashboard' && !subagents.some(a => a.id === currentChatId) && (
-            <AgentSelect
-              labelPrefix="ORCHESTRATOR:"
-              value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
-              onChange={(agentId) => handleSetSessionAgent(currentChatId, agentId)}
-              agents={[
-                { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
-                ...(Array.isArray(subagents) ? subagents : [])
-              ]}
-            />
-          )}
-
-          {/* TTS speaking pulse indicator */}
-          {isSpeaking && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="pulse-dot" style={{ width: 10, height: 10 }} />
-              <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>VOICE</span>
-            </div>
-          )}
-          {/* Mic state indicator */}
-          {micState === 'listening' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="pulse-dot" style={{ width: 10, height: 10, background: '#00f0ff', boxShadow: '0 0 6px #00f0ff' }} />
-              <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>MIC</span>
-            </div>
-          )}
-          {micState === 'capturing' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="pulse-dot" style={{ width: 10, height: 10, background: '#ff9f00', boxShadow: '0 0 8px #ff9f00' }} />
-              <span style={{ fontSize: '0.75rem', color: '#ff9f00', fontFamily: 'var(--font-mono)' }}>REC</span>
-            </div>
-          )}
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Mic toggle button */}
           <button
             id="mic-toggle-btn"
@@ -322,10 +325,14 @@ export function ChatTab({
                 ? '0 0 10px rgba(255,159,0,0.3)'
                 : micEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
               transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.78rem'
             }}
           >
             {micEnabled ? <Mic size={14} /> : <MicOff size={14} />}
-            <span>{micState === 'capturing' ? 'REC...' : micEnabled ? 'Mic on' : 'Mic off'}</span>
+            <span>{micState === 'capturing' ? 'REC...' : micEnabled ? 'Mic ON' : 'Mic OFF'}</span>
           </button>
           {/* TTS toggle */}
           <button
@@ -344,17 +351,21 @@ export function ChatTab({
               color: isTTSEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
               boxShadow: isTTSEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
               transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.78rem'
             }}
           >
             {isTTSEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
-            <span>{isTTSEnabled ? 'Voice on' : 'Voice off'}</span>
+            <span>{isTTSEnabled ? 'Voice ON' : 'Voice OFF'}</span>
           </button>
           {/* Timer Alarm Sound Toggle */}
           <button
             id="timer-sound-toggle-btn"
             onClick={() => setTimerSoundEnabled && setTimerSoundEnabled(v => !v)}
             className="btn-primary"
-            title={timerSoundEnabled ? 'Turn off timer alarm sound' : 'Turn on timer alarm sound (off by default)'}
+            title={timerSoundEnabled ? 'Turn off timer alarm sound' : 'Turn on timer alarm sound'}
             style={{
               padding: '6px 12px',
               border: timerSoundEnabled
@@ -363,13 +374,17 @@ export function ChatTab({
               color: timerSoundEnabled ? 'var(--accent-cyan)' : 'var(--text-dim)',
               boxShadow: timerSoundEnabled ? '0 0 8px rgba(0,240,255,0.2)' : 'none',
               transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.78rem'
             }}
           >
             {timerSoundEnabled ? <Bell size={14} /> : <BellOff size={14} />}
-            <span>{timerSoundEnabled ? 'Timer Sound on' : 'Timer Sound off'}</span>
+            <span>{timerSoundEnabled ? 'Sound ON' : 'Sound OFF'}</span>
           </button>
 
-          <button onClick={handleClearChat} className="btn-primary" style={{ padding: '6px 12px', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444' }}>
+          <button onClick={handleClearChat} className="btn-primary" style={{ padding: '6px 12px', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
             <Trash2 size={14} />
             <span>Clear Chat</span>
           </button>
@@ -377,7 +392,7 @@ export function ChatTab({
       </div>
 
       {/* Split layout: sessions sidebar on the left, chat workspace on the right */}
-      <div style={{ display: 'flex', gap: '20px', height: 'calc(100vh - 220px)', flex: 1, minHeight: 0 }} className="chat-layout">
+      <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }} className="chat-layout">
         {/* Sessions Sidebar */}
         <div style={{
           width: '260px',
@@ -721,18 +736,17 @@ export function ChatTab({
 
             return (
               <div style={{
-                margin: '12px 16px 0 16px',
-                padding: '12px 16px',
-                borderRadius: '10px',
-                background: 'linear-gradient(135deg, rgba(0, 240, 255, 0.08) 0%, rgba(11, 15, 25, 0.7) 100%)',
-                border: '1px solid rgba(0, 240, 255, 0.25)',
-                boxShadow: '0 0 15px rgba(0, 240, 255, 0.05)',
+                padding: '14px 20px',
+                background: '#0b0f19',
+                borderBottom: '1px solid rgba(0, 240, 255, 0.25)',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: '16px',
                 flexWrap: 'wrap',
-                flexShrink: 0
+                flexShrink: 0,
+                zIndex: 10
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '240px' }}>
                   <div style={{
@@ -927,7 +941,7 @@ export function ChatTab({
                             e.stopPropagation();
                             setFullscreenMsg(msg);
                           }}
-                          title="Развернуть ответ на весь экран (Fullscreen)"
+                          title="Expand response to fullscreen"
                           style={{
                             background: 'none',
                             border: 'none',
@@ -955,7 +969,7 @@ export function ChatTab({
                     <div 
                       style={{ ...styles.msgText, cursor: 'pointer' }}
                       onDoubleClick={() => setFullscreenMsg(msg)}
-                      title="Двойной клик — развернуть ответ на весь экран"
+                      title="Double-click to expand response"
                     >
                       {renderMarkdown(msg.content)}
                     </div>

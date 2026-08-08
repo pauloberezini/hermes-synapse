@@ -122,7 +122,8 @@ export function AgentSelect({
       style={{
         position: 'relative',
         display: 'inline-block',
-        minWidth: isCompact ? '200px' : '100%',
+        minWidth: isCompact ? '220px' : '100%',
+        maxWidth: isCompact ? '320px' : '100%',
         ...style
       }}
     >
@@ -134,13 +135,13 @@ export function AgentSelect({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '8px',
-          padding: isCompact ? '5px 10px' : '9px 12px',
+          padding: isCompact ? '6px 12px' : '9px 12px',
           background: variant === 'subtle' 
-            ? 'rgba(15, 23, 42, 0.6)' 
-            : 'rgba(15, 23, 42, 0.9)',
+            ? 'rgba(15, 23, 42, 0.7)' 
+            : 'rgba(15, 23, 42, 0.95)',
           border: isOpen 
             ? '1px solid var(--accent-cyan, #00f0ff)' 
-            : '1px solid rgba(255, 255, 255, 0.12)',
+            : '1px solid rgba(255, 255, 255, 0.15)',
           borderRadius: '8px',
           color: '#fff',
           cursor: disabled ? 'not-allowed' : 'pointer',
@@ -153,18 +154,19 @@ export function AgentSelect({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
           {labelPrefix && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-dim, #94a3b8)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-dim, #94a3b8)', fontFamily: 'var(--font-mono)', flexShrink: 0, fontWeight: 500, letterSpacing: '0.5px' }}>
               {labelPrefix}
             </span>
           )}
-          <span style={{ fontSize: '0.95rem', flexShrink: 0 }}>
+          <span style={{ fontSize: '0.95rem', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
             {getAgentIcon(selectedAgent)}
           </span>
           <span style={{ 
             color: isOrchestratorAgent(selectedAgent) ? 'var(--accent-cyan, #00f0ff)' : '#fff',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
-            textOverflow: 'ellipsis'
+            textOverflow: 'ellipsis',
+            fontSize: '0.8rem'
           }}>
             {selectedAgent.name || selectedAgent.id}
           </span>
@@ -180,11 +182,11 @@ export function AgentSelect({
               textTransform: 'uppercase',
               flexShrink: 0
             }}>
-              Orch
+              ORCH
             </span>
           )}
         </div>
-        <ChevronDown size={14} style={{ color: 'var(--text-dim)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+        <ChevronDown size={14} style={{ color: 'var(--text-dim)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }} />
       </div>
 
       {/* Autocomplete Dropdown Menu */}

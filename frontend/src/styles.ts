@@ -102,47 +102,56 @@ export const styles: Record<string, any> = {
   mainContent: {
     flex: 1,
     height: '100%',
-    padding: '32px',
-    overflowY: 'auto' as const
+    minHeight: 0,
+    padding: '24px 32px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    overflow: 'hidden'
   },
   tabWrapper: {
     display: 'flex',
     flexDirection: 'column' as const,
     height: '100%',
-    gap: '24px'
+    minHeight: 0,
+    gap: '16px'
   },
   tabHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    flexWrap: 'wrap' as const,
+    gap: '12px'
   },
   tabTitle: {
-    fontSize: '1.4rem',
+    fontSize: '1.3rem',
     fontWeight: 600,
     letterSpacing: '1px',
-    marginBottom: '4px'
+    marginBottom: '2px'
   },
   tabSubtitle: {
-    fontSize: '0.85rem',
+    fontSize: '0.8rem',
     color: 'var(--text-muted)'
   },
   chatArea: {
     flex: 1,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column' as const,
-    height: 'calc(100vh - 160px)',
     overflow: 'hidden',
-    padding: '20px',
-    backgroundColor: 'rgba(12, 17, 34, 0.5)'
+    padding: '0',
+    backgroundColor: 'rgba(12, 17, 34, 0.75)',
+    backdropFilter: 'blur(12px)',
+    borderRadius: '12px',
+    border: '1px solid rgba(255,255,255,0.08)'
   },
   chatScroller: {
     flex: 1,
+    minHeight: 0,
     overflowY: 'auto' as const,
-    paddingRight: '10px',
+    padding: '20px',
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '16px',
-    marginBottom: '20px'
+    gap: '16px'
   },
   msgBubbleWrapper: {
     display: 'flex',
@@ -527,34 +536,31 @@ export const styles: Record<string, any> = {
   },
   timerCard: {
     border: '1px solid',
-    borderRadius: '12px',
-    padding: '18px 20px',
+    borderRadius: '14px',
+    padding: '20px 22px',
     display: 'flex',
     flexDirection: 'column' as const,
     gap: '14px',
-    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+    boxShadow: '0 8px 28px rgba(0, 0, 0, 0.4)',
     transition: 'all 0.3s ease',
-    backdropFilter: 'blur(12px)',
+    backdropFilter: 'blur(16px)',
     width: '100%'
   },
   timerHeader: {
     display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '12px',
-    flexWrap: 'wrap' as const,
-    borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+    flexDirection: 'column' as const,
+    gap: '10px',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
     paddingBottom: '12px'
   },
   timerLabel: {
     fontWeight: 700,
-    fontSize: '1rem',
-    color: 'var(--text-primary)',
+    fontSize: '1.05rem',
+    color: '#ffffff',
     letterSpacing: '0.2px',
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: '240px'
+    lineHeight: '1.3',
+    wordBreak: 'break-word' as const,
+    flex: 1
   },
   timerStatusBadge: {
     fontSize: '0.7rem',
