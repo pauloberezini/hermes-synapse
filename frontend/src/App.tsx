@@ -1203,9 +1203,13 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Fetch timers whenever the 'schedule' tab is active
+  // Fetch timers and subagents whenever the 'schedule', 'network', 'tasks', or 'subagents' tab is active
   useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'schedule') return;
+    if (!isAuthenticated) return;
+    if (activeTab === 'schedule' || activeTab === 'network' || activeTab === 'tasks' || activeTab === 'subagents') {
+      fetchSubagents();
+    }
+    if (activeTab !== 'schedule') return;
 
     const fetchTimersData = () => {
       fetchWithAuth('http://localhost:8000/api/timers')

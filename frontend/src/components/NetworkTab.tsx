@@ -16,6 +16,7 @@ export const SKILLS_LIST = [
   { id: 'read_rss_node_feed', name: 'RSS News Ray', desc: 'Read news from autonomous RSS nodes', color: '#ea580c' },
   { id: 'market_monitor', name: 'Market Monitor', desc: 'Stock quotes and alerts', color: '#10b981' },
   { id: 'bcm', name: 'BCM Trading Engine', desc: 'cTrader FIX API, Pepperstone execution & risk', color: '#f43f5e' },
+  { id: 'bybit', name: 'Bybit Options & Crypto', desc: 'Bybit V5 OpenAPI, USDC Options, Futures & Spot', color: '#f59e0b' },
   { id: 'obsidian_rag', name: 'Obsidian Vault', desc: 'Read and write Obsidian notes', color: '#8b5cf6' },
   { id: 'todoist_sync', name: 'Todoist Tasks', desc: 'Sync Todoist task lists', color: '#ef4444' },
   { id: 'google_calendar', name: 'Google Calendar', desc: 'Calendar scheduling', color: '#f59e0b' },

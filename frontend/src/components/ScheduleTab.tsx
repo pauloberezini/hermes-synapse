@@ -86,8 +86,11 @@ export function ScheduleTab({
   const safeTimers = Array.isArray(timers) ? timers : [];
 
   const availableAgents = [
-    { id: 'jarvis', name: 'Jarvis (Main Orchestrator)' },
-    ...safeSubagents.map(a => ({ id: a.id, name: a.name }))
+    { id: 'jarvis', name: '👑 Jarvis (Main Orchestrator)' },
+    ...safeSubagents.map(a => {
+      const isOrch = a.agent_type === 'orchestrator' || a.id.includes('orchestrator');
+      return { id: a.id, name: `${isOrch ? '🧠 [Orchestrator] ' : '🤖 [Agent] '}${a.name}` };
+    })
   ];
 
   const doFetch = fetchWithAuth || ((url: string, opts?: RequestInit) => fetch(url, opts));

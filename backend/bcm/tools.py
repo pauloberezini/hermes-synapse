@@ -188,6 +188,125 @@ BCM_TOOLS = [
             },
             "required": ["symbol"]
         }
+    },
+    {
+        "name": "bybit_get_balance",
+        "description": "Получить баланс торгового аккаунта Bybit (UNIFIED, SPOT, CONTRACT).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account_type": {"type": "string", "description": "Тип аккаунта: UNIFIED (по умолчанию), SPOT, CONTRACT"}
+            }
+        }
+    },
+    {
+        "name": "bybit_get_positions",
+        "description": "Получить открытые позиции на Bybit (фьючерсы linear/inverse или опционы option).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Категория: linear, option, inverse"},
+                "symbol": {"type": "string", "description": "Тикер символа (например ETHUSDT)"},
+                "base_coin": {"type": "string", "description": "Базовая монета (например ETH)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_get_options_chain",
+        "description": "Получить доску опционов (Option Chain), волатильность (IV) и греки по монете (ETH, BTC).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base_coin": {"type": "string", "description": "Базовая монета: ETH или BTC (по умолчанию ETH)"},
+                "exp_date": {"type": "string", "description": "Дата экспирации (необязательно, например 27DEC26)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_analyze_option_position",
+        "description": "Рассчитать риски, точку безубыточности (Breakeven), статус ITM/OTM и сценарии PnL для опционной позиции (например проданный Put ETH 1300).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Символ опциона"},
+                "strike": {"type": "number", "description": "Страйк опциона (например 1300)"},
+                "option_type": {"type": "string", "description": "Тип: Put или Call"},
+                "side": {"type": "string", "description": "Сторона: Sell (короткая) или Buy (длинная)"},
+                "premium": {"type": "number", "description": "Полученная или уплаченная премия ($)"},
+                "exp_date": {"type": "string", "description": "Месяц/дата экспирации"},
+                "current_spot": {"type": "number", "description": "Текущая спотовая цена монеты (необязательно)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_place_order",
+        "description": "Выставить ордер на Bybit (Spot, Linear Futures, Options).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Категория: spot, linear, option, inverse"},
+                "symbol": {"type": "string", "description": "Торговый символ (например ETHUSDT)"},
+                "side": {"type": "string", "description": "Сторона: Buy или Sell"},
+                "order_type": {"type": "string", "description": "Тип ордера: Market или Limit"},
+                "qty": {"type": "string", "description": "Количество"},
+                "price": {"type": "string", "description": "Цена (для Limit ордеров)"},
+                "stop_loss": {"type": "string", "description": "Stop Loss цена"},
+                "take_profit": {"type": "string", "description": "Take Profit цена"}
+            },
+            "required": ["category", "symbol", "side", "qty"]
+        }
+    },
+    {
+        "name": "bybit_get_portfolio_greeks",
+        "description": "Рассчитать суммарные портфельные Греки (Delta, Gamma, Theta, Vega) по всем опционам и фьючерсам.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base_coin": {"type": "string", "description": "Базовая монета: ETH или BTC (по умолчанию ETH)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_calc_delta_hedge",
+        "description": "Рассчитать объемы ордеров для дельта-хеджирования (приведение Net Delta портфеля к 0).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base_coin": {"type": "string", "description": "Базовая монета: ETH или BTC (по умолчанию ETH)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_check_margin_safety",
+        "description": "Провести стресс-тест маржи и запаса ликвидности с имитацией скачков цены (±5%, ±10%, ±15%).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base_coin": {"type": "string", "description": "Базовая монета: ETH или BTC (по умолчанию ETH)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_scan_funding_arbitrage",
+        "description": "Сканировать фандинг (Funding Rate) по бессрочным фьючерсам для дельта-нейтрального арбитража Cash-and-Carry.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Категория: linear (по умолчанию)"},
+                "min_annual_yield": {"type": "number", "description": "Минимальная годовая доходность % (по умолчанию 10%)"}
+            }
+        }
+    },
+    {
+        "name": "bybit_emergency_close_all",
+        "description": "Аварийный Kill-Switch: отменить все активные ордера и рыночно закрыть открытые позиции.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Категория: all, linear, option, spot"},
+                "symbol": {"type": "string", "description": "Символ (необязательно)"}
+            }
+        }
     }
 ]
 
@@ -709,6 +828,107 @@ def handle_graphrag_query(args: dict) -> dict:
         return {"error": f"Failed to connect to Pride-GraphRAG API ({url}): {e}"}
 
 
+# ── Bybit Handlers ────────────────────────────────────────────────
+_bybit_client = None
+
+def _get_bybit_client():
+    global _bybit_client
+    if _bybit_client is None:
+        try:
+            from backend.bcm.bybit_trader import BybitTrader
+        except ImportError:
+            from bybit_trader import BybitTrader
+        _bybit_client = BybitTrader()
+    return _bybit_client
+
+def handle_bybit_get_balance(args: dict) -> dict:
+    account_type = args.get("account_type", "UNIFIED")
+    client = _get_bybit_client()
+    return client.get_wallet_balance(account_type=account_type)
+
+def handle_bybit_get_positions(args: dict) -> dict:
+    category = args.get("category", "linear")
+    symbol = args.get("symbol")
+    base_coin = args.get("base_coin")
+    client = _get_bybit_client()
+    return client.get_positions(category=category, symbol=symbol, base_coin=base_coin)
+
+def handle_bybit_get_options_chain(args: dict) -> dict:
+    base_coin = args.get("base_coin", "ETH")
+    exp_date = args.get("exp_date")
+    client = _get_bybit_client()
+    return client.get_option_chain(base_coin=base_coin, exp_date=exp_date)
+
+def handle_bybit_analyze_option_position(args: dict) -> dict:
+    symbol = args.get("symbol", "ETH-DEC26-1300-P")
+    strike = float(args.get("strike", 1300.0))
+    option_type = args.get("option_type", "Put")
+    side = args.get("side", "Sell")
+    premium = float(args.get("premium", 0.0))
+    exp_date = args.get("exp_date", "December")
+    current_spot = float(args.get("current_spot", 0.0))
+    client = _get_bybit_client()
+    return client.analyze_option_position(
+        symbol=symbol,
+        strike=strike,
+        option_type=option_type,
+        side=side,
+        premium=premium,
+        exp_date=exp_date,
+        current_spot=current_spot
+    )
+
+def handle_bybit_place_order(args: dict) -> dict:
+    category = args.get("category", "spot")
+    symbol = args.get("symbol")
+    side = args.get("side")
+    order_type = args.get("order_type", "Market")
+    qty = str(args.get("qty"))
+    price = args.get("price")
+    sl = args.get("stop_loss")
+    tp = args.get("take_profit")
+    if not symbol or not side or not qty:
+        return {"error": "symbol, side, and qty parameters are required"}
+    client = _get_bybit_client()
+    return client.place_order(
+        category=category,
+        symbol=symbol,
+        side=side,
+        order_type=order_type,
+        qty=qty,
+        price=price,
+        sl=sl,
+        tp=tp
+    )
+
+def handle_bybit_get_portfolio_greeks(args: dict) -> dict:
+    base_coin = args.get("base_coin", "ETH")
+    client = _get_bybit_client()
+    return client.get_portfolio_greeks(base_coin=base_coin)
+
+def handle_bybit_calc_delta_hedge(args: dict) -> dict:
+    base_coin = args.get("base_coin", "ETH")
+    client = _get_bybit_client()
+    return client.calc_delta_hedge(base_coin=base_coin)
+
+def handle_bybit_check_margin_safety(args: dict) -> dict:
+    base_coin = args.get("base_coin", "ETH")
+    client = _get_bybit_client()
+    return client.check_margin_safety(base_coin=base_coin)
+
+def handle_bybit_scan_funding_arbitrage(args: dict) -> dict:
+    category = args.get("category", "linear")
+    min_annual_yield = float(args.get("min_annual_yield", 10.0))
+    client = _get_bybit_client()
+    return client.scan_funding_arbitrage(category=category, min_annual_yield=min_annual_yield)
+
+def handle_bybit_emergency_close_all(args: dict) -> dict:
+    category = args.get("category", "all")
+    symbol = args.get("symbol")
+    client = _get_bybit_client()
+    return client.emergency_close_all(category=category, symbol=symbol)
+
+
 # Main router
 def bcm_execute_tool(name: str, arguments: dict) -> str:
     logger.info(f"BCM local tool router: {name} with {arguments}")
@@ -735,7 +955,29 @@ def bcm_execute_tool(name: str, arguments: dict) -> str:
         res = handle_graphrag_query(arguments)
     elif name == "bcm_run_autonomous_cycle":
         res = handle_bcm_run_autonomous_cycle(arguments)
+    elif name == "bybit_get_balance":
+        res = handle_bybit_get_balance(arguments)
+    elif name == "bybit_get_positions":
+        res = handle_bybit_get_positions(arguments)
+    elif name == "bybit_get_options_chain":
+        res = handle_bybit_get_options_chain(arguments)
+    elif name == "bybit_analyze_option_position":
+        res = handle_bybit_analyze_option_position(arguments)
+    elif name == "bybit_place_order":
+        res = handle_bybit_place_order(arguments)
+    elif name == "bybit_get_portfolio_greeks":
+        res = handle_bybit_get_portfolio_greeks(arguments)
+    elif name == "bybit_calc_delta_hedge":
+        res = handle_bybit_calc_delta_hedge(arguments)
+    elif name == "bybit_check_margin_safety":
+        res = handle_bybit_check_margin_safety(arguments)
+    elif name == "bybit_scan_funding_arbitrage":
+        res = handle_bybit_scan_funding_arbitrage(arguments)
+    elif name == "bybit_emergency_close_all":
+        res = handle_bybit_emergency_close_all(arguments)
     else:
         res = {"error": f"Tool {name} not supported by BCM local router."}
         
     return json.dumps(res, ensure_ascii=False)
+
+
