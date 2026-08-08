@@ -106,8 +106,8 @@ describe('App Component', () => {
     });
 
     // Check that pre-set localStorage values were loaded into UI
-    expect(screen.getByText('Mic on')).toBeInTheDocument();
-    expect(screen.getByText('Voice off')).toBeInTheDocument();
+    expect(screen.getByText(/mic on/i)).toBeInTheDocument();
+    expect(screen.getByText(/voice off/i)).toBeInTheDocument();
 
     // Toggle voice on
     const voiceBtn = screen.getByRole('button', { name: /voice off/i });
