@@ -21,7 +21,8 @@ import {
   Building2,
   LogOut,
   Kanban,
-  ShieldCheck
+  ShieldCheck,
+  Rss
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -50,6 +51,7 @@ import { MCPTab } from './components/MCPTab';
 import { MetricsTab } from './components/MetricsTab';
 import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 import { TaskBoardTab } from './components/TaskBoardTab';
+import { RSSTab } from './components/RSSTab';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -84,7 +86,7 @@ export default function App() {
     return saved !== null ? saved === 'true' : false;
   });
 
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'tasks' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'tasks' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'rss'>(() => {
     const saved = getSafeStorageItem('jarvis_active_tab');
     const officeEnabled = getSafeStorageItem('jarvis_pixel_office_enabled') === 'true';
     if (saved === 'office' && !officeEnabled) return 'chat';
@@ -244,7 +246,7 @@ export default function App() {
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
-    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) {
+    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'rss'].includes(activeTab)) {
       setSettingsOpen(true);
     }
   }, [activeTab]);
@@ -795,6 +797,15 @@ export default function App() {
             }
 
           } else if (data.type === 'reminder_fired') {
+            if (data.reminder && data.reminder.id) {
+              setTimers((prev) => {
+                const exists = prev.some(t => t.id === data.reminder.id);
+                if (exists) {
+                  return prev.map(t => t.id === data.reminder.id ? { ...t, ...data.reminder } : t);
+                }
+                return [...prev, data.reminder];
+              });
+            }
             fetchChatSessions();
             fetchTimersData();
             if (data.session_id && data.session_id === currentChatIdRef.current) {
@@ -1254,6 +1265,9 @@ export default function App() {
         prevTimers.map(timer => {
           if (timer.status === 'running' && timer.time_left > 0) {
             return { ...timer, time_left: timer.time_left - 1 };
+          }
+          if (timer.status === 'running' && timer.time_left <= 0 && timer.type === 'recurring' && timer.interval_hours) {
+            return { ...timer, time_left: Math.round(timer.interval_hours * 3600) };
           }
           return timer;
         })
@@ -1849,6 +1863,14 @@ export default function App() {
                 </button>
                 
                 <button 
+                  style={{...styles.navBtn, ...(activeTab === 'rss' ? styles.navBtnActive : {})}}
+                  onClick={() => { setActiveTab('rss'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
+                >
+                  <Rss size={18} />
+                  <span>RSS Feeds & Nodes</span>
+                </button>
+
+                <button 
                   style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
                   onClick={() => { setActiveTab('activity'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
                 >
@@ -1867,6 +1889,14 @@ export default function App() {
               >
                 <Settings size={18} />
                 <span>Core Parameters</span>
+              </button>
+
+              <button 
+                style={{...styles.navBtn, ...(activeTab === 'rss' ? styles.navBtnActive : {})}}
+                onClick={() => { setActiveTab('rss'); setSidebarOpen(false); }}
+              >
+                <Rss size={18} />
+                <span>RSS Feeds & Nodes</span>
               </button>
 
               <button 
@@ -2180,6 +2210,10 @@ export default function App() {
             systemStats={systemStats}
             uploads={uploads}
           />
+        )}
+
+        {activeTab === 'rss' && (
+          <RSSTab />
         )}
 
         {activeTab === 'subagents' && (

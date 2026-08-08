@@ -845,6 +845,21 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "read_rss_node_feed",
+            "description": "Считывает новости из автономной RSS-ноды, подключенной в архитектуре. Возвращает отфильтрованный список публикаций согласно настройкам ноды.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (например, 'habr_tech_rss')"},
+                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опционально, переопределяет дефолтный лимит ноды)"}
+                },
+                "required": ["node_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_subagent",
             "description": "Создаёт нового специализированного сабагента или обновляет существующего (например, эксперта по спортивным ставкам, репетитора языков и т.д.).",
             "parameters": {
@@ -1253,8 +1268,32 @@ def get_rss_digest(feed_source: str = "Habr", limit: int = 5) -> str:
     try:
         return _run_async(_fetch())
     except Exception as e:
-        logger.error(f"get_rss_digest tool error: {e}")
-        return json.dumps({"error": str(e)})
+        return f"Ошибка при получении RSS: {e}"
+def read_rss_node_feed(node_id: str, limit: Optional[int] = None) -> str:
+    """Reads configured RSS feed news entries from an autonomous RSS node in the database."""
+    try:
+        from backend.rss_service import get_rss_node_output
+        res = get_rss_node_output(node_id, override_limit=limit)
+        if res.get("status") == "error":
+            return json.dumps(res, ensure_ascii=False)
+
+        items = res.get("items", [])
+        if not items:
+            return f"RSS нода '{res.get('name')}' ({node_id}) в данный момент не имеет сохраненных записей."
+
+        lines = [f"## RSS Нода: {res.get('name')} (ID: {node_id})", f"*Всего публикаций отдано: {len(items)}*"]
+        for idx, item in enumerate(items, 1):
+            title = item.get("title", "Untitled")
+            link = item.get("link", "")
+            summary = item.get("summary", "")
+            if len(summary) > 200:
+                summary = summary[:200] + "..."
+            lines.append(f"{idx}. **{title}**\n   {summary}\n   🔗 {link}")
+
+        return "\n\n".join(lines)
+    except Exception as e:
+        logger.error(f"read_rss_node_feed tool error: {e}")
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 def create_subagent(subagent_id: str, name: str, system_prompt: str, model: Optional[str] = None) -> str:
@@ -1588,6 +1627,12 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         return get_rss_digest(
             feed_source=arguments.get("feed_source", "Habr"),
             limit=arguments.get("limit", 5)
+        )
+
+    elif name == "read_rss_node_feed":
+        return read_rss_node_feed(
+            node_id=arguments.get("node_id", ""),
+            limit=arguments.get("limit")
         )
 
     elif name == "create_subagent":

@@ -7,12 +7,13 @@ import {
   Plus, 
   Sparkles,
   Search,
-  Cpu
+  Cpu,
+  Rss
 } from 'lucide-react';
 import { SKILLS_LIST } from '../NetworkTab';
 
 interface NodePaletteProps {
-  onAddSubagent: (type: 'orchestrator' | 'agent', archetype?: string) => void;
+  onAddSubagent: (type: 'orchestrator' | 'agent' | 'rss_node', archetype?: string) => void;
   onAddSkillToLayer: (skillId: string) => void;
 }
 
@@ -182,6 +183,43 @@ export function NodePalette({ onAddSubagent, onAddSkillToLayer }: NodePalettePro
                 <div style={{ fontSize: '11px', color: '#9ca3af' }}>Delegator & Manager Node</div>
               </div>
               <Plus size={16} style={{ color: '#c084fc' }} />
+            </div>
+
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#6b7280', fontWeight: 600, letterSpacing: '0.5px', marginTop: '6px' }}>
+              Data Sources
+            </div>
+
+            <div
+              onClick={() => onAddSubagent('rss_node')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '10px',
+                background: 'rgba(249, 115, 22, 0.12)',
+                border: '1px solid rgba(249, 115, 22, 0.3)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                background: 'rgba(249, 115, 22, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ea580c'
+              }}>
+                <Rss size={18} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#f3f4f6' }}>RSS News Node</div>
+                <div style={{ fontSize: '11px', color: '#9ca3af' }}>Autonomous Python Poller</div>
+              </div>
+              <Plus size={16} style={{ color: '#ea580c' }} />
             </div>
 
             <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#6b7280', fontWeight: 600, letterSpacing: '0.5px', marginTop: '6px' }}>

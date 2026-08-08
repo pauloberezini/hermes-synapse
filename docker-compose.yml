@@ -25,6 +25,7 @@ services:
       - ./backend:/app/backend
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox_data:/app/backend/data/sandbox
     depends_on:
       qdrant:
         condition: service_started
@@ -38,6 +39,7 @@ services:
       start_period: 5s
     networks:
       - hermes-net
+      - sandbox-net
 
   frontend:
     build:
@@ -85,10 +87,28 @@ services:
     networks:
       - hermes-net
 
+  sandbox:
+    build:
+      context: ./sandbox
+    container_name: jarvis-sandbox
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+    volumes:
+      - sandbox_data:/mnt/data
+    networks:
+      - sandbox-net
+
 networks:
   hermes-net:
     driver: bridge
+  sandbox-net:
+    internal: true
 
 volumes:
   qdrant_data:
   postgres_data:
+  sandbox_data:

@@ -3,7 +3,8 @@ import {
   Layers, 
   Bot, 
   Wrench, 
-  Cpu
+  Cpu,
+  Rss
 } from 'lucide-react';
 import { OrchestratorLayerBar, type BreadcrumbItem } from './architecture/OrchestratorLayerBar';
 import { NodePalette } from './architecture/NodePalette';
@@ -12,6 +13,7 @@ import { LayerSandboxDrawer } from './architecture/LayerSandboxDrawer';
 
 export const SKILLS_LIST = [
   { id: 'web_search', name: 'Web Search', desc: 'DuckDuckGo search, weather, RSS news', color: 'var(--accent-cyan, #06b6d4)' },
+  { id: 'read_rss_node_feed', name: 'RSS News Ray', desc: 'Read news from autonomous RSS nodes', color: '#ea580c' },
   { id: 'market_monitor', name: 'Market Monitor', desc: 'Stock quotes and alerts', color: '#10b981' },
   { id: 'bcm', name: 'BCM Trading Engine', desc: 'cTrader FIX API, Pepperstone execution & risk', color: '#f43f5e' },
   { id: 'obsidian_rag', name: 'Obsidian Vault', desc: 'Read and write Obsidian notes', color: '#8b5cf6' },
@@ -43,11 +45,30 @@ export function NetworkTab({
   ]);
   const [isSandboxOpen, setIsSandboxOpen] = useState(false);
 
+  // RSS Nodes State
+  const [rssNodes, setRssNodes] = useState<any[]>([]);
+
+  const fetchRssNodes = async () => {
+    try {
+      const res = await fetch('/api/rss/nodes');
+      if (res.ok) {
+        const data = await res.json();
+        setRssNodes(data);
+      }
+    } catch (e) {
+      console.error('Error fetching RSS nodes:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchRssNodes();
+  }, []);
+
   // Selection & Inspector states
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
   const [canvasClickStart, setCanvasClickStart] = useState<{ x: number; y: number } | null>(null);
-  const [connectingFrom, setConnectingFrom] = useState<{ id: string; type: 'orchestrator' | 'agent'; x: number; y: number } | null>(null);
+  const [connectingFrom, setConnectingFrom] = useState<{ id: string; type: 'orchestrator' | 'agent' | 'rss_node'; x: number; y: number } | null>(null);
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
   const [draggingNode, setDraggingNode] = useState<{
     mouseStartX: number;
@@ -216,24 +237,27 @@ export function NetworkTab({
     }
   };
 
-  // Save node to server
-  const saveAgentToServer = async (agent: any) => {
+  // Save single agent or RSS node to server
+  const saveAgentToServer = async (updatedNode: any) => {
+    if (updatedNode.isRssNode || rssNodes.some(n => n.id === updatedNode.id)) {
+      try {
+        await fetch(`/api/rss/nodes/${updatedNode.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedNode)
+        });
+        await fetchRssNodes();
+      } catch (err) {
+        console.error('Error saving RSS node config:', err);
+      }
+      return;
+    }
+
     try {
       const res = await fetch('/api/subagents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: agent.id,
-          name: agent.name,
-          system_prompt: agent.system_prompt,
-          model: agent.model,
-          agent_type: agent.agent_type || 'agent',
-          parent_id: agent.parent_id || null,
-          skills: agent.skills || '',
-          x: agent.x || 100,
-          y: agent.y || 100,
-          temperature: typeof agent.temperature === 'number' ? agent.temperature : 0.7
-        })
+        body: JSON.stringify(updatedNode)
       });
       if (res.ok) {
         fetchSubagents();
@@ -249,6 +273,18 @@ export function NetworkTab({
       alert('Cannot delete Master Jarvis Orchestrator!');
       return;
     }
+    if (rssNodes.some(n => n.id === nodeId)) {
+      if (confirm(`Delete RSS node "${nodeId}"?`)) {
+        try {
+          await fetch(`/api/rss/nodes/${nodeId}`, { method: 'DELETE' });
+          await fetchRssNodes();
+          setSelectedNodeId(null);
+        } catch (err) {
+          console.error('Error deleting RSS node:', err);
+        }
+      }
+      return;
+    }
     if (confirm(`Delete node "${nodeId}"?`)) {
       try {
         const res = await fetch(`/api/subagents/${nodeId}`, { method: 'DELETE' });
@@ -262,8 +298,34 @@ export function NetworkTab({
     }
   };
 
-  // Add Subagent from NodePalette
-  const handleAddSubagent = async (type: 'orchestrator' | 'agent', archetype?: string) => {
+  // Add Subagent or RSS Node from NodePalette
+  const handleAddSubagent = async (type: 'orchestrator' | 'agent' | 'rss_node', archetype?: string) => {
+    if (type === 'rss_node') {
+      const randomSuffix = Math.floor(Math.random() * 899 + 100);
+      const newId = `rss_node_${randomSuffix}`;
+      const newRssNode = {
+        id: newId,
+        name: `RSS Feed Node #${randomSuffix}`,
+        feed_urls: 'https://habr.com/ru/rss/news/',
+        fetch_interval_minutes: 15,
+        output_limit: 10,
+        date_filter_days: 0,
+        keywords_filter: '',
+        is_active: 1,
+        x: 350 + Math.floor(Math.random() * 150),
+        y: 150 + Math.floor(Math.random() * 150),
+        connected_agents: ''
+      };
+      await fetch('/api/rss/nodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRssNode)
+      });
+      await fetchRssNodes();
+      setSelectedNodeId(newId);
+      return;
+    }
+
     const randomSuffix = Math.floor(Math.random() * 899 + 100);
     const newId = type === 'orchestrator' ? `orch_${randomSuffix}` : `agent_${archetype || 'worker'}_${randomSuffix}`;
     const nameMap: Record<string, string> = {
@@ -461,8 +523,19 @@ export function NetworkTab({
     return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
   };
 
-  const handleConnectOutput = (nodeId: string, type: 'orchestrator' | 'agent', e: React.MouseEvent) => {
+  const handleConnectOutput = (nodeId: string, type: 'orchestrator' | 'agent' | 'rss_node', e: React.MouseEvent) => {
     e.stopPropagation();
+    if (type === 'rss_node') {
+      const node = rssNodes.find(n => n.id === nodeId);
+      if (node) {
+        const portX = (node.x || 300) + 230;
+        const portY = (node.y || 200) + 45;
+        setConnectingFrom({ id: nodeId, type, x: portX, y: portY });
+        setCursorPos({ x: portX, y: portY });
+      }
+      return;
+    }
+
     const node = subagents.find(n => n.id === nodeId);
     if (node) {
       const portX = (node.x || 100) + 230;
@@ -482,7 +555,29 @@ export function NetworkTab({
       return;
     }
 
-    if (sourceType === 'orchestrator' && targetType === 'agent') {
+    if (sourceType === 'rss_node' && targetType === 'agent') {
+      const rssNode = rssNodes.find(n => n.id === sourceId);
+      if (rssNode) {
+        const currentAgents = rssNode.connected_agents ? rssNode.connected_agents.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+        if (!currentAgents.includes(targetId)) {
+          currentAgents.push(targetId);
+          await fetch(`/api/rss/nodes/${sourceId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connected_agents: currentAgents.join(',') })
+          });
+          await fetchRssNodes();
+        }
+      }
+      const targetAgent = subagents.find(n => n.id === targetId);
+      if (targetAgent) {
+        const currentSkills = targetAgent.skills ? targetAgent.skills.split(',').map((s: string) => s.trim()) : [];
+        if (!currentSkills.includes('read_rss_node_feed')) {
+          currentSkills.push('read_rss_node_feed');
+          await saveAgentToServer({ ...targetAgent, skills: currentSkills.join(',') });
+        }
+      }
+    } else if (sourceType === 'orchestrator' && targetType === 'agent') {
       const targetAgent = subagents.find(n => n.id === targetId);
       if (targetAgent) {
         const updatedAgent = { ...targetAgent, parent_id: sourceId };
@@ -502,7 +597,9 @@ export function NetworkTab({
     setConnectingFrom(null);
   };
 
-  const selectedNodeObject = subagents.find(n => n.id === selectedNodeId) || null;
+  const selectedSubagentNode = subagents.find(n => n.id === selectedNodeId);
+  const selectedRssNode = rssNodes.find(n => n.id === selectedNodeId);
+  const selectedNodeObject = selectedRssNode ? { ...selectedRssNode, isRssNode: true } : (selectedSubagentNode || null);
 
   return (
     <div style={{
@@ -616,6 +713,33 @@ export function NetworkTab({
                       stroke={isSelected ? '#c084fc' : 'rgba(192, 132, 252, 0.35)'}
                       strokeWidth={isSelected ? 2.5 : 1.5}
                       strokeDasharray="4,4"
+                    />
+                  </g>
+                );
+              });
+            })}
+
+            {/* RSS Node to Agent Connections (Skill Rays) */}
+            {rssNodes.map(rssNode => {
+              const connectedAgents = rssNode.connected_agents ? rssNode.connected_agents.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+              return connectedAgents.map((agentId: string) => {
+                const targetAgent = visibleSubagentNodes.find(a => a.id === agentId);
+                if (!targetAgent) return null;
+
+                const x1 = (rssNode.x || 300) + 230;
+                const y1 = (rssNode.y || 200) + 45;
+                const x2 = targetAgent.x || 100;
+                const y2 = (targetAgent.y || 100) + 50;
+                const isSelected = selectedNodeId === rssNode.id || selectedNodeId === targetAgent.id;
+
+                return (
+                  <g key={`rss-edge-${rssNode.id}-${agentId}`}>
+                    <path
+                      d={getBezierPath(x1, y1, x2, y2)}
+                      fill="none"
+                      stroke={isSelected ? '#f97316' : 'rgba(249, 115, 22, 0.5)'}
+                      strokeWidth={isSelected ? 3 : 2}
+                      strokeDasharray="6,4"
                     />
                   </g>
                 );
@@ -755,6 +879,89 @@ export function NetworkTab({
                     height: '14px',
                     borderRadius: '50%',
                     background: '#34d399',
+                    border: '2px solid #020617',
+                    cursor: 'pointer'
+                  }}
+                />
+              </div>
+            );
+          })}
+
+          {/* RSS Data Source Nodes */}
+          {rssNodes.map(node => {
+            const isSelected = selectedNodeId === node.id;
+
+            return (
+              <div
+                key={node.id}
+                onMouseDown={(e) => handleMouseDownNode(node.id, e, false)}
+                style={{
+                  position: 'absolute',
+                  left: `${node.x || 300}px`,
+                  top: `${node.y || 200}px`,
+                  width: 230,
+                  minHeight: 90,
+                  background: 'linear-gradient(135deg, rgba(30, 15, 10, 0.95), rgba(15, 23, 42, 0.95))',
+                  border: isSelected 
+                    ? '2px solid #ea580c' 
+                    : '1.5px solid rgba(249, 115, 22, 0.5)',
+                  borderRadius: '12px',
+                  padding: '12px',
+                  boxShadow: isSelected 
+                    ? '0 0 20px rgba(234, 88, 12, 0.4)' 
+                    : '0 8px 24px rgba(0, 0, 0, 0.4)',
+                  cursor: 'grab',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  zIndex: isSelected ? 10 : 3
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '6px',
+                      background: 'rgba(249, 115, 22, 0.2)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#ea580c'
+                    }}>
+                      <Rss size={16} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc', lineHeight: 1.2 }}>
+                        {node.name}
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#fdba74', fontWeight: 500 }}>
+                        RSS Data Source Node
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '11px', color: '#9ca3af', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: '#cbd5e1' }}>Output Limit: {node.output_limit} items</span>
+                  <span style={{ fontSize: '10px', color: node.is_active ? '#10b981' : '#64748b' }}>
+                    {node.is_active ? '● Poller Active' : '○ Poller Paused'}
+                  </span>
+                </div>
+
+                {/* Output Handle (Right) */}
+                <div
+                  onClick={(e) => handleConnectOutput(node.id, 'rss_node', e)}
+                  title="Drag Output Handle to Connect Agent"
+                  style={{
+                    position: 'absolute',
+                    right: '-8px',
+                    top: '41px',
+                    width: '14px',
+                    height: '14px',
+                    borderRadius: '50%',
+                    background: '#ea580c',
                     border: '2px solid #020617',
                     cursor: 'pointer'
                   }}

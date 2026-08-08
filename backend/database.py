@@ -2,7 +2,7 @@ import os
 import sqlite3
 import logging
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
@@ -547,6 +547,45 @@ def _init_sqlite_schema():
         )
     """)
 
+    # Create RSS nodes table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rss_nodes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            feed_urls TEXT NOT NULL DEFAULT '',
+            fetch_interval_minutes INTEGER DEFAULT 15,
+            output_limit INTEGER DEFAULT 10,
+            date_filter_days INTEGER DEFAULT 0,
+            keywords_filter TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 1,
+            x INTEGER DEFAULT 300,
+            y INTEGER DEFAULT 200,
+            connected_agents TEXT DEFAULT '',
+            last_fetched_at TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Create RSS feed items table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rss_feed_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            feed_url TEXT DEFAULT '',
+            guid TEXT NOT NULL,
+            title TEXT NOT NULL,
+            link TEXT DEFAULT '',
+            summary TEXT DEFAULT '',
+            published_at TEXT DEFAULT '',
+            fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(node_id, guid)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_rss_feed_items_node_id ON rss_feed_items (node_id, id DESC)
+    """)
+
     _auto_heal_subagents_and_skills(cursor)
 
     conn.commit()
@@ -870,6 +909,45 @@ def _init_postgres_schema():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+
+        # Create RSS nodes table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rss_nodes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                feed_urls TEXT NOT NULL DEFAULT '',
+                fetch_interval_minutes INTEGER DEFAULT 15,
+                output_limit INTEGER DEFAULT 10,
+                date_filter_days INTEGER DEFAULT 0,
+                keywords_filter TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
+                x INTEGER DEFAULT 300,
+                y INTEGER DEFAULT 200,
+                connected_agents TEXT DEFAULT '',
+                last_fetched_at TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create RSS feed items table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rss_feed_items (
+                id SERIAL PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                feed_url TEXT DEFAULT '',
+                guid TEXT NOT NULL,
+                title TEXT NOT NULL,
+                link TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                published_at TEXT DEFAULT '',
+                fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(node_id, guid)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rss_feed_items_node_id ON rss_feed_items (node_id, id DESC)
         """)
 
         conn.commit()
@@ -2009,13 +2087,209 @@ def db_update_task(task_id: int, title: Optional[str] = None, description: Optio
     params.append(now_str)
     params.append(task_id)
 
-    query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
-    return _rowcount(query, tuple(params)) > 0
+    cnt = _rowcount(f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?", tuple(params))
+    return cnt > 0
 
 
 def db_delete_task(task_id: int) -> bool:
-    """Delete a task by ID."""
-    return _rowcount("DELETE FROM tasks WHERE id = ?", (task_id,)) > 0
+    """Delete task by ID."""
+    cnt = _rowcount("DELETE FROM tasks WHERE id = ?", (task_id,))
+    return cnt > 0
+
+
+# ─── RSS NODES & ITEMS CRUD HELPERS ──────────────────────────────────────────
+
+def db_create_rss_node(id: str, name: str, feed_urls: str = "", fetch_interval_minutes: int = 15,
+                        output_limit: int = 10, date_filter_days: int = 0, keywords_filter: str = "",
+                        is_active: int = 1, x: int = 300, y: int = 200, connected_agents: str = "") -> Dict[str, Any]:
+    """Create a new RSS Node."""
+    now_str = datetime.now(timezone.utc).isoformat()
+    query = """
+        INSERT INTO rss_nodes (id, name, feed_urls, fetch_interval_minutes, output_limit, date_filter_days, keywords_filter, is_active, x, y, connected_agents, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    _execute(query, (id, name, feed_urls, fetch_interval_minutes, output_limit, date_filter_days, keywords_filter, is_active, x, y, connected_agents, now_str))
+    res = db_get_rss_node(id)
+    return res if res else {}
+
+
+def db_get_all_rss_nodes() -> List[Dict[str, Any]]:
+    """Retrieve all RSS nodes."""
+    query = "SELECT id, name, feed_urls, fetch_interval_minutes, output_limit, date_filter_days, keywords_filter, is_active, x, y, connected_agents, last_fetched_at, created_at FROM rss_nodes ORDER BY created_at ASC"
+    rows = _execute(query)
+    result = []
+    for r in rows:
+        result.append({
+            "id": r[0],
+            "name": r[1],
+            "feed_urls": r[2] or "",
+            "fetch_interval_minutes": r[3] or 15,
+            "output_limit": r[4] or 10,
+            "date_filter_days": r[5] or 0,
+            "keywords_filter": r[6] or "",
+            "is_active": bool(r[7]),
+            "x": r[8] if r[8] is not None else 300,
+            "y": r[9] if r[9] is not None else 200,
+            "connected_agents": r[10] or "",
+            "last_fetched_at": r[11],
+            "created_at": r[12]
+        })
+    return result
+
+
+def db_get_rss_node(node_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a single RSS node by ID."""
+    query = "SELECT id, name, feed_urls, fetch_interval_minutes, output_limit, date_filter_days, keywords_filter, is_active, x, y, connected_agents, last_fetched_at, created_at FROM rss_nodes WHERE id = ?"
+    rows = _execute(query, (node_id,))
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "id": r[0],
+        "name": r[1],
+        "feed_urls": r[2] or "",
+        "fetch_interval_minutes": r[3] or 15,
+        "output_limit": r[4] or 10,
+        "date_filter_days": r[5] or 0,
+        "keywords_filter": r[6] or "",
+        "is_active": bool(r[7]),
+        "x": r[8] if r[8] is not None else 300,
+        "y": r[9] if r[9] is not None else 200,
+        "connected_agents": r[10] or "",
+        "last_fetched_at": r[11],
+        "created_at": r[12]
+    }
+
+
+def db_update_rss_node(node_id: str, name: Optional[str] = None, feed_urls: Optional[str] = None,
+                        fetch_interval_minutes: Optional[int] = None, output_limit: Optional[int] = None,
+                        date_filter_days: Optional[int] = None, keywords_filter: Optional[str] = None,
+                        is_active: Optional[int] = None, x: Optional[int] = None, y: Optional[int] = None,
+                        connected_agents: Optional[str] = None, last_fetched_at: Optional[str] = None) -> bool:
+    """Update fields of an RSS node."""
+    updates = []
+    params = []
+    if name is not None:
+        updates.append("name = ?")
+        params.append(name)
+    if feed_urls is not None:
+        updates.append("feed_urls = ?")
+        params.append(feed_urls)
+    if fetch_interval_minutes is not None:
+        updates.append("fetch_interval_minutes = ?")
+        params.append(fetch_interval_minutes)
+    if output_limit is not None:
+        updates.append("output_limit = ?")
+        params.append(output_limit)
+    if date_filter_days is not None:
+        updates.append("date_filter_days = ?")
+        params.append(date_filter_days)
+    if keywords_filter is not None:
+        updates.append("keywords_filter = ?")
+        params.append(keywords_filter)
+    if is_active is not None:
+        updates.append("is_active = ?")
+        params.append(is_active)
+    if x is not None:
+        updates.append("x = ?")
+        params.append(x)
+    if y is not None:
+        updates.append("y = ?")
+        params.append(y)
+    if connected_agents is not None:
+        updates.append("connected_agents = ?")
+        params.append(connected_agents)
+    if last_fetched_at is not None:
+        updates.append("last_fetched_at = ?")
+        params.append(last_fetched_at)
+
+    if not updates:
+        return False
+
+    params.append(node_id)
+    query = f"UPDATE rss_nodes SET {', '.join(updates)} WHERE id = ?"
+    return _rowcount(query, tuple(params)) > 0
+
+
+def db_delete_rss_node(node_id: str) -> bool:
+    """Delete an RSS node and its associated items."""
+    _execute("DELETE FROM rss_feed_items WHERE node_id = ?", (node_id,))
+    return _rowcount("DELETE FROM rss_nodes WHERE id = ?", (node_id,)) > 0
+
+
+def db_save_rss_items(node_id: str, items: List[Dict[str, Any]]) -> int:
+    """Save RSS items into the database table, ignoring existing GUIDs."""
+    inserted = 0
+    now_str = datetime.now(timezone.utc).isoformat()
+    backend_type = _get_backend().__class__.__name__
+
+    for item in items:
+        guid = item.get("guid") or item.get("link") or item.get("title", "")
+        title = item.get("title", "Untitled")
+        link = item.get("link", "")
+        summary = item.get("summary", "")
+        published_at = item.get("published_at", "")
+        feed_url = item.get("feed_url", "")
+
+        if backend_type == "PostgresBackend":
+            query = """
+                INSERT INTO rss_feed_items (node_id, feed_url, guid, title, link, summary, published_at, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (node_id, guid) DO NOTHING
+            """
+        else:
+            query = """
+                INSERT OR IGNORE INTO rss_feed_items (node_id, feed_url, guid, title, link, summary, published_at, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        count = _rowcount(query, (node_id, feed_url, guid, title, link, summary, published_at, now_str))
+        if count > 0:
+            inserted += 1
+
+    db_update_rss_node(node_id, last_fetched_at=now_str)
+    return inserted
+
+
+def db_get_rss_items(node_id: str, limit: int = 50, date_filter_days: int = 0, keywords_filter: str = "") -> List[Dict[str, Any]]:
+    """Get fetched RSS items for a node with optional filtering by date limit and keywords."""
+    query = "SELECT id, node_id, feed_url, guid, title, link, summary, published_at, fetched_at FROM rss_feed_items WHERE node_id = ?"
+    params: List[Any] = [node_id]
+
+    if date_filter_days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=date_filter_days)).isoformat()
+        query += " AND fetched_at >= ?"
+        params.append(cutoff)
+
+    if keywords_filter and keywords_filter.strip():
+        kw_list = [k.strip().lower() for k in keywords_filter.split(",") if k.strip()]
+        if kw_list:
+            or_clauses = []
+            for kw in kw_list:
+                or_clauses.append("(LOWER(title) LIKE ? OR LOWER(summary) LIKE ?)")
+                params.extend([f"%{kw}%", f"%{kw}%"])
+            query += " AND (" + " OR ".join(or_clauses) + ")"
+
+    query += " ORDER BY id DESC"
+    if limit > 0:
+        query += " LIMIT ?"
+        params.append(limit)
+
+    rows = _execute(query, tuple(params))
+    items = []
+    for r in rows:
+        items.append({
+            "id": r[0],
+            "node_id": r[1],
+            "feed_url": r[2] or "",
+            "guid": r[3],
+            "title": r[4],
+            "link": r[5] or "",
+            "summary": r[6] or "",
+            "published_at": r[7] or "",
+            "fetched_at": r[8] or ""
+        })
+    return items
+
 
 # Auto-initialize database schema on import to prevent missing tables
 init_db()

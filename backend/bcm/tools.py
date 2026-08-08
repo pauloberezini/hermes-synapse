@@ -17,7 +17,11 @@ def _ensure_bcm_dependencies():
         "yfinance": "yfinance>=0.2.54",
         "OpenSSL": "pyopenssl",
         "google.protobuf": "protobuf",
-        "grpc_tools": "grpcio-tools"
+        "grpc_tools": "grpcio-tools",
+        "scipy": "scipy",
+        "mplfinance": "mplfinance",
+        "plotly": "plotly",
+        "fredapi": "fredapi"
     }
     missing = []
     for module_name, pip_name in required.items():
