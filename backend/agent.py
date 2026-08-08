@@ -539,6 +539,10 @@ class JarvisAgent:
                     
                     tool_calls = choice_msg.get("tool_calls")
                     if not tool_calls:
+                        content_str = choice_msg.get("content") or ""
+                        tool_calls = self._extract_json_tool_calls(content_str)
+
+                    if not tool_calls:
                         # Final text response reached
                         response_text = choice_msg.get("content") or ""
                         
@@ -725,6 +729,55 @@ class JarvisAgent:
 
         return response_text
 
+    def _extract_json_tool_calls(self, text: str) -> Optional[List[Dict[str, Any]]]:
+        """Fallback extractor for models that output raw JSON function calls in text content."""
+        if not text or ("function" not in text and "name" not in text):
+            return None
+        import json
+
+        candidates = []
+        stack = []
+        start = -1
+        for i, ch in enumerate(text):
+            if ch == "{":
+                if not stack:
+                    start = i
+                stack.append(ch)
+            elif ch == "}":
+                if stack:
+                    stack.pop()
+                    if not stack and start != -1:
+                        candidates.append(text[start:i+1])
+                        start = -1
+
+        extracted = []
+        for raw in candidates:
+            try:
+                parsed = json.loads(raw)
+                fn_name = None
+                fn_args = {}
+                if isinstance(parsed, dict):
+                    if "function" in parsed and isinstance(parsed["function"], dict):
+                        fn_name = parsed["function"].get("name")
+                        fn_args = parsed["function"].get("parameters") or parsed["function"].get("arguments") or {}
+                    elif "name" in parsed:
+                        fn_name = parsed.get("name")
+                        fn_args = parsed.get("parameters") or parsed.get("arguments") or {}
+
+                if fn_name:
+                    extracted.append({
+                        "id": f"call_fallback_{len(extracted)}",
+                        "type": "function",
+                        "function": {
+                            "name": fn_name,
+                            "arguments": json.dumps(fn_args) if isinstance(fn_args, dict) else str(fn_args)
+                        }
+                    })
+            except Exception:
+                pass
+
+        return extracted if extracted else None
+
     async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
         session_id = chat_id or subagent["id"]
@@ -776,11 +829,12 @@ class JarvisAgent:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": user_content})
 
+        safe_session_id = session_id.encode("ascii", "ignore").decode("ascii").strip() or "session"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/pauloberezini/jarvis",
-            "X-Title": f"Jarvis - {session_id}"
+            "X-Title": f"Jarvis - {safe_session_id}"
         }
 
         # Subagents are limited to safe information-gathering tools only
@@ -933,6 +987,10 @@ class JarvisAgent:
                     choice_msg = data["choices"][0]["message"]
                     
                     tool_calls = choice_msg.get("tool_calls")
+                    if not tool_calls:
+                        content_str = choice_msg.get("content") or ""
+                        tool_calls = self._extract_json_tool_calls(content_str)
+
                     if not tool_calls:
                         response_text = choice_msg.get("content") or ""
                         

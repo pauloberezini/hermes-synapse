@@ -32,6 +32,7 @@ interface AgentOption {
 const DEFAULT_AGENTS: AgentOption[] = [
   { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'agent' },
   { id: 'bcm_orchestrator', name: 'CIO Orchestrator (BCM)', agent_type: 'orchestrator' },
+  { id: 'bcm_crypto_orchestrator', name: 'BCM Crypto Orchestrator', agent_type: 'orchestrator' },
   { id: 'quant_analyst', name: 'Quant Analyst', agent_type: 'agent' },
   { id: 'macro_analyst', name: 'Macro Analyst', agent_type: 'agent' },
   { id: 'risk_manager', name: 'Risk Manager', agent_type: 'agent' },
