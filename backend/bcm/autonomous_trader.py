@@ -4,6 +4,9 @@ import os
 BCM_DIR = os.path.dirname(os.path.abspath(__file__))
 if BCM_DIR not in sys.path:
     sys.path.insert(0, BCM_DIR)
+INDICATORS_DIR = os.path.join(BCM_DIR, "indicators")
+if INDICATORS_DIR not in sys.path:
+    sys.path.insert(0, INDICATORS_DIR)
 
 import subprocess
 import json
@@ -51,6 +54,24 @@ def israel_time():
     israel_tz = timezone(timedelta(hours=3))  # IDT = UTC+3
     now = datetime.now(israel_tz)
     return now.strftime("%d/%m %H:%M IDT")
+
+def get_market_session():
+    """Returns the current active global market session and its expected volatility based on UTC time."""
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+    hour = now_utc.hour
+    
+    if 13 <= hour < 16:
+        # 13:00 - 16:00 UTC is the overlap between London and NY (highest volatility)
+        return "London & NY Overlap (EXTREME VOLATILITY - Expect large institutional moves and fakeouts)"
+    elif 16 <= hour < 20:
+        return "New York Session (HIGH VOLATILITY - Trend continuation or afternoon reversals)"
+    elif 8 <= hour < 13:
+        return "London Session (HIGH VOLATILITY - Establishing the daily trend)"
+    elif 0 <= hour < 8:
+        return "Asian Session (LOW VOLATILITY - Ranging, consolidation, mean-reverting)"
+    else:
+        return "Late NY / Sydney Session (VERY LOW VOLATILITY - Market is quiet, spreads may widen)"
 
 def send_telegram_msg(message):
     """Send a notification to Telegram with retries."""
@@ -112,7 +133,7 @@ def extract_json(text):
         return None
 
 def get_technical_analysis(ticker):
-    """Fetch RSI/MACD/Bollinger technicals locally using yfinance."""
+    """Fetch RSI/MACD/Bollinger technicals locally using yfinance and advanced BCM indicators."""
     import yfinance as yf
     import pandas as pd
     try:
@@ -125,8 +146,9 @@ def get_technical_analysis(ticker):
                 _normalize_yf_symbol = lambda s: s
         ticker = _normalize_yf_symbol(ticker)
         print(f"DEBUG: Fetching yfinance data for {ticker}...")
-        # 1h interval: 120 candles over 5 days — enough for RSI-14/MACD, better for intraday sessions
-        df = yf.download(ticker, period="5d", interval="1h", progress=False)
+        
+        # Changed to 15m interval for better volume profile resolution
+        df = yf.download(ticker, period="5d", interval="15m", progress=False)
         if df.empty:
             raise ValueError(f"No data for {ticker}")
         
@@ -152,6 +174,65 @@ def get_technical_analysis(ticker):
             "macdhist": {ticker: float(last['macdhist'].iloc[0] if isinstance(last['macdhist'], pd.Series) else last['macdhist'])},
             "close": {ticker: float(last['Close'].iloc[0] if isinstance(last['Close'], pd.Series) else last['Close'])}
         }
+        
+        # === Advanced Indicators (Volume Profile & VWAP) ===
+        try:
+            from backend.bcm.indicators.volume_profile import VolumeProfile
+            from backend.bcm.indicators.models_utils.profile_models import DistributionData
+            from backend.bcm.indicators.multi_vwap import MultiVwap
+            import numpy as np
+            
+            # Prepare dataframe for indicators (lowercase columns)
+            df_ind = df.copy()
+            # If MultiIndex columns (like yfinance sometimes does), flatten them
+            if isinstance(df_ind.columns, pd.MultiIndex):
+                df_ind.columns = [c[0].lower() for c in df_ind.columns]
+            else:
+                df_ind.columns = [c.lower() for c in df_ind.columns]
+                
+            # Strip timezone from index to avoid VWAP comparison errors
+            if df_ind.index.tz is not None:
+                df_ind.index = df_ind.index.tz_localize(None)
+                
+            if 'volume' not in df_ind.columns or (df_ind['volume'] == 0).all():
+                df_ind['volume'] = 1.0 # Failsafe for forex data without volume
+                
+            rng = df_ind['high'].max() - df_ind['low'].min()
+            row_height = max(rng / 100.0, 0.0001)
+            
+            # VWAP
+            try:
+                mvwap = MultiVwap(df_ind)
+                df_vwap = mvwap.daily(df_ind)
+                daily_vwap = float(df_vwap['daily_vwap_median'].iloc[-1])
+                res["vwap"] = {"daily": daily_vwap}
+            except Exception as ve:
+                print(f"VWAP calc error: {ve}")
+                
+            # Volume Profile
+            try:
+                # Limit to last 2 days for speed in calculation
+                last_time = df_ind.index[-1]
+                df_vp = df_ind[df_ind.index >= last_time - pd.Timedelta(days=2)].copy()
+                
+                vp = VolumeProfile(df_vp, None, row_height, pd.Timedelta(days=1), DistributionData.OHLC_No_Avg, with_plotly_columns=False)
+                # VP outputs list of intervals, list of profiles
+                _, df_profiles = vp.normal() 
+                if len(df_profiles) > 0:
+                    last_prof = df_profiles[-1]
+                    if 'vp_prices' in last_prof.columns and 'vp_normal' in last_prof.columns:
+                        prices = last_prof['vp_prices'].values
+                        volumes = last_prof['vp_normal'].values
+                        if len(volumes) > 0:
+                            poc_idx = np.argmax(volumes)
+                            poc = float(prices[poc_idx])
+                            res["volume_profile"] = {"poc": poc}
+            except Exception as vpe:
+                print(f"VP calc error: {vpe}")
+                
+        except Exception as adv_e:
+            print(f"Advanced indicators skip: {adv_e}")
+
         return json.dumps(res)
     except Exception as e:
         print(f"⚠️ yfinance Technical Analysis Error: {e}")
@@ -332,6 +413,107 @@ def check_liquidity_layer_0(symbol: str) -> dict:
         pass
 
     return {"passed": True, "reason": "Liquidity assumed OK", "spread": 0}
+
+def get_global_macro_metrics() -> str:
+    """Fetch live VIX and 10Y Yield via yfinance for macro context."""
+    import yfinance as yf
+    try:
+        # Fetch ^VIX and ^TNX (10Y Yield)
+        vix_df = yf.Ticker("^VIX").history(period="1d")
+        tnx_df = yf.Ticker("^TNX").history(period="1d")
+        
+        vix_val = round(vix_df['Close'].iloc[-1], 2) if not vix_df.empty else "Unavailable"
+        tnx_val = round(tnx_df['Close'].iloc[-1], 2) if not tnx_df.empty else "Unavailable"
+        
+        return f"VIX (Volatility Index): {vix_val}\nUS 10Y Treasury Yield: {tnx_val}%"
+    except Exception as e:
+        print(f"Error fetching global macro metrics: {e}")
+        return "Global Macro Metrics (VIX/10Y): Unavailable"
+
+def get_fred_macro_regime() -> str:
+    """Fetch structural macro data from FRED (Fed Funds Rate, Balance Sheet)."""
+    import os
+    try:
+        from fredapi import Fred
+    except ImportError:
+        return "FRED API module not installed."
+        
+    # Use the explicitly provided key or environment variable
+    api_key = os.getenv("FRED_API_KEY", "c2cd7e1b2cd623c7fa50dd2048539039")
+    if not api_key:
+        return "FRED API Key missing."
+        
+    try:
+        fred = Fred(api_key=api_key)
+        
+        # Effective Federal Funds Rate (Cost of Capital)
+        fedfunds = fred.get_series('FEDFUNDS').iloc[-1]
+        
+        # Total Assets of the Federal Reserve (Liquidity) - expressed in Millions, convert to Trillions
+        walcl_raw = fred.get_series('WALCL').iloc[-1]
+        walcl_trillions = round(walcl_raw / 1_000_000, 2)
+        
+        return (
+            f"Effective Federal Funds Rate: {round(fedfunds, 2)}%\n"
+            f"Federal Reserve Total Assets (Liquidity): ${walcl_trillions} Trillion"
+        )
+    except Exception as e:
+        print(f"Error fetching FRED macro regime: {e}")
+        return "FRED Macro Regime: Unavailable"
+
+def get_fred_intraday_filters() -> str:
+    """Fetch daily FRED risk metrics and today's economic releases."""
+    import os
+    import requests
+    from datetime import datetime
+    
+    api_key = os.getenv("FRED_API_KEY", "c2cd7e1b2cd623c7fa50dd2048539039")
+    if not api_key:
+        return ""
+        
+    try:
+        from fredapi import Fred
+        fred = Fred(api_key=api_key)
+        
+        # 1. Fetch Daily Risk Metrics
+        # SOFR
+        sofr = fred.get_series('SOFR').iloc[-1]
+        # High Yield Spread
+        hy_spread = fred.get_series('BAMLH0A0HYM2').iloc[-1]
+        # NFCI
+        nfci = fred.get_series('NFCI').iloc[-1]
+        
+        risk_block = (
+            f"Secured Overnight Financing Rate (SOFR): {round(sofr, 2)}%\n"
+            f"High Yield Corporate Bond Spread: {round(hy_spread, 2)}%\n"
+            f"Chicago Fed NFCI (Financial Conditions): {round(nfci, 2)}"
+        )
+        
+        # 2. Fetch Today's Releases (Economic Calendar)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        url = f"https://api.stlouisfed.org/fred/releases/dates?api_key={api_key}&file_type=json&realtime_start={today_str}&realtime_end={today_str}"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        
+        calendar_block = "No major economic releases scheduled for today."
+        if 'release_dates' in data and len(data['release_dates']) > 0:
+            releases = []
+            for r in data['release_dates'][:5]:  # Limit to top 5
+                rel_id = r.get('release_id')
+                if rel_id:
+                    # Fetch release name
+                    r_url = f"https://api.stlouisfed.org/fred/release?api_key={api_key}&file_type=json&release_id={rel_id}"
+                    r_resp = requests.get(r_url, timeout=2).json()
+                    name = r_resp.get('releases', [{}])[0].get('name', 'Unknown Release')
+                    releases.append(f"- {name} (ID: {rel_id})")
+            
+            if releases:
+                calendar_block = "WARNING: Major economic data releases today:\n" + "\n".join(releases)
+                
+        return f"{risk_block}\n\n{calendar_block}"
+    except Exception as e:
+        print(f"Error fetching FRED intraday filters: {e}")
+        return "FRED Intraday Filters: Unavailable"
 
 def get_macro_terminal_context(ticker: str) -> str:
     """Fetch live news, sentiment, and macro context from Macro Terminal MCP server."""
@@ -583,8 +765,11 @@ def ask_ai_decision(ticker, analysis_data):
     )
 
     print("--- 🕵️ Calling QUANT ANALYST ---")
+    market_session = get_market_session()
     analyst_prompt = f"""Analyze these indicators and Remizov shift for {ticker}. 
-    Focus on momentum and structural shifts. 
+    Focus on momentum, structural shifts, and institutional levels. 
+    CRITICAL: Pay special attention to 'volume_profile.poc' (Point of Control) as a high-probability liquidity level, and 'vwap.daily' for intraday mean reversion and institutional positioning.
+    CRITICAL VOLATILITY ADJUSTMENT: The current market session is '{market_session}'. You MUST weigh the importance of breakouts vs mean-reversions depending on this session's expected volatility. 
     Check 'past_experience' for historical similarities: {analysis_data}
     {graphrag_block}
     {positions_guardrail}"""
@@ -603,6 +788,20 @@ def ask_ai_decision(ticker, analysis_data):
         else:
             print("   WARNING: Petro-Macro Terminal unavailable, using training data")
 
+    # Fetch global macro metrics (VIX, 10Y Yield) and FRED Regime
+    global_macro_data = get_global_macro_metrics()
+    fred_regime_data = get_fred_macro_regime()
+    fred_intraday_filters_data = get_fred_intraday_filters()
+    global_macro_block = (
+        f"\n\n--- GLOBAL MACRO ENVIRONMENT ---\n"
+        f"{global_macro_data}\n\n"
+        f"--- FRED MACRO REGIME ---\n"
+        f"{fred_regime_data}\n\n"
+        f"--- FRED INTRADAY FILTERS & ECONOMIC CALENDAR ---\n"
+        f"{fred_intraday_filters_data}\n"
+        f"-------------------------------------------------\n"
+    )
+
     # Fetch live Macro Terminal MCP context (news sentiment, ticker insights)
     macro_terminal_data = get_macro_terminal_context(ticker)
     macro_terminal_block = (
@@ -613,9 +812,16 @@ def ask_ai_decision(ticker, analysis_data):
     macro_prompt = f"""You are the Macro & Sentiment Analyst for Berezini Capital Management.
     Today is {current_date}. We are analyzing {ticker}.
     {oil_context}
+    {global_macro_block}
     {macro_terminal_block}
     {positions_guardrail}
     Please provide a brief assessment of the current macroeconomic environment, central bank policies (Fed/BoE/etc.), geopolitical risks, and overall sentiment that could affect {ticker}. 
+    CRITICAL: Evaluate the Global Macro Environment (VIX and 10Y Yield) AND the FRED Macro Regime.
+    - If VIX > 20, the market is volatile; advise caution and wider stop losses. If VIX < 15, conditions are favorable for tighter trading.
+    - If US 10Y Treasury Yield is rising sharply, advise caution on risk-on assets (Crypto, Tech).
+    - FRED data updates slowly (weekly/monthly). Use it ONLY to understand the overarching Macro Regime (e.g. 'We are in a high-rate, tightening regime'), NOT as a timing trigger for a 15-minute trade.
+    - INTRADAY FILTERS: If 'High Yield Corporate Bond Spread' is rising sharply, it indicates institutional credit stress (panic). Avoid risk-on long positions. If 'NFCI' > 0, financial conditions are tight (bearish for risk assets).
+    - ECONOMIC CALENDAR WARNING: If there are major economic releases scheduled for today, you MUST flag this as a high-risk event to the Risk Manager.
     Incorporate the live Macro Terminal sentiment and news data provided above into your analysis."""
     macro_report = call_llm("Macro Analyst", macro_prompt)
 
@@ -624,7 +830,10 @@ def ask_ai_decision(ticker, analysis_data):
     print("--- 🛡️ Calling RISK MANAGER ---")
     risk_prompt = f"""Review Market Data, Quant Analyst Report, and Macro Report. 
     Assess safety (ATR/Keltner) and set SL/TP.
-    CRITICAL: If 'past_experience' shows consistent failures for these conditions, advise WAIT: 
+    CRITICAL MANDATE: You MUST mathematically ground your Stop Loss (SL) and Take Profit (TP) using institutional order flow levels. Place SL safely behind the Volume Profile Point of Control (POC) and consider daily VWAP boundaries.
+    CRITICAL VOLATILITY ADJUSTMENT: If the Macro Report indicates high VIX (>20), you MUST widen the SL proportionately or advise WAIT if the risk is too high.
+    NEWS EVENT OVERRIDE: If the Macro Report flags MAJOR ECONOMIC RELEASES today (like CPI, NFP, FOMC), you MUST advise a WAIT status to prevent news-based slippage, or recommend drastically reduced position sizes with extremely wide stops.
+    If 'past_experience' shows consistent failures for these conditions, advise WAIT.
     DATA: {analysis_data} 
     QUANT: {analyst_report}
     MACRO: {macro_report}

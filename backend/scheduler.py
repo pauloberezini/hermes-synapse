@@ -186,13 +186,17 @@ async def _job_recurring(
     job = scheduler.get_job(job_id)
     next_run = getattr(job, "next_run_time", None) if job else None
     now_tz = datetime.now(scheduler.timezone)
-    time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
+    if not next_run or next_run <= now_tz:
+        if job and hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
+            next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
+    time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else int(interval_hours * 3600)
     await _broadcast_ws({
         "type": "reminder_fired",
         "reminder": {
             "id": job_id, "label": label, "interval_hours": interval_hours,
             "fire_count": count, "status": "running", "time_left": time_left, "type": "recurring",
         },
+        "session_id": task_session_id,
     })
 
 
@@ -738,6 +742,9 @@ def get_all_timers() -> List[Dict[str, Any]]:
         job_type = meta.get("type") or kwargs.get("task_type") or db_fallback.get("task_type") or _infer_type(job)
         created_at = meta.get("created_at") or kwargs.get("created_at") or db_fallback.get("created_at") or ""
         next_run = getattr(job, "next_run_time", None)
+        if job_type == "recurring" and (not next_run or next_run <= now_tz):
+            if hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
+                next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
         time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
 
         status = meta.get("status", "paused" if next_run is None else "running")
@@ -1033,6 +1040,30 @@ def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[async
     key = "skill_distillation_loop"
     if key not in _RUNNING_TASKS or _RUNNING_TASKS[key].done():
         task = asyncio.create_task(_run_skill_distillation_loop(interval_seconds=interval_seconds))
+        _RUNNING_TASKS[key] = task
+        return task
+    return _RUNNING_TASKS[key]
+
+
+async def _run_rss_poller_loop(interval_seconds: int = 300) -> None:
+    logger.info(f"Starting autonomous RSS poller loop with interval={interval_seconds}s...")
+    from backend.rss_service import fetch_all_active_rss_nodes
+    while True:
+        try:
+            results = await asyncio.to_thread(fetch_all_active_rss_nodes)
+            logger.debug(f"RSS poller sync executed: {len(results)} nodes processed.")
+        except asyncio.CancelledError:
+            logger.info("RSS poller loop cancelled.")
+            break
+        except Exception as err:
+            logger.error(f"RSS poller loop error: {err}")
+        await asyncio.sleep(interval_seconds)
+
+
+def start_rss_poller_loop(interval_seconds: int = 300) -> Optional[asyncio.Task]:
+    key = "rss_poller_loop"
+    if key not in _RUNNING_TASKS or _RUNNING_TASKS[key].done():
+        task = asyncio.create_task(_run_rss_poller_loop(interval_seconds=interval_seconds))
         _RUNNING_TASKS[key] = task
         return task
     return _RUNNING_TASKS[key]

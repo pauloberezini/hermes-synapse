@@ -121,10 +121,11 @@ async def lifespan(app: FastAPI):
 
     # Start background APScheduler & self-improving skill distillation loop
     try:
-        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop
+        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop
         scheduler.start()
         restore_state()
         start_skill_distillation_loop(interval_seconds=900)
+        start_rss_poller_loop(interval_seconds=300)
     except Exception as e:
         logger.warning(f"Failed to start scheduler or skill distillation loop: {e}")
 
@@ -610,6 +611,118 @@ async def delete_subagent_api(subagent_id: str):
     from backend.database import delete_subagent
     ok = delete_subagent(subagent_id)
     return {"status": "success" if ok else "failed"}
+
+# ── Autonomous RSS Nodes & Feeds API Endpoints ──────────────────────────────
+
+class RSSNodeCreate(BaseModel):
+    id: str
+    name: str
+    feed_urls: str = ""
+    fetch_interval_minutes: int = 15
+    output_limit: int = 10
+    date_filter_days: int = 0
+    keywords_filter: str = ""
+    is_active: int = 1
+    x: int = 300
+    y: int = 200
+    connected_agents: str = ""
+
+class RSSNodeUpdate(BaseModel):
+    name: Optional[str] = None
+    feed_urls: Optional[str] = None
+    fetch_interval_minutes: Optional[int] = None
+    output_limit: Optional[int] = None
+    date_filter_days: Optional[int] = None
+    keywords_filter: Optional[str] = None
+    is_active: Optional[int] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+    connected_agents: Optional[str] = None
+
+class RSSNodePositionItem(BaseModel):
+    id: str
+    x: int
+    y: int
+
+class RSSNodePositionsUpdate(BaseModel):
+    positions: List[RSSNodePositionItem]
+
+@app.get("/api/rss/nodes")
+async def get_rss_nodes_api():
+    from backend.database import db_get_all_rss_nodes
+    return db_get_all_rss_nodes()
+
+@app.post("/api/rss/nodes")
+async def create_rss_node_api(payload: RSSNodeCreate):
+    from backend.database import db_create_rss_node
+    import re
+    clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', payload.id).lower()
+    if not clean_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid RSS node ID"})
+    res = db_create_rss_node(
+        id=clean_id,
+        name=payload.name,
+        feed_urls=payload.feed_urls,
+        fetch_interval_minutes=payload.fetch_interval_minutes,
+        output_limit=payload.output_limit,
+        date_filter_days=payload.date_filter_days,
+        keywords_filter=payload.keywords_filter,
+        is_active=payload.is_active,
+        x=payload.x,
+        y=payload.y,
+        connected_agents=payload.connected_agents
+    )
+    return {"status": "success", "node": res}
+
+@app.put("/api/rss/nodes/{node_id}")
+async def update_rss_node_api(node_id: str, payload: RSSNodeUpdate):
+    from backend.database import db_update_rss_node, db_get_rss_node
+    ok = db_update_rss_node(
+        node_id=node_id,
+        name=payload.name,
+        feed_urls=payload.feed_urls,
+        fetch_interval_minutes=payload.fetch_interval_minutes,
+        output_limit=payload.output_limit,
+        date_filter_days=payload.date_filter_days,
+        keywords_filter=payload.keywords_filter,
+        is_active=payload.is_active,
+        x=payload.x,
+        y=payload.y,
+        connected_agents=payload.connected_agents
+    )
+    if not ok:
+        return JSONResponse(status_code=404, content={"status": "error", "message": f"RSS node {node_id} not found"})
+    return {"status": "success", "node": db_get_rss_node(node_id)}
+
+@app.post("/api/rss/nodes/positions")
+async def update_rss_node_positions_api(payload: RSSNodePositionsUpdate):
+    from backend.database import db_update_rss_node
+    for pos in payload.positions:
+        db_update_rss_node(pos.id, x=pos.x, y=pos.y)
+    return {"status": "success"}
+
+@app.delete("/api/rss/nodes/{node_id}")
+async def delete_rss_node_api(node_id: str):
+    from backend.database import db_delete_rss_node
+    ok = db_delete_rss_node(node_id)
+    return {"status": "success" if ok else "failed"}
+
+@app.post("/api/rss/nodes/{node_id}/fetch")
+async def fetch_rss_node_api(node_id: str):
+    from backend.rss_service import fetch_and_save_node_rss
+    res = fetch_and_save_node_rss(node_id)
+    return res
+
+@app.get("/api/rss/nodes/{node_id}/items")
+async def get_rss_node_items_api(node_id: str, limit: int = 50, days: int = 0, keywords: str = ""):
+    from backend.database import db_get_rss_items
+    items = db_get_rss_items(node_id=node_id, limit=limit, date_filter_days=days, keywords_filter=keywords)
+    return {"node_id": node_id, "count": len(items), "items": items}
+
+@app.get("/api/rss/nodes/{node_id}/output")
+async def get_rss_node_output_api(node_id: str, limit: Optional[int] = None):
+    from backend.rss_service import get_rss_node_output
+    return get_rss_node_output(node_id=node_id, override_limit=limit)
 
 # ── Paperclip Governance & Presets API Endpoints ────────────────────────────────
 

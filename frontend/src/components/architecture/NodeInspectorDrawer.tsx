@@ -8,7 +8,8 @@ import {
   Wrench, 
   Sliders, 
   Cpu,
-  FileText
+  FileText,
+  Rss
 } from 'lucide-react';
 import { SKILLS_LIST } from '../NetworkTab';
 
@@ -38,6 +39,14 @@ export function NodeInspectorDrawer({
   const [skills, setSkills] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
+  // RSS Node specific states
+  const isRssNode = !!selectedNode?.isRssNode || selectedNode?.feed_urls !== undefined;
+  const [feedUrls, setFeedUrls] = useState('');
+  const [outputLimit, setOutputLimit] = useState(10);
+  const [dateFilterDays, setDateFilterDays] = useState(0);
+  const [keywordsFilter, setKeywordsFilter] = useState('');
+  const [fetchInterval, setFetchInterval] = useState(15);
+
   useEffect(() => {
     if (selectedNode) {
       setName(selectedNode.name || '');
@@ -50,6 +59,12 @@ export function NodeInspectorDrawer({
       const skillStr = selectedNode.skills || '';
       const skillArr = skillStr ? skillStr.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
       setSkills(skillArr);
+
+      setFeedUrls(selectedNode.feed_urls || '');
+      setOutputLimit(selectedNode.output_limit || 10);
+      setDateFilterDays(selectedNode.date_filter_days || 0);
+      setKeywordsFilter(selectedNode.keywords_filter || '');
+      setFetchInterval(selectedNode.fetch_interval_minutes || 15);
     }
   }, [selectedNode]);
 
@@ -66,18 +81,33 @@ export function NodeInspectorDrawer({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSaveNode({
-        id: selectedNode.id,
-        name,
-        model,
-        agent_type: agentType,
-        system_prompt: systemPrompt,
-        parent_id: parentId,
-        temperature,
-        skills: skills.join(','),
-        x: selectedNode.x || 100,
-        y: selectedNode.y || 100
-      });
+      if (isRssNode) {
+        await onSaveNode({
+          id: selectedNode.id,
+          name,
+          feed_urls: feedUrls,
+          output_limit: outputLimit,
+          date_filter_days: dateFilterDays,
+          keywords_filter: keywordsFilter,
+          fetch_interval_minutes: fetchInterval,
+          isRssNode: true,
+          x: selectedNode.x || 300,
+          y: selectedNode.y || 200
+        });
+      } else {
+        await onSaveNode({
+          id: selectedNode.id,
+          name,
+          model,
+          agent_type: agentType,
+          system_prompt: systemPrompt,
+          parent_id: parentId,
+          temperature,
+          skills: skills.join(','),
+          x: selectedNode.x || 100,
+          y: selectedNode.y || 100
+        });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -108,7 +138,9 @@ export function NodeInspectorDrawer({
         background: 'rgba(0,0,0,0.2)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {agentType === 'orchestrator' ? (
+          {isRssNode ? (
+            <Rss size={18} style={{ color: '#ea580c' }} />
+          ) : agentType === 'orchestrator' ? (
             <Layers size={18} style={{ color: '#c084fc' }} />
           ) : (
             <Bot size={18} style={{ color: '#38bdf8' }} />
@@ -151,7 +183,7 @@ export function NodeInspectorDrawer({
           borderRadius: '4px',
           alignSelf: 'flex-start'
         }}>
-          Node ID: {selectedNode.id}
+          Node ID: {selectedNode.id} ({isRssNode ? 'RSS Data Source' : 'Agent'})
         </div>
 
         {/* Display Name */}
@@ -172,6 +204,87 @@ export function NodeInspectorDrawer({
             }}
           />
         </div>
+
+        {isRssNode ? (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#d1d5db' }}>RSS Feed URLs</label>
+              <textarea
+                rows={4}
+                value={feedUrls}
+                onChange={(e) => setFeedUrls(e.target.value)}
+                placeholder="https://habr.com/ru/rss/news/"
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  color: '#f3f4f6',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: '6px',
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#d1d5db' }}>Output Count Limit</label>
+                <input
+                  type="number"
+                  value={outputLimit}
+                  onChange={(e) => setOutputLimit(parseInt(e.target.value) || 10)}
+                  style={{
+                    background: 'rgba(15, 23, 42, 0.8)',
+                    color: '#f3f4f6',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#d1d5db' }}>Date Filter (Days)</label>
+                <input
+                  type="number"
+                  value={dateFilterDays}
+                  onChange={(e) => setDateFilterDays(parseInt(e.target.value) || 0)}
+                  style={{
+                    background: 'rgba(15, 23, 42, 0.8)',
+                    color: '#f3f4f6',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#d1d5db' }}>Polling Interval (Min)</label>
+              <input
+                type="number"
+                value={fetchInterval}
+                onChange={(e) => setFetchInterval(parseInt(e.target.value) || 15)}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  color: '#f3f4f6',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: '6px',
+                  padding: '8px 12px',
+                  fontSize: '13px',
+                  outline: 'none'
+                }}
+              />
+            </div>
+          </>
+        ) : (
+          <>
 
         {/* Node Type */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -353,6 +466,8 @@ export function NodeInspectorDrawer({
             })}
           </div>
         </div>
+          </>
+        )}
       </div>
 
       {/* Footer / Actions */}

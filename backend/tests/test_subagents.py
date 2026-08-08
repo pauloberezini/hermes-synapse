@@ -10,17 +10,39 @@ def mock_docker_disabled():
         yield
 
 def test_execute_code_success():
-    res = execute_code("print('hello world')")
-    assert res["success"] is True
-    assert res["stdout"].strip() == "hello world"
-    assert res["stderr"] == ""
-    assert res["returncode"] == 0
+    with patch("backend.subagents.requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "success": True,
+            "stdout": "hello world\n",
+            "stderr": "",
+            "display_data": []
+        }
+        mock_post.return_value = mock_resp
+
+        res = execute_code("print('hello world')")
+        assert res["success"] is True
+        assert res["stdout"].strip() == "hello world"
+        assert res["stderr"] == ""
+        assert res["returncode"] == 0
 
 def test_execute_code_syntax_error():
-    res = execute_code("print('hello world") # Missing quote
-    assert res["success"] is False
-    assert "SyntaxError" in res["stderr"]
-    assert res["returncode"] != 0
+    with patch("backend.subagents.requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "success": False,
+            "stdout": "",
+            "stderr": "SyntaxError: EOL while scanning string literal",
+            "display_data": []
+        }
+        mock_post.return_value = mock_resp
+
+        res = execute_code("print('hello world")
+        assert res["success"] is False
+        assert "SyntaxError" in res["stderr"]
+        assert res["returncode"] != 0
 
 @pytest.mark.asyncio
 async def test_research_agent_run():
@@ -55,12 +77,23 @@ async def test_research_agent_run():
 async def test_code_agent_self_correction():
     agent = CodeAgent(api_key="fake-key", model="fake-model")
     
-    # 1. First code fails (SyntaxError), second code succeeds
     bad_code = "```python\nprint('bad code\n```"
     good_code = "```python\nprint('good code')\n```"
     
-    with patch("backend.subagents.call_llm", new_callable=AsyncMock) as mock_call:
+    with patch("backend.subagents.call_llm", new_callable=AsyncMock) as mock_call, \
+         patch("backend.subagents.requests.post") as mock_post:
+        
         mock_call.side_effect = [bad_code, good_code]
+        
+        fail_resp = MagicMock()
+        fail_resp.status_code = 200
+        fail_resp.json.return_value = {"success": False, "stdout": "", "stderr": "SyntaxError", "display_data": []}
+        
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.json.return_value = {"success": True, "stdout": "good code\n", "stderr": "", "display_data": []}
+        
+        mock_post.side_effect = [fail_resp, ok_resp]
         
         result = await agent.run_and_correct("Выведи good code")
         
@@ -73,21 +106,21 @@ async def test_code_agent_self_correction():
 async def test_analyst_agent_run():
     agent = AnalystAgent(api_key="fake-key", model="fake-model")
     
-    # We will patch matplotlib and execute_code to avoid creating actual images during test
     with patch("backend.subagents.CodeAgent.run_and_correct", new_callable=AsyncMock) as mock_code_run, \
-         patch("os.path.exists", return_value=True):
+         patch("builtins.open", MagicMock()):
          
         mock_code_run.return_value = {
             "success": True,
             "stdout": "Plot saved\n",
             "stderr": "",
-            "code": "plt.savefig('test_path.png')",
-            "attempts": 1
+            "code": "plt.show()",
+            "attempts": 1,
+            "display_data": [{"image/png": "aGVsbG8="}]
         }
         
         result = await agent.run("Построй график продаж")
         
         assert result["success"] is True
         assert "plot_" in result["plot_url"]
-        assert result["code"] == "plt.savefig('test_path.png')"
         mock_code_run.assert_called_once()
+

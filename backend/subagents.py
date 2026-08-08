@@ -7,6 +7,8 @@ import logging
 import httpx
 import tempfile
 import subprocess
+import requests
+import base64
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
@@ -117,10 +119,7 @@ def safety_check(code_str: str) -> Optional[str]:
 
 
 def execute_code(code_str: str) -> Dict[str, Any]:
-    """Runs Python code using local subprocess.
-    (Docker sandbox was removed because the backend is already containerized,
-    and sibling containers lack access to volume mounts like uploaded files/plots without complex host-path mapping).
-    """
+    """Runs Python code using the isolated stateful Sandbox container."""
     # ── Safety guard (from Fugu architecture) ──────────────────────
     safety_error = safety_check(code_str)
     if safety_error:
@@ -132,44 +131,31 @@ def execute_code(code_str: str) -> Dict[str, Any]:
             "returncode": -3  # Special code for safety block
         }
 
-    logger.info("Executing generated code via local subprocess...")
-    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        f.write(code_str)
-        temp_name = f.name
-    
+    logger.info("Executing generated code via HTTP Sandbox API...")
     try:
-        # Increase timeout slightly for data analysis tasks
-        res = subprocess.run(
-            [sys.executable, temp_name],
-            capture_output=True,
-            text=True,
-            timeout=15.0
+        response = requests.post(
+            "http://jarvis-sandbox:8080/execute",
+            json={"code": code_str, "timeout": 120.0},
+            timeout=125.0
         )
+        response.raise_for_status()
+        data = response.json()
+        
         return {
-            "success": res.returncode == 0,
-            "stdout": res.stdout,
-            "stderr": res.stderr,
-            "returncode": res.returncode
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": "Execution timed out (15 seconds limit exceeded).",
-            "returncode": -1
+            "success": data.get("success", False),
+            "stdout": data.get("stdout", ""),
+            "stderr": data.get("stderr", "") + ("\n" + data.get("error", "") if data.get("error") else ""),
+            "returncode": 0 if data.get("success", False) else -1,
+            "display_data": data.get("display_data", [])
         }
     except Exception as e:
         return {
             "success": False,
             "stdout": "",
-            "stderr": f"Failed to execute subprocess: {str(e)}",
-            "returncode": -2
+            "stderr": f"Failed to connect to Sandbox container: {str(e)}\nMake sure jarvis-sandbox is running.",
+            "returncode": -2,
+            "display_data": []
         }
-    finally:
-        try:
-            os.remove(temp_name)
-        except Exception:
-            pass
 
 
 
@@ -466,7 +452,8 @@ class CodeAgent:
             "success": exec_result["success"],
             "stdout": exec_result["stdout"],
             "stderr": exec_result["stderr"],
-            "attempts": attempts
+            "attempts": attempts,
+            "display_data": exec_result.get("display_data", [])
         }
 
 class AnalystAgent:
@@ -488,24 +475,38 @@ class AnalystAgent:
         prompt = (
             f"Напишите Python скрипт с использованием pandas, numpy и matplotlib, который считывает данные из таблицы и строит график.\n"
             f"Указания Сэра: \"{instructions}\"\n\n"
-            f"ВАЖНОЕ ПРАВИЛО: Все загруженные пользователем файлы CSV и Excel сохраняются в папке '/app/backend/data/uploads/'.\n"
-            f"Если в указаниях написано 'считай sales.csv', ваш скрипт должен прочитать файл из '/app/backend/data/uploads/sales.csv' с помощью pd.read_csv() (или pd.read_excel() для Excel).\n\n"
-            f"КРИТИЧЕСКОЕ ТРЕБОВАНИЕ: Скрипт ОБЯЗАТЕЛЬНО должен сохранять сгенерированный график в файл по пути: '{plot_path}' с помощью plt.savefig('{plot_path}').\n"
+            f"ВАЖНОЕ ПРАВИЛО: Все загруженные пользователем файлы CSV и Excel находятся в текущей директории ('/mnt/data').\n"
             f"Используйте plt.style.use('dark_background') для красивого темного оформления графика (под стиль Jarvis!).\n"
-            f"Убедитесь, что вы импортировали matplotlib.pyplot as plt и pandas as pd. Не вызывайте plt.show(), только plt.savefig()."
+            f"Убедитесь, что вы импортировали matplotlib.pyplot as plt и pandas as pd. Выведите график в Jupyter (например, просто не пишите ничего в конце или напишите plt.show()). Не используйте plt.savefig()."
         )
         
         code_agent = CodeAgent(self.api_key, self.model)
         res = await code_agent.run_and_correct(prompt)
         
-        if res["success"] and os.path.exists(plot_path):
-            logger.info(f"Analyst Agent successfully created chart: {plot_filename}")
-            return {
-                "success": True,
-                "plot_url": f"/api/plots/{plot_filename}",
-                "code": res["code"],
-                "stdout": res["stdout"]
-            }
+        if res["success"] and res.get("display_data"):
+            image_saved = False
+            for data in res["display_data"]:
+                if "image/png" in data:
+                    png_data = base64.b64decode(data["image/png"])
+                    with open(plot_path, "wb") as f:
+                        f.write(png_data)
+                    image_saved = True
+                    break
+            
+            if image_saved:
+                logger.info(f"Analyst Agent successfully created chart: {plot_filename}")
+                return {
+                    "success": True,
+                    "plot_url": f"/api/plots/{plot_filename}",
+                    "code": res["code"],
+                    "stdout": res["stdout"]
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "График не был сгенерирован (в выводе нет image/png).",
+                    "code": res["code"]
+                }
         else:
             logger.error(f"Analyst Agent failed to create chart. Error: {res['stderr']}")
             return {
