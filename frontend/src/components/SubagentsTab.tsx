@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { 
   MessageSquare, 
-  Layers, 
   Settings, 
   Trash2, 
   Plus, 
@@ -13,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { ChatMessage, SystemConfig } from '../types';
 import { styles } from '../styles';
-import { renderMarkdown, formatMessageTimestamp } from '../utils';
+import { renderMarkdown, formatMessageTimestamp, getSortedAgents, getAgentIcon, isOrchestratorAgent } from '../utils';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -324,33 +323,43 @@ export function SubagentsTab({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
-            {(Array.isArray(subagents) ? subagents : []).map(agent => (
-              <div
-                key={agent.id}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '6px 10px', borderRadius: '8px',
-                  border: currentChatId === agent.id ? '1px solid rgba(0,240,255,0.4)' : '1px solid rgba(255,255,255,0.03)',
-                  backgroundColor: currentChatId === agent.id ? 'rgba(0,240,255,0.04)' : 'rgba(255,255,255,0.01)',
-                  cursor: 'pointer', transition: 'all 0.2s'
-                }}
-                onClick={() => selectChat(agent.id)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                  <Layers size={14} style={{ color: 'var(--accent-orange)', flexShrink: 0 }} />
-                  <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</span>
-                    <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
-                      <span>{agent.model.split('/').pop()}</span>
-                      {agent.skills && <span style={{ color: 'rgba(0,240,255,0.5)' }}>· {agent.skills.split(',').length} skill{agent.skills.split(',').length !== 1 ? 's' : ''}</span>}
-                      {!modelSupportsTools(agent.model) && (
-                        <span style={{ color: '#f59e0b', padding: '0px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.55rem', fontWeight: 600, letterSpacing: '0.3px' }}>
-                          NO TOOLS
-                        </span>
-                      )}
-                    </span>
+            {getSortedAgents(Array.isArray(subagents) ? subagents : []).map(agent => {
+              const isOrch = isOrchestratorAgent(agent);
+              const icon = getAgentIcon(agent);
+              return (
+                <div
+                  key={agent.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '6px 10px', borderRadius: '8px',
+                    border: currentChatId === agent.id ? '1px solid rgba(0,240,255,0.4)' : isOrch ? '1px solid rgba(168,85,247,0.3)' : '1px solid rgba(255,255,255,0.03)',
+                    backgroundColor: currentChatId === agent.id ? 'rgba(0,240,255,0.04)' : isOrch ? 'rgba(168,85,247,0.04)' : 'rgba(255,255,255,0.01)',
+                    cursor: 'pointer', transition: 'all 0.2s'
+                  }}
+                  onClick={() => selectChat(agent.id)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: '1rem', flexShrink: 0 }}>{icon}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</span>
+                        {isOrch && (
+                          <span style={{ fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: '4px', background: 'rgba(168,85,247,0.2)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.4)', textTransform: 'uppercase' }}>
+                            Orchestrator
+                          </span>
+                        )}
+                      </div>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                        <span>{agent.model.split('/').pop()}</span>
+                        {agent.skills && <span style={{ color: 'rgba(0,240,255,0.5)' }}>· {agent.skills.split(',').length} skill{agent.skills.split(',').length !== 1 ? 's' : ''}</span>}
+                        {!modelSupportsTools(agent.model) && (
+                          <span style={{ color: '#f59e0b', padding: '0px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.55rem', fontWeight: 600, letterSpacing: '0.3px' }}>
+                            NO TOOLS
+                          </span>
+                        )}
+                      </span>
+                    </div>
                   </div>
-                </div>
                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                   <button
                     onClick={(e) => {
@@ -377,7 +386,8 @@ export function SubagentsTab({
                   </button>
                 </div>
               </div>
-            ))}
+            );
+          })}
           </div>
 
           <button

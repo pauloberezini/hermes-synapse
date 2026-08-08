@@ -1517,7 +1517,7 @@ def execute_command(command: str) -> str:
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
     logger.info(f"Executing tool '{name}' with args: {arguments}")
 
-    if name.startswith("ctrader_") or name.startswith("bcm_"):
+    if name.startswith("ctrader_") or name.startswith("bcm_") or name.startswith("bybit_"):
         try:
             from backend.bcm.tools import bcm_execute_tool
             return bcm_execute_tool(name, arguments)

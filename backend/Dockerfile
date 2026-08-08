@@ -44,7 +44,14 @@ RUN pip install --no-cache-dir \
     twisted>=24.0.0 \
     service_identity>=24.0.0 \
     pyopenssl>=24.0.0 \
-    pytest>=7.0.0
+    pytest>=7.0.0 \
+    yfinance>=0.2.54 \
+    protobuf \
+    grpcio-tools \
+    scipy \
+    mplfinance \
+    plotly \
+    fredapi
 
 
 

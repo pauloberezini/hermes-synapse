@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Clock, Trash2, Info, Edit3, Play, Pause, RotateCcw, X, Check, MessageSquare, Bell, BellOff } from 'lucide-react';
 import { styles } from '../styles';
 import { formatTimeLeft } from '../utils';
+import { AgentSelect } from './AgentSelect';
 
 export interface TimerItem {
   id: string;
@@ -84,14 +85,6 @@ export function ScheduleTab({
 
   const safeSubagents = Array.isArray(subagents) ? subagents : [];
   const safeTimers = Array.isArray(timers) ? timers : [];
-
-  const availableAgents = [
-    { id: 'jarvis', name: '👑 Jarvis (Main Orchestrator)' },
-    ...safeSubagents.map(a => {
-      const isOrch = a.agent_type === 'orchestrator' || a.id.includes('orchestrator');
-      return { id: a.id, name: `${isOrch ? '🧠 [Orchestrator] ' : '🤖 [Agent] '}${a.name}` };
-    })
-  ];
 
   const doFetch = fetchWithAuth || ((url: string, opts?: RequestInit) => fetch(url, opts));
 
@@ -309,16 +302,15 @@ export function ScheduleTab({
 
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>TARGET AGENT</label>
-                <select 
+                <AgentSelect
                   value={targetAgent}
-                  onChange={(e) => setTargetAgent(e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(0, 240, 255, 0.15)', color: '#fff' }}
-                >
-                  {availableAgents.map(agent => (
-                    <option key={agent.id} value={agent.id}>{agent.name}</option>
-                  ))}
-                </select>
+                  onChange={(agentId) => setTargetAgent(agentId)}
+                  agents={[
+                    { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                    ...safeSubagents
+                  ]}
+                  variant="full"
+                />
               </div>
             </div>
 
@@ -834,16 +826,15 @@ export function ScheduleTab({
 
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>TARGET AGENT</label>
-                  <select 
+                  <AgentSelect
                     value={editTargetAgent}
-                    onChange={(e) => setEditTargetAgent(e.target.value)}
-                    className="form-input"
-                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
-                  >
-                    {availableAgents.map(agent => (
-                      <option key={agent.id} value={agent.id}>{agent.name}</option>
-                    ))}
-                  </select>
+                    onChange={(agentId) => setEditTargetAgent(agentId)}
+                    agents={[
+                      { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                      ...safeSubagents
+                    ]}
+                    variant="full"
+                  />
                 </div>
               </div>
 

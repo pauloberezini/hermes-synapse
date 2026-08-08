@@ -296,7 +296,7 @@ class JarvisAgent:
         target_agent_id = override_agent_id or get_session_agent_id(session_id) or session_id
         subagent = get_subagent(target_agent_id)
         if subagent:
-            if subagent.get("id") == "orchestrator":
+            if subagent.get("agent_type") == "orchestrator" or subagent.get("id") == "orchestrator" or subagent.get("id", "").endswith("_orchestrator"):
                 from backend.orchestrator import run_orchestration
                 start_time = time.time()
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
@@ -895,7 +895,7 @@ class JarvisAgent:
                     child_allowed.update(mcp_tool_to_server.keys())
                 
                 # Local BCM tools support
-                if skill in ("bcm", "bcm-trader"):
+                if skill in ("bcm", "bcm-trader", "bybit", "bybit_trader"):
                     try:
                         from backend.bcm.tools import BCM_TOOLS
                         child_allowed.update([t["name"] for t in BCM_TOOLS])
@@ -925,7 +925,7 @@ class JarvisAgent:
                     parent_allowed.update(mcp_tool_to_server.keys())
                 
                 # Local BCM tools support
-                if skill in ("bcm", "bcm-trader"):
+                if skill in ("bcm", "bcm-trader", "bybit", "bybit_trader"):
                     try:
                         from backend.bcm.tools import BCM_TOOLS
                         parent_allowed.update([t["name"] for t in BCM_TOOLS])

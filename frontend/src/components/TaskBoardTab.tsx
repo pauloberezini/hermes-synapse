@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Kanban, Plus, RefreshCw, Lock, User, Trash2, Zap } from 'lucide-react';
 import { styles } from '../styles';
+import { AgentSelect } from './AgentSelect';
 
 interface Task {
   id: number;
@@ -434,46 +435,12 @@ export function TaskBoardTab() {
 
               <div style={{ minWidth: 0 }}>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Assign Agent / Orchestrator</label>
-                <select
+                <AgentSelect
                   value={newAssignee}
-                  onChange={e => setNewAssignee(e.target.value)}
-                  className="form-input"
-                  style={{
-                    width: '100%',
-                    maxWidth: '100%',
-                    boxSizing: 'border-box',
-                    backgroundColor: '#0a0e1a',
-                    color: '#fff',
-                    border: '1px solid rgba(0, 240, 255, 0.3)',
-                    borderRadius: '6px',
-                    padding: '8px 10px',
-                    fontSize: '0.8rem',
-                    cursor: 'pointer',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden'
-                  }}
-                >
-                  <option value="">-- Unassigned --</option>
-                  {orchestrators.length > 0 && (
-                    <optgroup label="⚡ Orchestrators">
-                      {orchestrators.map(a => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.id})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {regularAgents.length > 0 && (
-                    <optgroup label="🤖 Agents & Subagents">
-                      {regularAgents.map(a => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.id})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                  onChange={(agentId) => setNewAssignee(agentId)}
+                  agents={agentsList}
+                  variant="full"
+                />
               </div>
             </div>
 

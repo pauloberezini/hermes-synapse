@@ -35,8 +35,8 @@ services:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request, urllib.error, sys; code=200; exec('try:\\n code=urllib.request.urlopen(\\\"http://localhost:8000/api/status\\\").getcode()\\nexcept urllib.error.HTTPError as e:\\n code=e.code\\nexcept Exception:\\n sys.exit(1)'); sys.exit(0 if code in (200, 401, 403) else 1)\""]
       interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 5s
+      retries: 10
+      start_period: 45s
     networks:
       - hermes-net
       - sandbox-net

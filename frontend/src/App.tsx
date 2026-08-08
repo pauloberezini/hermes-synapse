@@ -33,7 +33,7 @@ import {
   playBeep, 
   playAlarmSound, 
   stopAlarmSound, 
-  initFetchInterceptor 
+  initFetchInterceptor
 } from './utils';
 
 // Import sub-components
@@ -52,6 +52,7 @@ import { MetricsTab } from './components/MetricsTab';
 import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 import { TaskBoardTab } from './components/TaskBoardTab';
 import { RSSTab } from './components/RSSTab';
+import { AgentSelect } from './components/AgentSelect';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -2367,32 +2368,15 @@ export default function App() {
               <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
                 ORCHESTRATOR / AGENT
               </label>
-              <select
+              <AgentSelect
                 value={newSessionAgentInput}
-                onChange={(e) => setNewSessionAgentInput(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                  color: '#fff',
-                  fontSize: '0.9rem',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="jarvis">👑 Jarvis (Main)</option>
-                {subagents.map(a => {
-                  const isOrch = a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator';
-                  const icon = isOrch ? '🧠' : '🤖';
-                  return (
-                    <option key={a.id} value={a.id}>
-                      {icon} {a.name}
-                    </option>
-                  );
-                })}
-              </select>
+                onChange={(agentId) => setNewSessionAgentInput(agentId)}
+                agents={[
+                  { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                  ...subagents
+                ]}
+                variant="full"
+              />
             </div>
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>

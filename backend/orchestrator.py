@@ -199,6 +199,7 @@ Rules:
 - Special Note: The "code" agent runs in an offline sandbox. Do not expect it to make network calls.
 - Agents must not be too lazy to do calculations: if exact bookmaker odds are not found in the search results, they MUST perform mathematical modeling (e.g., calculate win/draw/loss probabilities using a Poisson distribution based on average goals scored/conceded by the teams in the league/season, or estimate probabilities based on recent head-to-head statistics) and run the calculation instead of simply returning an error.
 - It is categorically forbidden to invent demo, fictitious, or test matches (e.g., Spartak vs Zenit, if they are not in today's schedule). All calculations and conclusions must rely solely on real matches and real teams found in search results.
+- For financial, crypto, or options queries, you MUST schedule steps to fetch REAL LIVE NUMERIC DATA (exact spot prices, staking ratio, ETF net flows, gas burn rate, IV surface metrics) via web_search or market tools. NEVER output generic textbook explanations when exact live metrics can be retrieved.
 - If the request is simple and does not require sub-agents, return an empty list of steps: {"steps": []}.
 - Limit the number of steps to the minimum (maximum 3 steps).
 - Do not write any explanations, preambles, or conclusions. Only clean JSON.

@@ -8,6 +8,8 @@ import {
   Play
 } from 'lucide-react';
 
+import { AgentSelect } from '../AgentSelect';
+
 export interface BreadcrumbItem {
   id: string;
   name: string;
@@ -57,29 +59,12 @@ export function OrchestratorLayerBar({
       {/* Left: Active Orchestrator Selector & Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted, #6b7280)', fontWeight: 500 }}>
-            Active Orchestrator:
-          </span>
-          <select
+          <AgentSelect
+            labelPrefix="Active Orchestrator:"
             value={activeOrchestratorId}
-            onChange={(e) => setActiveOrchestratorId(e.target.value)}
-            style={{
-              background: 'rgba(15, 23, 42, 0.8)',
-              color: '#f3f4f6',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: '6px',
-              padding: '5px 10px',
-              fontSize: '13px',
-              outline: 'none',
-              cursor: 'pointer'
-            }}
-          >
-            {orchestrators.map(orch => (
-              <option key={orch.id} value={orch.id}>
-                {orch.name} ({orch.id})
-              </option>
-            ))}
-          </select>
+            onChange={(id) => setActiveOrchestratorId(id)}
+            agents={orchestrators.map(o => ({ ...o, agent_type: 'orchestrator' }))}
+          />
 
           <button
             onClick={onNewOrchestrator}

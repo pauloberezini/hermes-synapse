@@ -143,4 +143,12 @@ def test_non_ascii_session_id_header_safety():
     safe_session_id.encode("ascii")
 
 
+def test_top_level_execute_tool_bybit_routing():
+    from backend.tools import execute_tool
+    res_raw = execute_tool("bybit_get_portfolio_greeks", {"base_coin": "ETH"})
+    res = json.loads(res_raw)
+    assert res["status"] == "success"
+    assert "net_delta_coin" in res
+
+
 

@@ -31,6 +31,7 @@ import {
 import type { ChatMessage, SystemConfig, ChatSession } from '../types';
 import { styles } from '../styles';
 import { renderMarkdown, formatMessageTimestamp } from '../utils';
+import { AgentSelect } from './AgentSelect';
 
 interface ChatTabProps {
   currentChatId: string;
@@ -270,29 +271,15 @@ export function ChatTab({
 
           {/* Active Session Orchestrator Selector */}
           {currentChatId !== 'dashboard' && !subagents.some(a => a.id === currentChatId) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '8px', background: 'rgba(255, 255, 255, 0.02)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>ORCHESTRATOR:</span>
-              <select
-                value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
-                onChange={(e) => handleSetSessionAgent(currentChatId, e.target.value)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--accent-cyan)',
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="jarvis" style={{ background: '#0b0f19', color: '#fff' }}>Jarvis (Main)</option>
-                {(Array.isArray(subagents) ? subagents : []).map(a => (
-                  <option key={a.id} value={a.id} style={{ background: '#0b0f19', color: '#fff' }}>
-                    {a.name} ({a.agent_type === 'orchestrator' || a.agent_type === 'sub-orchestrator' ? 'Orchestrator' : 'Agent'})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <AgentSelect
+              labelPrefix="ORCHESTRATOR:"
+              value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
+              onChange={(agentId) => handleSetSessionAgent(currentChatId, agentId)}
+              agents={[
+                { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                ...(Array.isArray(subagents) ? subagents : [])
+              ]}
+            />
           )}
 
           {/* TTS speaking pulse indicator */}

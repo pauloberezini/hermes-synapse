@@ -504,3 +504,78 @@ function formatFormattedDate(d: Date): string {
   const year = d.getFullYear();
   return `${hours}:${minutes} ${day}/${month}/${year}`;
 }
+
+export function isOrchestratorAgent(agent: { id: string; agent_type?: string; name?: string }): boolean {
+  if (!agent) return false;
+  if (agent.id === 'jarvis' || agent.id.includes('orchestrator')) return true;
+  const type = (agent.agent_type || '').toLowerCase();
+  return type === 'orchestrator' || type === 'sub-orchestrator';
+}
+
+export function getAgentIcon(agent: { id: string; name?: string; agent_type?: string; skills?: string }): string {
+  if (!agent) return '🤖';
+  if (agent.id === 'jarvis') return '👑';
+  if (isOrchestratorAgent(agent)) return '⚡';
+
+  const idLower = agent.id.toLowerCase();
+  const nameLower = (agent.name || '').toLowerCase();
+
+  if (idLower.includes('quant') || idLower.includes('chart') || nameLower.includes('quant')) return '📊';
+  if (idLower.includes('macro') || idLower.includes('news') || nameLower.includes('news')) return '🌐';
+  if (idLower.includes('risk') || idLower.includes('guard')) return '🛡️';
+  if (idLower.includes('trader') || idLower.includes('crypto') || idLower.includes('bcm')) return '📈';
+  if (idLower.includes('code') || idLower.includes('python')) return '💻';
+  if (idLower.includes('research') || idLower.includes('search')) return '🔍';
+  if (idLower.includes('football') || idLower.includes('soccer')) return '⚽';
+  if (idLower.includes('plan') || idLower.includes('sched')) return '📅';
+  if (idLower.includes('sys') || idLower.includes('ops')) return '⚙️';
+
+  return '🤖';
+}
+
+export function getSortedAgents<T extends { id: string; name?: string; agent_type?: string }>(agents: T[]): T[] {
+  if (!Array.isArray(agents)) return [];
+
+  // Deduplicate by agent ID (case-insensitive)
+  const seenIds = new Set<string>();
+  const uniqueAgents: T[] = [];
+  for (const a of agents) {
+    if (!a || !a.id) continue;
+    const key = a.id.toLowerCase();
+    if (!seenIds.has(key)) {
+      seenIds.add(key);
+      uniqueAgents.push(a);
+    } else {
+      const existingIdx = uniqueAgents.findIndex(u => u.id.toLowerCase() === key);
+      if (existingIdx !== -1) {
+        uniqueAgents[existingIdx] = { ...a, ...uniqueAgents[existingIdx] };
+      }
+    }
+  }
+
+  return uniqueAgents.sort((a, b) => {
+    const isOrchA = isOrchestratorAgent(a);
+    const isOrchB = isOrchestratorAgent(b);
+
+    // Rule 1: Orchestrators ALWAYS come FIRST
+    if (isOrchA && !isOrchB) return -1;
+    if (!isOrchA && isOrchB) return 1;
+
+    // Master Jarvis is top of Orchestrators
+    if (a.id === 'jarvis') return -1;
+    if (b.id === 'jarvis') return 1;
+
+    // Rule 2: Alphabetical sorting A, B, C...
+    const nameA = (a.name || a.id).toLowerCase();
+    const nameB = (b.name || b.id).toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+}
+
+export function getAgentFormattedLabel(agent: { id: string; name?: string; agent_type?: string }): string {
+  const icon = getAgentIcon(agent);
+  const isOrch = isOrchestratorAgent(agent);
+  const tag = isOrch ? 'Orchestrator' : 'Agent';
+  const name = agent.name || agent.id;
+  return `${icon} ${name} (${tag})`;
+}
