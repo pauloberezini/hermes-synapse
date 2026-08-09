@@ -171,20 +171,38 @@ async def test_update_timer_and_trigger_now():
 async def test_pause_and_resume_timer():
     timer_id = scheduler.add_timer("Pausable Timer", 100, "123")
     timers = scheduler.get_all_timers()
-    assert timers[0]["status"] == "running"
+    target = next((t for t in timers if t["id"] == timer_id), None)
+    assert target is not None and target["status"] == "running"
     
     # Pause
     assert scheduler.pause_timer(timer_id) is True
     timers_paused = scheduler.get_all_timers()
-    assert timers_paused[0]["status"] == "paused"
+    target_paused = next((t for t in timers_paused if t["id"] == timer_id), None)
+    assert target_paused is not None and target_paused["status"] == "paused"
+    assert target_paused["time_left"] == 0
     
     # Resume
     assert scheduler.resume_timer(timer_id) is True
     timers_resumed = scheduler.get_all_timers()
-    assert timers_resumed[0]["status"] == "running"
+    target_resumed = next((t for t in timers_resumed if t["id"] == timer_id), None)
+    assert target_resumed is not None and target_resumed["status"] == "running"
     
     assert scheduler.pause_timer("invalid_id") is False
     assert scheduler.resume_timer("invalid_id") is False
+
+@pytest.mark.asyncio
+async def test_reload_paused_timer_preserves_paused_status():
+    timer_id = scheduler.add_recurring_reminder("Recurring Paused Test", 1.0, "123", "test prompt")
+    scheduler.pause_timer(timer_id)
+    
+    # Simulate page reload / process memory clear for _timer_meta
+    scheduler._timer_meta.clear()
+    
+    timers = scheduler.get_all_timers()
+    target = next((t for t in timers if t["id"] == timer_id), None)
+    assert target is not None
+    assert target["status"] == "paused"
+    assert target["time_left"] == 0
 
 
 @pytest.mark.asyncio

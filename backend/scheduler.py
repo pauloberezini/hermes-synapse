@@ -742,12 +742,16 @@ def get_all_timers() -> List[Dict[str, Any]]:
         job_type = meta.get("type") or kwargs.get("task_type") or db_fallback.get("task_type") or _infer_type(job)
         created_at = meta.get("created_at") or kwargs.get("created_at") or db_fallback.get("created_at") or ""
         next_run = getattr(job, "next_run_time", None)
-        if job_type == "recurring" and (not next_run or next_run <= now_tz):
+        status = meta.get("status") or db_fallback.get("status")
+        if not status:
+            status = "paused" if next_run is None else "running"
+
+        if status != "paused" and job_type == "recurring" and (not next_run or next_run <= now_tz):
             if hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
                 next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
-        time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
 
-        status = meta.get("status", "paused" if next_run is None else "running")
+        time_left = max(0, int((next_run - now_tz).total_seconds())) if (status != "paused" and next_run) else 0
+
         agent_id = kwargs.get("agent_id") or meta.get("agent_id") or db_fallback.get("agent_id") or "jarvis"
         prompt = kwargs.get("prompt") or meta.get("prompt") or db_fallback.get("prompt") or ""
 
@@ -1116,7 +1120,10 @@ def restore_state() -> None:
                 continue
 
             existing_job = scheduler.get_job(job_id)
-            if not existing_job:
+            if existing_job:
+                if status == "paused":
+                    existing_job.pause()
+            else:
                 if task_type == "recurring":
                     interval_hours = float(info.get("interval_hours") or 1.0)
                     job = scheduler.add_job(

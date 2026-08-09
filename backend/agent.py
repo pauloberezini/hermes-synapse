@@ -824,10 +824,16 @@ class JarvisAgent:
         _lang = _get_setting("language") or "en"
         _lang_names = {"ru": "Russian", "en": "English", "he": "Hebrew", "de": "German", "es": "Spanish", "fr": "French"}
         lang_directive = f"\n\n[LANGUAGE DIRECTIVE]: You MUST respond exclusively in {_lang_names.get(_lang, _lang)}. This overrides any other language instruction in this prompt."
-        messages = [{"role": "system", "content": system_prompt + system_info + lang_directive}]
-        for msg in history:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-        messages.append({"role": "user", "content": user_content})
+        
+        from backend.context_manager import build_subagent_messages
+        messages = build_subagent_messages(
+            system_prompt=system_prompt,
+            system_info=system_info,
+            lang_directive=lang_directive,
+            history=history or [],
+            user_content=user_content,
+            max_tokens=16000
+        )
 
         safe_session_id = session_id.encode("ascii", "ignore").decode("ascii").strip() or "session"
         headers = {
@@ -945,6 +951,7 @@ class JarvisAgent:
         latency_ms = 0
         error_msg = None
         tool_executed = False
+        order_placed_successfully = False
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -966,16 +973,33 @@ class JarvisAgent:
                     url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
                     actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
                     
-                    response = await client.post(
-                        url,
-                        json=actual_payload,
-                        headers=headers
-                    )
+                    response = None
+                    for attempt in range(3):
+                        response = await client.post(
+                            url,
+                            json=actual_payload,
+                            headers=headers
+                        )
+                        if response.status_code == 200:
+                            break
+                        
+                        logger.warning(f"Subagent '{subagent_name}' ({subagent_model}) API returned {response.status_code} (attempt {attempt+1}/3): {response.text[:200]}")
+                        
+                        # If context length exceeded or provider error, trim prompt and retry
+                        if "context_length_exceeded" in response.text or "input too long" in response.text.lower() or "max input length" in response.text.lower():
+                            logger.warning("Trimming subagent message context due to context_length_exceeded...")
+                            # Keep system prompt and latest user prompt only
+                            payload["messages"] = [payload["messages"][0], payload["messages"][-1]]
+                            actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                        
+                        import asyncio
+                        await asyncio.sleep(1.0)
                     
-                    if response.status_code != 200:
-                        error_msg = f"HTTP Error {response.status_code}: {response.text}"
+                    if response is None or response.status_code != 200:
+                        error_msg = f"HTTP Error {response.status_code if response else 'No Response'}: {response.text if response else ''}"
+                        logger.error(f"Subagent '{subagent_name}' ({subagent_model}) API error: {error_msg}")
                         provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
+                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code if response else 'Timeout'}."
                         break
                         
                     raw_data = response.json()
@@ -994,6 +1018,12 @@ class JarvisAgent:
                     if not tool_calls:
                         response_text = choice_msg.get("content") or ""
                         
+                        # Programmatic anti-hallucination guardrail for trading agents:
+                        # If no successful bybit_place_order was executed in this turn, strictly forbid claims of trade execution.
+                        if not order_placed_successfully and any(w in response_text.lower() for w in ["successfully executed", "- executed", "сделка открыта", "placed via bybit_place_order"]):
+                            logger.warning(f"Subagent '{subagent_name}' claimed trade execution without successful bybit_place_order. Overriding response.")
+                            response_text = "⚠️ Внимание: Вызов размещения ордеров (`bybit_place_order`) в данном ходу не выполнялся. Сделки на Bybit НЕ открывались."
+
                         # Fallback for empty text content after tools
                         if not response_text.strip() and tool_executed:
                             response_text = "Действия успешно выполнены, Сэр."
@@ -1037,6 +1067,8 @@ class JarvisAgent:
                             message=f"🛠️ Выполнение (субагент): '{tool_name}' с аргументами {tool_args_str}"
                         )
                         result_str = execute_tool(tool_name, tool_args, chat_id=session_id)
+                        if tool_name == "bybit_place_order" and ("success" in result_str.lower() or "orderid" in result_str.lower()):
+                            order_placed_successfully = True
                         
                         messages.append({
                             "role": "tool",

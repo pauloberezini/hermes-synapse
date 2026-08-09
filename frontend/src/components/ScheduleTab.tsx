@@ -403,11 +403,13 @@ export function ScheduleTab({
         </div>
 
         {/* Right Column: List of Tasks */}
-        <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', height: 'fit-content' }}>
-          <h3 style={{ ...styles.toolsPanelTitle, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px', marginBottom: '4px' }}>
-            <Clock size={18} style={{ color: 'var(--accent-cyan)' }} />
-            <span>Active Schedules & Tasks</span>
-          </h3>
+        <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minHeight: 0, maxHeight: 'calc(100vh - 180px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
+            <h3 style={{ ...styles.toolsPanelTitle, margin: 0 }}>
+              <Clock size={18} style={{ color: 'var(--accent-cyan)' }} />
+              <span>Active Schedules & Tasks ({safeTimers.length})</span>
+            </h3>
+          </div>
           
           <div style={styles.timersList}>
             {safeTimers.length === 0 ? (
@@ -475,188 +477,104 @@ export function ScheduleTab({
                       backgroundColor: cardBgColor,
                     }}
                   >
-                    {/* Card Header */}
-                    <div style={styles.timerHeader}>
-                      {/* Top Row: Full Title + Status Badge */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', width: '100%' }}>
-                        <span style={styles.timerLabel} title={timer.label}>
+                    {/* Compact Row 1: Title & Type (Left), Countdown & Status & Actions (Right) */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                      {/* Left: Title & Type Pill */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                        <span style={{ fontSize: '0.88rem', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={timer.label}>
                           {timer.label}
                         </span>
-                        
-                        {/* Status Badge */}
+
+                        <span style={{ 
+                          fontSize: '0.58rem', 
+                          fontFamily: 'var(--font-mono)', 
+                          fontWeight: 700, 
+                          padding: '2px 5px', 
+                          borderRadius: '4px', 
+                          backgroundColor: timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.12)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(0, 240, 255, 0.12)'),
+                          color: timer.type === 'recurring' ? '#10b981' : (timer.type === 'alarm' ? '#f97316' : 'var(--accent-cyan)'),
+                          border: `1px solid ${timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : 'rgba(0, 240, 255, 0.25)')}`,
+                          textTransform: 'uppercase',
+                          flexShrink: 0
+                        }}>
+                          {timer.type === 'recurring' ? 'RECURRING' : (timer.type === 'alarm' ? 'ALARM' : 'ONE-SHOT')}
+                        </span>
+                      </div>
+
+                      {/* Right: Countdown, Status Badge, Toolbar */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                          <span style={{ fontSize: '1.1rem', fontWeight: 700, color: isPaused ? '#eab308' : 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', textShadow: '0 0 8px rgba(0, 240, 255, 0.3)' }}>
+                            {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
+                          </span>
+                          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
+                            {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'next' : 'left')}
+                          </span>
+                        </div>
+
                         <span style={{
                           ...styles.timerStatusBadge,
                           color: badgeColor,
                           borderColor: badgeBorder,
                           backgroundColor: badgeBg,
-                          flexShrink: 0
                         }}>
                           <span className={`status-dot-pulse ${statusClass}`} />
                           {statusText}
                         </span>
-                      </div>
 
-                      {/* Second Row: Badges (left) & Action Toolbar (right) */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', width: '100%', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          <span style={{ 
-                            fontSize: '0.65rem', 
-                            fontFamily: 'var(--font-mono)', 
-                            fontWeight: 700, 
-                            padding: '2px 8px', 
-                            borderRadius: '12px', 
-                            backgroundColor: timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.15)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.15)' : 'rgba(0, 240, 255, 0.15)'),
-                            color: timer.type === 'recurring' ? '#10b981' : (timer.type === 'alarm' ? '#f97316' : 'var(--accent-cyan)'),
-                            border: `1px solid ${timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.3)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.3)' : 'rgba(0, 240, 255, 0.3)')}`,
-                            textTransform: 'uppercase'
-                          }}>
-                            {timer.type === 'recurring' ? '🔁 RECURRING' : (timer.type === 'alarm' ? '⏰ ALARM' : '⏱️ ONE-SHOT')}
-                          </span>
-
-                          <span 
-                            style={{ 
-                              fontSize: '0.65rem', 
-                              fontFamily: 'var(--font-mono)', 
-                              padding: '2px 8px', 
-                              borderRadius: '4px', 
-                              backgroundColor: 'rgba(255, 255, 255, 0.05)', 
-                              color: 'var(--text-muted)', 
-                              border: '1px solid rgba(255, 255, 255, 0.1)' 
-                            }} 
-                            title={`Task ID: ${timer.id}`}
-                          >
-                            ID: {timer.id.length > 12 ? `${timer.id.slice(0, 12)}...` : timer.id}
-                          </span>
-                        </div>
-
-                        {/* Action Buttons Toolbar */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0, 0, 0, 0.3)', padding: '4px 8px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: 'rgba(0, 0, 0, 0.3)', padding: '2px 4px', borderRadius: '6px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
                           {onOpenChat && (
-                            <button
-                              onClick={() => onOpenChat(`task_${timer.id}`)}
-                              className="icon-btn-action"
-                              title="Open Chat Session & Execution History"
-                              style={{ padding: '4px 6px', borderRadius: '4px', background: 'rgba(0, 240, 255, 0.08)', border: '1px solid rgba(0, 240, 255, 0.2)', cursor: 'pointer' }}
-                            >
-                              <MessageSquare size={14} color="var(--accent-cyan)" />
+                            <button onClick={() => onOpenChat(`task_${timer.id}`)} className="icon-btn-action" title="Open Chat Session" style={{ padding: '2px 4px', cursor: 'pointer' }}>
+                              <MessageSquare size={13} color="var(--accent-cyan)" />
                             </button>
                           )}
-
-                          <button 
-                            onClick={() => handleTogglePause(timer)}
-                            className="icon-btn-action"
-                            title={timer.status === 'paused' ? 'Resume Task' : 'Pause Task'}
-                            style={{ padding: '4px 6px', borderRadius: '4px', background: timer.status === 'paused' ? 'rgba(234, 179, 8, 0.1)' : 'rgba(96, 165, 250, 0.1)', border: `1px solid ${timer.status === 'paused' ? 'rgba(234, 179, 8, 0.3)' : 'rgba(96, 165, 250, 0.3)'}`, cursor: 'pointer' }}
-                          >
-                            {timer.status === 'paused' ? <Play size={14} color="#eab308" /> : <Pause size={14} color="#60a5fa" />}
+                          <button onClick={() => handleTogglePause(timer)} className="icon-btn-action" title={timer.status === 'paused' ? 'Resume Task' : 'Pause Task'} style={{ padding: '2px 4px', cursor: 'pointer' }}>
+                            {timer.status === 'paused' ? <Play size={13} color="#eab308" /> : <Pause size={13} color="#60a5fa" />}
                           </button>
-
-                          <button 
-                            onClick={() => handleRestart(timer.id)}
-                            className="icon-btn-action"
-                            title="Restart Schedule (Reset Timer)"
-                            style={{ padding: '4px 6px', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52, 211, 153, 0.3)', cursor: 'pointer' }}
-                          >
-                            <RotateCcw size={14} color="#34d399" />
+                          <button onClick={() => handleRestart(timer.id)} className="icon-btn-action" title="Restart Task" style={{ padding: '2px 4px', cursor: 'pointer' }}>
+                            <RotateCcw size={13} color="#34d399" />
                           </button>
-
-                          <button 
-                            onClick={() => setInfoTimer(timer)}
-                            className="icon-btn-action"
-                            title="View Details & Prompt"
-                            style={{ padding: '4px 6px', borderRadius: '4px', background: 'rgba(0, 240, 255, 0.08)', border: '1px solid rgba(0, 240, 255, 0.2)', cursor: 'pointer' }}
-                          >
-                            <Info size={14} color="var(--accent-cyan)" />
+                          <button onClick={() => setInfoTimer(timer)} className="icon-btn-action" title="View Info & Prompt" style={{ padding: '2px 4px', cursor: 'pointer' }}>
+                            <Info size={13} color="var(--accent-cyan)" />
                           </button>
-
-                          <button 
-                            onClick={() => handleOpenEdit(timer)}
-                            className="icon-btn-action"
-                            title="Edit Task Configuration"
-                            style={{ padding: '4px 6px', borderRadius: '4px', background: 'rgba(234, 179, 8, 0.1)', border: '1px solid rgba(234, 179, 8, 0.3)', cursor: 'pointer' }}
-                          >
-                            <Edit3 size={14} color="#eab308" />
+                          <button onClick={() => handleOpenEdit(timer)} className="icon-btn-action" title="Edit Task" style={{ padding: '2px 4px', cursor: 'pointer' }}>
+                            <Edit3 size={13} color="#eab308" />
                           </button>
-
-                          <button 
-                            onClick={() => handleCancelTimer(timer.id)}
-                            className="icon-btn-action danger"
-                            title={timer.status === 'running' || timer.status === 'paused' ? 'Cancel Task' : 'Dismiss'}
-                            style={{ padding: '4px 6px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', cursor: 'pointer' }}
-                          >
-                            <Trash2 size={14} color="#ef4444" />
+                          <button onClick={() => handleCancelTimer(timer.id)} className="icon-btn-action danger" title="Delete Task" style={{ padding: '2px 4px', cursor: 'pointer' }}>
+                            <Trash2 size={13} color="#ef4444" />
                           </button>
                         </div>
                       </div>
                     </div>
 
-                    {/* Card Body */}
-                    <div style={styles.timerBody}>
-                      <div style={styles.countdownBox}>
-                        <span style={styles.countdownVal}>
-                          {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
+                    {/* Compact Row 2: ID, Agent, Prompt, Stats */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '0.7rem', color: 'var(--text-dim)', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: '0.62rem', fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.04)', padding: '1px 4px', borderRadius: '3px', flexShrink: 0 }}>
+                          ID: {timer.id.slice(0, 8)}
                         </span>
-                        <span style={styles.countdownUnit}>
-                          {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'until next run' : (timer.type === 'alarm' ? 'until ring' : 'remaining'))}
-                        </span>
-                      </div>
-
-                      <div style={styles.timerMeta}>
-                        {timer.type === 'alarm' ? (
-                          <div>Triggers at: <span style={{ color: '#fff', fontWeight: 600 }}>{timer.target_time}</span></div>
-                        ) : (
-                          timer.type === 'recurring' ? (
-                            <div>Every <span style={{ color: '#fff', fontWeight: 600 }}>{timer.interval_hours} hrs</span> | Fired: <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>{timer.fire_count || 0} times</span></div>
-                          ) : (
-                            <div>Duration: <span style={{ color: '#fff', fontWeight: 600 }}>{timer.duration}s</span></div>
-                          )
-                        )}
-                        {timer.created_at && (
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                            Started: {formatCreatedDate(timer.created_at)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Card Footer (Target Agent & Prompt) */}
-                    {timer.agent_id && (
-                      <div style={{ 
-                        marginTop: '4px', 
-                        padding: '10px 14px', 
-                        borderRadius: '8px', 
-                        backgroundColor: 'rgba(6, 9, 19, 0.8)', 
-                        border: '1px solid rgba(0, 240, 255, 0.15)', 
-                        fontSize: '0.8rem' 
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', fontWeight: 600, color: 'var(--accent-cyan)', marginBottom: '4px' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span>🤖 Target Agent:</span>
-                            <span style={{ color: '#fff', background: 'rgba(255,255,255,0.06)', padding: '1px 6px', borderRadius: '4px', fontFamily: 'var(--font-mono)' }}>{timer.agent_id}</span>
-                          </span>
-                        </div>
+                        <span style={{ color: 'var(--accent-cyan)', fontWeight: 500, flexShrink: 0 }}>🤖 {timer.agent_id || 'jarvis'}</span>
                         {timer.prompt && (
-                          <div 
-                            style={{ 
-                              color: '#cbd5e1', 
-                              fontFamily: 'var(--font-mono)', 
-                              fontSize: '0.75rem', 
-                              lineHeight: 1.5,
-                              whiteSpace: 'pre-wrap',
-                              maxHeight: '80px',
-                              overflowY: 'auto',
-                              background: 'rgba(0, 0, 0, 0.3)',
-                              padding: '6px 10px',
-                              borderRadius: '6px',
-                              border: '1px solid rgba(255,255,255,0.04)'
-                            }} 
-                            title={timer.prompt}
-                          >
+                          <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={timer.prompt}>
                             "{timer.prompt}"
-                          </div>
+                          </span>
                         )}
                       </div>
-                    )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, fontFamily: 'var(--font-mono)', fontSize: '0.66rem' }}>
+                        {timer.created_at && (
+                          <span style={{ color: 'rgba(255,255,255,0.4)' }}>
+                            {formatCreatedDate(timer.created_at)}
+                          </span>
+                        )}
+                        {timer.type === 'recurring' ? (
+                          <span>Every {timer.interval_hours}h | Fired: {timer.fire_count || 0}</span>
+                        ) : timer.type === 'alarm' ? (
+                          <span>Target: {timer.target_time}</span>
+                        ) : (
+                          <span>Duration: {timer.duration}s</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })
