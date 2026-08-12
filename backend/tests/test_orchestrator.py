@@ -39,7 +39,7 @@ async def test_orchestration_loop_success():
         
         # Verify sub-agents were called
         mock_res_run.assert_called_once_with("поиск погоды")
-        mock_code_run.assert_called_once_with("вычислить среднее\n\nData from previous steps:\nStep 0 (Agent research) returned data:\nПогода в Москве: +15")
+        mock_code_run.assert_called_once_with("вычислить среднее\n\nData from previous steps:\n[Step 1 (research) Output]:\nПогода в Москве: +15")
         
         # Verify traces are logged
         traces = result["traces"]

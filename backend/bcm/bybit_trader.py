@@ -8,6 +8,10 @@ import logging
 import requests
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
+try:
+    from backend.bcm.exchange_interfaces import SpotBrokerInterface, OptionsBrokerInterface
+except ImportError:
+    from .exchange_interfaces import SpotBrokerInterface, OptionsBrokerInterface
 
 logger = logging.getLogger("jarvis.bcm.bybit")
 
@@ -22,17 +26,28 @@ except ImportError:
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
 BYBIT_TESTNET = os.environ.get("BYBIT_TESTNET", "false").lower() in ("true", "1", "yes")
+BYBIT_DEMO = os.environ.get("BYBIT_DEMO", "false").lower() in ("true", "1", "yes")
 
-BASE_URL = "https://api-testnet.bybit.com" if BYBIT_TESTNET else "https://api.bybit.com"
+if BYBIT_DEMO:
+    BASE_URL = "https://api-demo.bybit.com"
+elif BYBIT_TESTNET:
+    BASE_URL = "https://api-testnet.bybit.com"
+else:
+    BASE_URL = "https://api.bybit.com"
 
 
-class BybitTrader:
+class BybitTrader(SpotBrokerInterface, OptionsBrokerInterface):
     """Bybit V5 OpenAPI Orchestrator for Spot, Linear Futures, USDC Derivatives, and Options."""
 
-    def __init__(self, api_key: str = "", api_secret: str = "", testnet: bool = False):
+    def __init__(self, api_key: str = "", api_secret: str = "", testnet: bool = False, demo: Optional[bool] = None):
         self.api_key = api_key or BYBIT_API_KEY
         self.api_secret = api_secret or BYBIT_API_SECRET
-        self.base_url = "https://api-testnet.bybit.com" if testnet else BASE_URL
+        if demo is True or (demo is None and BYBIT_DEMO):
+            self.base_url = "https://api-demo.bybit.com"
+        elif testnet or (demo is None and BYBIT_TESTNET):
+            self.base_url = "https://api-testnet.bybit.com"
+        else:
+            self.base_url = "https://api.bybit.com"
         self.recv_window = "5000"
 
     def _generate_signature(self, timestamp: str, payload_str: str) -> str:
@@ -93,6 +108,19 @@ class BybitTrader:
             accounts = res.get("result", {}).get("list", [])
             return {"status": "success", "accounts": accounts}
         return {"status": "error", "message": res.get("retMsg"), "retCode": res.get("retCode")}
+
+    def get_spot_prices(self, symbols: list[str]) -> Dict[str, Any]:
+        """Fetch live spot prices for the given standardized ticker symbols (e.g. ['BTCUSD', 'XAUUSD'])."""
+        prices = []
+        for sym in symbols:
+            prices.append({
+                "symbolId": sym,
+                "name": sym,
+                "bid": None,
+                "ask": None,
+                "mid": None,
+            })
+        return {"status": "success", "prices": prices}
 
     def get_positions(self, category: str = "linear", symbol: Optional[str] = None, base_coin: Optional[str] = None) -> Dict[str, Any]:
         """Fetch active positions for linear (USDT/USDC futures), option, or inverse contracts."""
@@ -205,7 +233,8 @@ class BybitTrader:
         qty: str,
         price: Optional[str] = None,
         sl: Optional[str] = None,
-        tp: Optional[str] = None
+        tp: Optional[str] = None,
+        market_unit: Optional[str] = None
     ) -> Dict[str, Any]:
         """Executes an order on Bybit V5 API."""
         endpoint = "/v5/order/create"
@@ -216,6 +245,11 @@ class BybitTrader:
             "orderType": order_type.capitalize(),
             "qty": str(qty)
         }
+        if category.lower() == "spot" and order_type.capitalize() == "Market":
+            params["marketUnit"] = market_unit or "baseCoin"
+        elif market_unit:
+            params["marketUnit"] = market_unit
+
         if price:
             params["price"] = str(price)
         if sl:
@@ -477,3 +511,14 @@ class BybitTrader:
             "execution_details": results
         }
 
+
+    def place_option_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        qty: str,
+        price: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Wrapper for options orders."""
+        return self.place_order("option", symbol, side, order_type, qty, price)

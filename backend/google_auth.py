@@ -24,7 +24,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 SCOPES     = ["https://www.googleapis.com/auth/calendar"]
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR   = os.path.join(BASE_DIR, "data")
-CREDS_PATH = os.path.join(DATA_DIR, "google_credentials.json")
+CREDS_PATH = os.getenv("GOOGLE_CLIENT_SECRET_PATH", os.path.join(DATA_DIR, "google_credentials.json"))
 TOKEN_PATH = os.path.join(DATA_DIR, "google_token.json")
 # Google "Desktop app" OAuth clients allow ANY localhost port per RFC 8252
 # No need to register http://localhost:9120 in GCP console separately

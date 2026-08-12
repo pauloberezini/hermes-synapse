@@ -303,23 +303,9 @@ Rules:
                 state.current_step_idx += 1
                 continue
                 
-            # Build context from previous steps
-            context_str = ""
-            if state.results:
-                context_parts = []
-                for prev_res in state.results:
-                    prev_agent = prev_res["agent"]
-                    if "error" in prev_res:
-                        context_parts.append(f"Step {prev_res['step']} (Agent {prev_agent}) failed with error: {prev_res['error']}")
-                    else:
-                        prev_out = prev_res["output"]
-                        if isinstance(prev_out, dict) and "stdout" in prev_out:
-                            context_parts.append(f"Step {prev_res['step']} (Agent Code) executed script. stdout:\n{prev_out['stdout']}")
-                        elif isinstance(prev_out, dict) and "plot_url" in prev_out:
-                            context_parts.append(f"Step {prev_res['step']} (Agent Analyst) created chart. URL: {prev_out.get('plot_url')}")
-                        else:
-                            context_parts.append(f"Step {prev_res['step']} (Agent {prev_agent}) returned data:\n{prev_out}")
-                context_str = "\n\nData from previous steps:\n" + "\n---\n".join(context_parts)
+            # Build context from previous steps using compress_step_context
+            from backend.context_manager import compress_step_context
+            context_str = compress_step_context(state.results, max_chars_per_step=3000)
 
             contextual_instructions = instructions + context_str
             if file_context:
@@ -423,6 +409,11 @@ Rules:
             f"Formulate the final response to the user (Sir) based on their original query and the results of your sub-agents.\n\n"
             f"Original query of Sir: \"{query}\"\n\n"
             f"Results of sub-agents:\n{results_context}\n\n"
+            f"CRITICAL FACTUALITY & ANTI-HALLUCINATION RULES:\n"
+            f"1. STRICT ADHERENCE TO SUB-AGENT RESULTS: You MUST base your response strictly on the factual results returned by the sub-agents above.\n"
+            f"2. ACCURATE ERROR REPORTING: If a sub-agent encountered an error, failure, or API rejection (e.g., Code 170140 or invalid parameter), YOU MUST TRUTHFULLY REPORT THAT THE ACTION FAILED and state the exact error message.\n"
+            f"3. NO FAKE EXECUTION / NO HALLUCINATED RESOLUTIONS: You are CATEGORICALLY FORBIDDEN from inventing, pretending, or hallucinating that you or the sub-agents auto-corrected parameters, re-submitted orders, or opened positions that were NOT explicitly reported as successful in the sub-agents' outputs.\n"
+            f"4. NO FAKE TOOL CALL TEXT: Do NOT output fake code blocks pretending to invoke tools (e.g. `bybit_place_order`) or fake order IDs unless confirmed by successful tool outputs.\n\n"
             f"Adhere to the tone and instructions of your system role. "
             f"Embed links to charts as Markdown images, for example: ![Chart](chart_url)."
         )

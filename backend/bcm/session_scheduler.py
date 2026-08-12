@@ -17,15 +17,15 @@ SESSIONS = {
     "New York":     {"tz": "America/New_York", "open": 9},   # 09:30 → analyze at 10:00 (17:00 IDT)
     "Tokyo/Sydney": {"tz": "Asia/Tokyo",       "open": 9},   # 09:00 → analyze at 10:00 (04:00 IDT)
 }
-SYMBOLS = ["BTC", "GBPUSD", "EURUSD", "US500", "BRENT", "USOIL", "GOLD"]
+SYMBOLS = ["BTC", "GBPUSD", "EURUSD", "US500", "BRENT", "GOLD", "XAGUSD"]
 
 # Path to the venv python to ensure dependencies are available
 VENV_PYTHON = "/opt/hermes/.venv/bin/python3"
 if not os.path.exists(VENV_PYTHON):
     VENV_PYTHON = sys.executable  # Fallback to current interpreter
 
-LOG_DIR = "/opt/data/skills/pepperstone-trader/logs"
-TRADER_SCRIPT = "/opt/data/skills/pepperstone-trader/scripts/autonomous_trader.py"
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+TRADER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autonomous_trader.py")
 
 
 def check_and_run():
@@ -85,9 +85,14 @@ def run_analysis(reason):
     """Run all symbols in parallel and collect results."""
     summary_lines = []
 
-    # Run all 4 symbols concurrently — reduces wall-clock time from ~10min to ~3min
-    with ThreadPoolExecutor(max_workers=len(SYMBOLS)) as executor:
-        futures = {executor.submit(run_one_symbol, sym, reason): sym for sym in SYMBOLS}
+    # Run symbols with bounded concurrency (max 2 parallel workers) to prevent OpenRouter API rate limit / disconnects
+    max_workers = int(os.environ.get("BCM_BATCH_WORKERS", "2"))
+    import time
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for sym in SYMBOLS:
+            futures[executor.submit(run_one_symbol, sym, reason)] = sym
+            time.sleep(1.0)
 
         for future in as_completed(futures):
             symbol, verdict, reasoning, error = future.result()

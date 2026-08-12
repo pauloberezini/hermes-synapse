@@ -729,9 +729,22 @@ class JarvisAgent:
 
         return response_text
 
+    # Known tool fingerprints: set of required keys → tool name
+    _TOOL_FINGERPRINTS: List[Dict] = [
+        {"required": {"symbol", "side", "qty"}, "optional": {"category", "order_type", "market_unit", "price"}, "name": "bybit_place_order"},
+        {"required": {"symbol", "side", "qty", "category"}, "optional": {"order_type", "market_unit"}, "name": "bybit_place_order"},
+        {"required": {"base_coin"}, "optional": {"exp_date"}, "name": "bybit_get_options_chain"},
+        {"required": {"account_type"}, "optional": {}, "name": "bybit_get_balance"},
+    ]
+
     def _extract_json_tool_calls(self, text: str) -> Optional[List[Dict[str, Any]]]:
-        """Fallback extractor for models that output raw JSON function calls in text content."""
-        if not text or ("function" not in text and "name" not in text):
+        """Fallback extractor for models that output raw JSON function calls in text content.
+        
+        Handles two cases:
+        1. Structured: {"name": "tool_name", "parameters": {...}}
+        2. Raw args: {"symbol":"SOLUSDT","side":"Buy",...} — matched via fingerprint
+        """
+        if not text:
             return None
         import json
 
@@ -760,9 +773,24 @@ class JarvisAgent:
                     if "function" in parsed and isinstance(parsed["function"], dict):
                         fn_name = parsed["function"].get("name")
                         fn_args = parsed["function"].get("parameters") or parsed["function"].get("arguments") or {}
-                    elif "name" in parsed:
+                    elif "name" in parsed and ("parameters" in parsed or "arguments" in parsed):
                         fn_name = parsed.get("name")
                         fn_args = parsed.get("parameters") or parsed.get("arguments") or {}
+                    elif "name" in parsed and isinstance(parsed.get("name"), str) and any(
+                        parsed["name"].startswith(pfx) for pfx in ("bybit_", "ctrader_", "bcm_", "exchange_")
+                    ):
+                        # {"name": "bybit_place_order", "symbol": "SOLUSDT", ...}
+                        fn_name = parsed["name"]
+                        fn_args = {k: v for k, v in parsed.items() if k != "name"}
+                    else:
+                        # Try fingerprint matching for raw argument blobs (no name/function wrapper)
+                        parsed_keys = set(parsed.keys())
+                        for fp in self._TOOL_FINGERPRINTS:
+                            if fp["required"].issubset(parsed_keys):
+                                fn_name = fp["name"]
+                                fn_args = parsed
+                                logger.info(f"Fingerprint matched raw JSON args to tool '{fn_name}': {list(parsed_keys)}")
+                                break
 
                 if fn_name:
                     extracted.append({
@@ -824,10 +852,16 @@ class JarvisAgent:
         _lang = _get_setting("language") or "en"
         _lang_names = {"ru": "Russian", "en": "English", "he": "Hebrew", "de": "German", "es": "Spanish", "fr": "French"}
         lang_directive = f"\n\n[LANGUAGE DIRECTIVE]: You MUST respond exclusively in {_lang_names.get(_lang, _lang)}. This overrides any other language instruction in this prompt."
-        messages = [{"role": "system", "content": system_prompt + system_info + lang_directive}]
-        for msg in history:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-        messages.append({"role": "user", "content": user_content})
+        
+        from backend.context_manager import build_subagent_messages
+        messages = build_subagent_messages(
+            system_prompt=system_prompt,
+            system_info=system_info,
+            lang_directive=lang_directive,
+            history=history or [],
+            user_content=user_content,
+            max_tokens=16000
+        )
 
         safe_session_id = session_id.encode("ascii", "ignore").decode("ascii").strip() or "session"
         headers = {
@@ -847,6 +881,7 @@ class JarvisAgent:
             "get_market_prices",
             "add_price_alert",
             "get_rss_digest",
+            "read_rss_node_feed",
             "create_subagent",
             "call_subagent",
             "list_subagents",
@@ -878,7 +913,8 @@ class JarvisAgent:
             "google_calendar": ["get_calendar_events", "add_calendar_event"],
             "timers_alarms": ["set_timer", "set_alarm", "cancel_timer_or_alarm"],
             "shell_execution": ["get_system_stats", "execute_command"],
-            "python_sandbox": ["execute_command"]
+            "python_sandbox": ["execute_command"],
+            "read_rss_node_feed": ["read_rss_node_feed"]
         }
 
         skills_str = subagent.get("skills", "")
@@ -945,6 +981,7 @@ class JarvisAgent:
         latency_ms = 0
         error_msg = None
         tool_executed = False
+        order_placed_successfully = False
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -966,16 +1003,33 @@ class JarvisAgent:
                     url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
                     actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
                     
-                    response = await client.post(
-                        url,
-                        json=actual_payload,
-                        headers=headers
-                    )
+                    response = None
+                    for attempt in range(3):
+                        response = await client.post(
+                            url,
+                            json=actual_payload,
+                            headers=headers
+                        )
+                        if response.status_code == 200:
+                            break
+                        
+                        logger.warning(f"Subagent '{subagent_name}' ({subagent_model}) API returned {response.status_code} (attempt {attempt+1}/3): {response.text[:200]}")
+                        
+                        # If context length exceeded or provider error, trim prompt and retry
+                        if "context_length_exceeded" in response.text or "input too long" in response.text.lower() or "max input length" in response.text.lower():
+                            logger.warning("Trimming subagent message context due to context_length_exceeded...")
+                            # Keep system prompt and latest user prompt only
+                            payload["messages"] = [payload["messages"][0], payload["messages"][-1]]
+                            actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                        
+                        import asyncio
+                        await asyncio.sleep(1.0)
                     
-                    if response.status_code != 200:
-                        error_msg = f"HTTP Error {response.status_code}: {response.text}"
+                    if response is None or response.status_code != 200:
+                        error_msg = f"HTTP Error {response.status_code if response else 'No Response'}: {response.text if response else ''}"
+                        logger.error(f"Subagent '{subagent_name}' ({subagent_model}) API error: {error_msg}")
                         provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
+                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code if response else 'Timeout'}."
                         break
                         
                     raw_data = response.json()
@@ -994,6 +1048,12 @@ class JarvisAgent:
                     if not tool_calls:
                         response_text = choice_msg.get("content") or ""
                         
+                        # Programmatic anti-hallucination guardrail for trading agents:
+                        # If no successful bybit_place_order was executed in this turn, strictly forbid claims of trade execution.
+                        if not order_placed_successfully and any(w in response_text.lower() for w in ["successfully executed", "- executed", "сделка открыта", "placed via bybit_place_order"]):
+                            logger.warning(f"Subagent '{subagent_name}' claimed trade execution without successful bybit_place_order. Overriding response.")
+                            response_text = "⚠️ Внимание: Вызов размещения ордеров (`bybit_place_order`) в данном ходу не выполнялся. Сделки на Bybit НЕ открывались."
+
                         # Fallback for empty text content after tools
                         if not response_text.strip() and tool_executed:
                             response_text = "Действия успешно выполнены, Сэр."
@@ -1037,6 +1097,8 @@ class JarvisAgent:
                             message=f"🛠️ Выполнение (субагент): '{tool_name}' с аргументами {tool_args_str}"
                         )
                         result_str = execute_tool(tool_name, tool_args, chat_id=session_id)
+                        if tool_name == "bybit_place_order" and ("success" in result_str.lower() or "orderid" in result_str.lower()):
+                            order_placed_successfully = True
                         
                         messages.append({
                             "role": "tool",

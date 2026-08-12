@@ -522,56 +522,57 @@ export const styles: Record<string, any> = {
   timersList: {
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '16px'
+    gap: '10px',
+    overflowY: 'auto' as const,
+    maxHeight: 'calc(100vh - 280px)',
+    paddingRight: '6px'
   },
   emptyTimersMsg: {
-    fontSize: '0.9rem',
+    fontSize: '0.85rem',
     color: 'var(--text-muted)',
     textAlign: 'center' as const,
-    padding: '48px 24px',
-    lineHeight: 1.6,
+    padding: '32px 16px',
+    lineHeight: 1.5,
     background: 'rgba(6, 9, 19, 0.3)',
-    borderRadius: '10px',
+    borderRadius: '8px',
     border: '1px dashed rgba(255, 255, 255, 0.08)'
   },
   timerCard: {
     border: '1px solid',
-    borderRadius: '14px',
-    padding: '20px 22px',
+    borderRadius: '10px',
+    padding: '12px 14px',
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '14px',
-    boxShadow: '0 8px 28px rgba(0, 0, 0, 0.4)',
-    transition: 'all 0.3s ease',
-    backdropFilter: 'blur(16px)',
+    gap: '8px',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+    transition: 'all 0.2s ease',
+    backdropFilter: 'blur(12px)',
     width: '100%'
   },
   timerHeader: {
     display: 'flex',
-    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: '10px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-    paddingBottom: '12px'
+    flexWrap: 'wrap' as const
   },
   timerLabel: {
-    fontWeight: 700,
-    fontSize: '1.05rem',
+    fontWeight: 600,
+    fontSize: '0.9rem',
     color: '#ffffff',
     letterSpacing: '0.2px',
-    lineHeight: '1.3',
-    wordBreak: 'break-word' as const,
-    flex: 1
+    lineHeight: '1.2'
   },
   timerStatusBadge: {
-    fontSize: '0.7rem',
+    fontSize: '0.62rem',
     fontWeight: 700,
     letterSpacing: '0.5px',
-    padding: '3px 8px',
-    borderRadius: '6px',
+    padding: '2px 6px',
+    borderRadius: '4px',
     border: '1px solid',
     display: 'inline-flex',
     alignItems: 'center',
-    gap: '6px'
+    gap: '4px'
   },
   timerBody: {
     display: 'flex',

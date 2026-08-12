@@ -41,14 +41,17 @@ class SkillDistiller:
 
         Returns a dictionary containing skill_name, title, trigger_conditions, and content.
         """
+        user_msg = log_entry.get("user_message", "")
+        assistant_resp = log_entry.get("assistant_response", "")
+        err_msg = str(log_entry.get("error") or "").lower()
+        if err_msg or "ошибка исполнения" in assistant_resp.lower() or "170140" in assistant_resp:
+            raise ValueError(f"Log entry #{log_entry.get('id')} contains error or execution failure, skipping skill distillation.")
+
         if not self.api_key:
             logger.info("No LLM API key provided. Using heuristic skill distiller.")
             return self._heuristic_distillation(log_entry)
 
-        user_msg = log_entry.get("user_message", "")
-        assistant_resp = log_entry.get("assistant_response", "")
         traces = log_entry.get("traces", [])
-        
         traces_str = json.dumps(traces, indent=2) if isinstance(traces, (list, dict)) else str(traces)
 
         prompt = (

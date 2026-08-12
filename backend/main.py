@@ -62,18 +62,31 @@ logger = logging.getLogger("hermes.main")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# Filter out routine status healthcheck & timer polling noise from uvicorn console logs
+# Silence uvicorn access logs to remove polling noise (GET /api/status, GET /api/timers, etc.)
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.setLevel(logging.WARNING)
+uvicorn_access.disabled = True
+
 class EndpointLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        if "GET /api/status" in msg or "GET /api/timers" in msg:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            msg = str(record.msg)
+        str_args = str(record.args) if record.args else ""
+        full_text = f"{msg} {str_args}"
+        if "/api/" in full_text and ("status" in full_text or "timers" in full_text or "200" in full_text):
             return False
         return True
 
-logging.getLogger("uvicorn.access").addFilter(EndpointLogFilter())
+uvicorn_access.addFilter(EndpointLogFilter())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure uvicorn access logging remains disabled after server startup
+    logging.getLogger("uvicorn.access").disabled = True
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
     init_db()
@@ -871,6 +884,7 @@ async def get_skills_api():
         "timers_alarms":    ["set_timer", "set_alarm", "cancel_timer_or_alarm"],
         "shell_execution":  ["get_system_stats", "execute_command"],
         "python_sandbox":   ["execute_command"],
+        "read_rss_node_feed": ["read_rss_node_feed"],
         "bcm":              ["bcm tools (crypto trading)"],
         "mcp_all":          ["all connected MCP server tools"],
     }
