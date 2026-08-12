@@ -12,8 +12,46 @@ if BCM_DIR not in sys.path:
     sys.path.insert(0, BCM_DIR)
 
 # ─── Symbol Normalization ─────────────────────────────────────────────────────
+# FIX / cTrader Symbol IDs
+SYMBOL_MAP = {
+    "EURUSD": 1,
+    "GBPUSD": 2,
+    "EURGBP": 3,
+    "USDJPY": 4,
+    "USDCHF": 5,
+    "USDCAD": 6,
+    "AUDUSD": 7,
+    "NZDUSD": 8,
+    "EURJPY": 9,
+    "GBPJPY": 10,
+    "XAUUSD": 41,
+    "GOLD": 41,
+    "XAGUSD": 42,
+    "SILVER": 42,
+    "US500": 10013,
+    "SPX": 10013,
+    "BTCUSD": 10028,
+    "BTC": 10028,
+    "ETHUSD": 10029,
+    "ETH": 10029,
+    "BRENT": 10053,
+    "OIL": 10053,
+    "USOIL": 10054,
+    "WTI": 10054,
+    "AMZN": 20001,
+    "GOOGL": 20002,
+    "NVDA": 20003,
+    "TSLA": 20004,
+    "AAPL": 20005,
+    "MSFT": 20006,
+    "META": 20007,
+    "SPY": 20008,
+    "QQQ": 20009,
+    "USO": 20010,
+}
+
 # Maps BCM internal symbol names → Yahoo Finance tickers
-_YF_SYMBOL_MAP = {
+YF_SYMBOL_MAP = {
     "EURUSD":  "EURUSD=X",
     "GBPUSD":  "GBPUSD=X",
     "USDJPY":  "USDJPY=X",
@@ -30,16 +68,30 @@ _YF_SYMBOL_MAP = {
     "XAGUSD":  "SI=F",
     "BRENT":   "BZ=F",
     "OIL":     "BZ=F",
+    "USOIL":   "CL=F",
     "WTI":     "CL=F",
     "US500":   "^GSPC",
     "SPX":     "^GSPC",
     "NDX":     "^NDX",
     "NAS100":  "^NDX",
     "DJI":     "^DJI",
+    "BTCUSD":  "BTC-USD",
     "BTC":     "BTC-USD",
+    "ETHUSD":  "ETH-USD",
     "ETH":     "ETH-USD",
     "SOL":     "SOL-USD",
+    "AMZN":    "AMZN",
+    "GOOGL":   "GOOGL",
+    "NVDA":    "NVDA",
+    "TSLA":    "TSLA",
+    "AAPL":    "AAPL",
+    "MSFT":    "MSFT",
+    "META":    "META",
+    "SPY":     "SPY",
+    "QQQ":     "QQQ",
+    "USO":     "USO",
 }
+_YF_SYMBOL_MAP = YF_SYMBOL_MAP
 
 def _normalize_yf_symbol(symbol: str) -> str:
     """Convert a BCM/cTrader symbol name to its Yahoo Finance ticker equivalent."""
@@ -389,6 +441,23 @@ def handle_bcm_get_technical_indicators(args):
         return analysis
     except Exception as e:
         return {"error": str(e)}
+
+def handle_bcm_calculate_remizov_shift(args):
+    try:
+        try:
+            from backend.bcm.autonomous_trader import calculate_remizov_shift, _fetch_yahoo_direct
+        except ImportError:
+            from autonomous_trader import calculate_remizov_shift, _fetch_yahoo_direct
+        raw_symbol = args.get("symbol")
+        yf_symbol = _normalize_yf_symbol(raw_symbol)
+        df = _fetch_yahoo_direct(yf_symbol, period="30d", interval="1d")
+        if df.empty:
+            return {"error": f"No data for {yf_symbol}"}
+        shift, resolvent = calculate_remizov_shift(df)
+        return {"symbol": raw_symbol, "yf_symbol": yf_symbol, "remizov_shift": shift, "resolvent": resolvent}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 def handle_bcm_get_market_experience(args):
     try:
