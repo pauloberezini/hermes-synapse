@@ -14,9 +14,6 @@ import {
   Clock,
   Menu,
   X,
-  ChevronDown,
-  ChevronRight,
-  ChevronLeft,
   BarChart3,
   Building2,
   LogOut,
@@ -102,11 +99,9 @@ export default function App() {
     }
   };
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return getSafeStorageItem('jarvis_sidebar_collapsed') === 'true';
-  });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsFlyoutOpen, setSettingsFlyoutOpen] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const sidebarLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([{ id: 'dashboard', title: 'Main Terminal' }]);
   const [isConnected, setIsConnected] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!getSafeStorageItem('jarvis_auth_token'));
@@ -1646,439 +1641,169 @@ export default function App() {
         />
       )}
 
-      {/* 1. Left Sidebar */}
-      <aside 
-        style={{
-          ...styles.sidebar,
-          ...(sidebarCollapsed ? styles.sidebarCollapsed : {})
-        }} 
-        className={`glass-panel sidebar ${sidebarOpen ? 'sidebar-open' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+      {/* 1. Left Sidebar — hover to expand */}
+      <aside
+        className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''} ${sidebarExpanded ? 'sidebar-expanded' : ''}`}
+        onMouseEnter={() => {
+          if (sidebarLeaveTimerRef.current) clearTimeout(sidebarLeaveTimerRef.current);
+          setSidebarExpanded(true);
+        }}
+        onMouseLeave={() => {
+          sidebarLeaveTimerRef.current = setTimeout(() => {
+            setSidebarExpanded(false);
+            setSettingsOpen(false);
+          }, 120);
+        }}
       >
-        <div style={{
-          ...styles.logoArea,
-          justifyContent: sidebarCollapsed ? 'center' : 'space-between',
-          marginBottom: sidebarCollapsed ? '16px' : '4px',
-          position: 'relative'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div className="pulse-dot" style={{ width: 14, height: 14 }} />
-            {!sidebarCollapsed && <h1 className="glow-text-cyan" style={styles.logoTitle}>SYNAPSE</h1>}
-          </div>
-          <button
-            onClick={() => {
-              const nextVal = !sidebarCollapsed;
-              setSidebarCollapsed(nextVal);
-              localStorage.setItem('jarvis_sidebar_collapsed', String(nextVal));
-              setSettingsFlyoutOpen(false);
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '6px',
-              borderRadius: '6px',
-              transition: 'all 0.2s',
-            }}
-            className="sidebar-collapse-btn"
-            title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-          >
-            {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          </button>
+        {/* Logo Area */}
+        <div className="sidebar-logo">
+          <div className="pulse-dot" style={{ width: 12, height: 12, flexShrink: 0 }} />
+          <span className="sidebar-label sidebar-logo-text">SYNAPSE</span>
         </div>
-        {!sidebarCollapsed && <p style={styles.logoSubtitle}>SYSTEM CONSOLE v1.1.0</p>}
-        
-        <nav style={styles.navMenu}>
-          <button 
-            style={{
-              ...styles.navBtn, 
-              ...(activeTab === 'chat' ? styles.navBtnActive : {}),
-              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-            }}
-            onClick={() => { setActiveTab('chat'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-            title={sidebarCollapsed ? "Communication Link" : undefined}
+        <p className="sidebar-label sidebar-version">SYSTEM CONSOLE v1.1.0</p>
+
+        {/* Navigation */}
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-nav-btn${activeTab === 'chat' ? ' active' : ''}`}
+            onClick={() => { setActiveTab('chat'); setSidebarOpen(false); setSidebarExpanded(false); }}
+            title="Communication Link"
           >
-            <MessageSquare size={18} />
-            {!sidebarCollapsed && <span>Communication Link</span>}
+            <MessageSquare size={18} className="sidebar-icon" />
+            <span className="sidebar-label">Communication Link</span>
           </button>
-          
-          <button 
-            style={{
-              ...styles.navBtn, 
-              ...(activeTab === 'schedule' ? styles.navBtnActive : {}),
-              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-            }}
-            onClick={() => { setActiveTab('schedule'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-            title={sidebarCollapsed ? "Schedules & Automation" : undefined}
+
+          <button
+            className={`sidebar-nav-btn${activeTab === 'schedule' ? ' active' : ''}`}
+            onClick={() => { setActiveTab('schedule'); setSidebarOpen(false); setSidebarExpanded(false); }}
+            title="Schedules & Automation"
           >
-            <Clock size={18} />
-            {!sidebarCollapsed && <span>Schedules & Automation</span>}
+            <Clock size={18} className="sidebar-icon" />
+            <span className="sidebar-label">Schedules & Automation</span>
           </button>
 
           {isOfficeEnabled && (
             <button
-              style={{
-                ...styles.navBtn,
-                ...(activeTab === 'office' ? styles.navBtnActive : {}),
-                ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-              }}
-              onClick={() => { setActiveTab('office'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-              title={sidebarCollapsed ? 'Pixel Office [Beta]' : undefined}
+              className={`sidebar-nav-btn${activeTab === 'office' ? ' active' : ''}`}
+              onClick={() => { setActiveTab('office'); setSidebarOpen(false); setSidebarExpanded(false); }}
+              title="Pixel Office"
             >
-              <Building2 size={18} />
-              {!sidebarCollapsed && (
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <span>Pixel Office</span>
-                  <span style={{ fontSize: '0.65rem', padding: '1px 5px', background: 'rgba(234, 179, 8, 0.2)', border: '1px solid rgba(234, 179, 8, 0.4)', color: '#eab308', borderRadius: '3px', marginLeft: '6px' }}>BETA</span>
-                </span>
-              )}
+              <Building2 size={18} className="sidebar-icon" />
+              <span className="sidebar-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                Pixel Office
+                <span className="sidebar-badge-beta">BETA</span>
+              </span>
             </button>
           )}
 
-          <button 
-            style={{
-              ...styles.navBtn, 
-              ...(activeTab === 'tasks' ? styles.navBtnActive : {}),
-              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-            }}
-            onClick={() => { setActiveTab('tasks'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-            title={sidebarCollapsed ? "Task Engine" : undefined}
+          <button
+            className={`sidebar-nav-btn${activeTab === 'tasks' ? ' active' : ''}`}
+            onClick={() => { setActiveTab('tasks'); setSidebarOpen(false); setSidebarExpanded(false); }}
+            title="Task Engine"
           >
-            <Kanban size={18} />
-            {!sidebarCollapsed && <span>Task Engine</span>}
+            <Kanban size={18} className="sidebar-icon" />
+            <span className="sidebar-label">Task Engine</span>
           </button>
 
-          <button 
-            style={{
-              ...styles.navBtn, 
-              ...(activeTab === 'network' ? styles.navBtnActive : {}),
-              ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-            }}
-            onClick={() => { setActiveTab('network'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-            title={sidebarCollapsed ? "Architecture" : undefined}
+          <button
+            className={`sidebar-nav-btn${activeTab === 'network' ? ' active' : ''}`}
+            onClick={() => { setActiveTab('network'); setSidebarOpen(false); setSidebarExpanded(false); }}
+            title="Architecture"
           >
-            <Network size={18} />
-            {!sidebarCollapsed && <span>Architecture</span>}
+            <Network size={18} className="sidebar-icon" />
+            <span className="sidebar-label">Architecture</span>
           </button>
-          
-          <div style={{ position: 'relative' }}>
-            <button 
-              style={{
-                ...styles.navBtn, 
-                justifyContent: sidebarCollapsed ? 'center' : 'space-between', 
-                width: '100%',
-                paddingRight: sidebarCollapsed ? '0px' : '12px',
-                ...((['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools'].includes(activeTab)) ? styles.navBtnActive : {}),
-                ...(sidebarCollapsed ? styles.navBtnCollapsed : {})
-              }}
-              onClick={() => {
-                if (sidebarCollapsed) {
-                  setSettingsFlyoutOpen(!settingsFlyoutOpen);
-                } else {
-                  setSettingsOpen(!settingsOpen);
-                }
-              }}
-              title={sidebarCollapsed ? "Settings" : undefined}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: sidebarCollapsed ? '0px' : '12px' }}>
-                <Settings size={18} />
-                {!sidebarCollapsed && <span>Settings</span>}
-              </div>
-              {!sidebarCollapsed && (settingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
-            </button>
 
-            {sidebarCollapsed && settingsFlyoutOpen && (
-              <div 
-                style={styles.flyoutMenu} 
-                className="glass-panel"
-                onMouseLeave={() => setSettingsFlyoutOpen(false)}
-              >
-                <div style={styles.flyoutHeader}>Settings</div>
-                
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('config'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Settings size={18} />
-                  <span>Core Parameters</span>
-                </button>
+          {/* Settings group */}
+          <button
+            className={`sidebar-nav-btn${(['config','subagents','mcp','obsidian','logs','activity','memory','tools','rss','metrics'].includes(activeTab)) ? ' active' : ''}`}
+            onClick={() => setSettingsOpen(prev => !prev)}
+            title="Settings"
+          >
+            <Settings size={18} className="sidebar-icon" />
+            <span className="sidebar-label" style={{ flex: 1 }}>Settings</span>
+            <span className={`sidebar-label sidebar-chevron${settingsOpen ? ' open' : ''}`}>›</span>
+          </button>
 
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
-                  onClick={() => {
-                    setActiveTab('subagents');
-                    selectChat(currentChatId === 'dashboard' ? 'dashboard' : currentChatId);
-                    setSidebarOpen(false);
-                    setSettingsFlyoutOpen(false);
-                  }}
-                >
-                  <Layers size={18} />
-                  <span>Sub-agents</span>
-                </button>
-
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Server size={18} />
-                  <span>MCP Servers</span>
-                </button>
-
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <BookOpen size={18} />
-                  <span>Obsidian</span>
-                </button>
-                
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'memory' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('memory'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Database size={18} />
-                  <span>Memory Vault (RAG)</span>
-                </button>
-                
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'tools' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('tools'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Wrench size={18} />
-                  <span>Core Tools</span>
-                </button>
-
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'logs' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('logs'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Terminal size={18} />
-                  <span>Decision Logs</span>
-                </button>
-                
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'metrics' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('metrics'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <BarChart3 size={18} />
-                  <span>Metrics Dashboard</span>
-                </button>
-                
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'rss' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('rss'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Rss size={18} />
-                  <span>RSS Feeds & Nodes</span>
-                </button>
-
-                <button 
-                  style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
-                  onClick={() => { setActiveTab('activity'); setSidebarOpen(false); setSettingsFlyoutOpen(false); }}
-                >
-                  <Activity size={18} />
-                  <span>Activity Logs</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {!sidebarCollapsed && settingsOpen && (
-            <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', marginBottom: '4px' }}>
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'config' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('config'); setSidebarOpen(false); }}
-              >
-                <Settings size={18} />
-                <span>Core Parameters</span>
+          {settingsOpen && (
+            <div className="sidebar-submenu">
+              <button className={`sidebar-nav-btn sub${activeTab === 'config' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('config'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Settings size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Core Parameters</span>
               </button>
-
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'rss' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('rss'); setSidebarOpen(false); }}
-              >
-                <Rss size={18} />
-                <span>RSS Feeds & Nodes</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'rss' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('rss'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Rss size={15} className="sidebar-icon" />
+                <span className="sidebar-label">RSS Feeds & Nodes</span>
               </button>
-
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'subagents' ? styles.navBtnActive : {})}}
-                onClick={() => {
-                  setActiveTab('subagents');
-                  selectChat(currentChatId === 'dashboard' ? 'dashboard' : currentChatId);
-                  setSidebarOpen(false);
-                }}
-              >
-                <Layers size={18} />
-                <span>Sub-agents</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'subagents' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('subagents'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Layers size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Sub-agents</span>
               </button>
-
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'mcp' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); }}
-              >
-                <Server size={18} />
-                <span>MCP Servers</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'mcp' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Server size={15} className="sidebar-icon" />
+                <span className="sidebar-label">MCP Servers</span>
               </button>
-
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'obsidian' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); }}
-              >
-                <BookOpen size={18} />
-                <span>Obsidian</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'obsidian' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('obsidian'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <BookOpen size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Obsidian</span>
               </button>
-              
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'memory' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('memory'); setSidebarOpen(false); }}
-              >
-                <Database size={18} />
-                <span>Memory Vault (RAG)</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'memory' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('memory'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Database size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Memory Vault (RAG)</span>
               </button>
-              
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'tools' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('tools'); setSidebarOpen(false); }}
-              >
-                <Wrench size={18} />
-                <span>Core Tools</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'tools' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('tools'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Wrench size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Core Tools</span>
               </button>
-
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'logs' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('logs'); setSidebarOpen(false); }}
-              >
-                <Terminal size={18} />
-                <span>Decision Logs</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'logs' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('logs'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Terminal size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Decision Logs</span>
               </button>
-              
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'metrics' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('metrics'); setSidebarOpen(false); }}
-              >
-                <BarChart3 size={18} />
-                <span>Metrics Dashboard</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'metrics' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('metrics'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <BarChart3 size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Metrics Dashboard</span>
               </button>
-              
-              <button 
-                style={{...styles.navBtn, ...(activeTab === 'activity' ? styles.navBtnActive : {})}}
-                onClick={() => { setActiveTab('activity'); setSidebarOpen(false); }}
-              >
-                <Activity size={18} />
-                <span>Activity Logs</span>
+              <button className={`sidebar-nav-btn sub${activeTab === 'activity' ? ' active' : ''}`}
+                onClick={() => { setActiveTab('activity'); setSidebarOpen(false); setSidebarExpanded(false); }}>
+                <Activity size={15} className="sidebar-icon" />
+                <span className="sidebar-label">Activity Logs</span>
               </button>
             </div>
           )}
         </nav>
 
-        {/* Sidebar Status Info */}
-        <div 
-          style={{
-            ...styles.statusBox,
-            ...(sidebarCollapsed ? styles.statusBoxCollapsed : {})
-          }} 
-          className="glass-panel"
-        >
-          {sidebarCollapsed ? (
-            <>
-              <div 
-                style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }}
-                title={`Onboard Network: ${isConnected ? 'ACTIVE' : 'DISCONNECTED'}`}
-              >
-                <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
-              </div>
-              <div 
-                style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }} 
-                title={`LLM Core: ${config.model.split('/').pop()}`}
-              >
-                <Cpu size={18} style={{ color: '#00f0ff' }} />
-              </div>
-              <div 
-                style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: '#00f0ff' }}
-                title={`Call logs: ${logs.length} logs`}
-              >
-                {logs.length}
-              </div>
-              <button 
-                onClick={handleLogout}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  background: 'rgba(239, 68, 68, 0.12)',
-                  border: '1px solid rgba(239, 68, 68, 0.35)',
-                  borderRadius: '6px',
-                  padding: '6px',
-                  color: '#ef4444',
-                  marginTop: '4px',
-                  transition: 'all 0.2s'
-                }} 
-                title="Logout / Выйти из аккаунта"
-              >
-                <LogOut size={16} />
-              </button>
-            </>
-          ) : (
-            <>
-              <div style={styles.statusRow}>
-                <span style={styles.statusLabel}>Onboard Network:</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span className={`pulse-dot ${isConnected ? '' : 'danger'}`} />
-                  <span style={{ fontSize: '0.85rem', color: isConnected ? '#10b981' : '#ef4444' }}>
-                    {isConnected ? 'ACTIVE' : 'DISCONNECTED'}
-                  </span>
-                </div>
-              </div>
-              
-              <div style={styles.statusRow}>
-                <span style={styles.statusLabel}>LLM Core:</span>
-                <div style={styles.modelTag}>
-                  <Cpu size={12} style={{ color: '#00f0ff' }} />
-                  <span style={styles.modelName}>{config.model.split('/').pop()}</span>
-                </div>
-              </div>
-              
-              <div style={styles.statusRow}>
-                <span style={styles.statusLabel}>Call logs:</span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#00f0ff' }}>
-                  {logs.length} logs
-                </span>
-              </div>
+        {/* Status Box — minimalist */}
+        <div className="sidebar-status-box sidebar-status">
+          {/* Connection */}
+          <div className="sidebar-status-row" title={isConnected ? 'Network: connected' : 'Network: disconnected'}>
+            <span className={`pulse-dot${isConnected ? '' : ' danger'}`} style={{ flexShrink: 0, width: 8, height: 8 }} />
+            <span className="sidebar-label sidebar-status-text" style={{ color: isConnected ? 'var(--success)' : 'var(--danger)', letterSpacing: '0.5px' }}>
+              {isConnected ? 'CONNECTED' : 'DISCONNECTED'}
+            </span>
+          </div>
 
-              <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
-                <button
-                  onClick={handleLogout}
-                  className="btn-primary"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(185, 28, 28, 0.1) 100%)',
-                    border: '1px solid rgba(239, 68, 68, 0.4)',
-                    color: '#ef4444',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    boxShadow: '0 0 10px rgba(239, 68, 68, 0.15)',
-                    transition: 'all 0.2s'
-                  }}
-                  title="Logout / Выйти из сессии"
-                >
-                  <LogOut size={15} />
-                  <span>Logout (Выход)</span>
-                </button>
-              </div>
-            </>
-          )}
+          {/* Model */}
+          <div className="sidebar-status-row" title={`Model: ${config.model}`}>
+            <Cpu size={14} style={{ color: 'var(--text-dim)', flexShrink: 0 }} />
+            <span className="sidebar-label sidebar-status-text" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
+              {config.model.split('/').pop()}
+            </span>
+          </div>
+
+          {/* Logout */}
+          <button onClick={handleLogout} className="sidebar-logout-btn" title="Logout">
+            <LogOut size={14} style={{ flexShrink: 0 }} />
+            <span className="sidebar-label">Logout</span>
+          </button>
         </div>
       </aside>
 

@@ -1,21 +1,13 @@
 
 export const styles: Record<string, any> = {
   sidebar: {
-    width: '320px',
+    /* layout properties — visual glass styling lives in index.css aside.sidebar */
     height: '100%',
-    padding: '24px',
     display: 'flex',
     flexDirection: 'column' as const,
-    borderRight: 'var(--glass-border)',
-    borderRadius: '0px 16px 16px 0px',
-    backgroundColor: 'rgba(6, 9, 19, 0.85)',
-    zIndex: 10,
-    transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease'
+    zIndex: 200,
   },
-  sidebarCollapsed: {
-    width: '76px',
-    padding: '24px 12px',
-  },
+  sidebarCollapsed: {},  /* kept for TS compat — no longer used */
 
   logoArea: {
     display: 'flex',
@@ -70,8 +62,7 @@ export const styles: Record<string, any> = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: '12px',
-    fontSize: '0.9rem',
-    backgroundColor: 'rgba(8, 10, 15, 0.4)'
+    fontSize: '0.9rem'
   },
   statusRow: {
     display: 'flex',
@@ -103,10 +94,12 @@ export const styles: Record<string, any> = {
     flex: 1,
     height: '100%',
     minHeight: 0,
+    minWidth: 0,
     padding: '24px 32px',
     display: 'flex',
     flexDirection: 'column' as const,
-    overflow: 'hidden'
+    overflow: 'hidden',
+    marginLeft: '68px',   /* always offset by the icon-bar width */
   },
   tabWrapper: {
     display: 'flex',
@@ -135,6 +128,7 @@ export const styles: Record<string, any> = {
   chatArea: {
     flex: 1,
     minHeight: 0,
+    minWidth: 0,
     display: 'flex',
     flexDirection: 'column' as const,
     overflow: 'hidden',
@@ -147,7 +141,9 @@ export const styles: Record<string, any> = {
   chatScroller: {
     flex: 1,
     minHeight: 0,
+    minWidth: 0,
     overflowY: 'auto' as const,
+    overflowX: 'hidden' as const,
     padding: '20px',
     display: 'flex',
     flexDirection: 'column' as const,
@@ -155,14 +151,18 @@ export const styles: Record<string, any> = {
   },
   msgBubbleWrapper: {
     display: 'flex',
-    width: '100%'
+    width: '100%',
+    minWidth: 0,
   },
   msgBubble: {
-    maxWidth: '75%',
+    maxWidth: '85%',
+    minWidth: 0,
     padding: '14px 18px',
     borderRadius: '12px',
     border: '1px solid',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+    overflowWrap: 'anywhere' as const,
+    wordBreak: 'break-word' as const,
   },
   msgHeader: {
     display: 'flex',
@@ -187,7 +187,9 @@ export const styles: Record<string, any> = {
     fontSize: '0.95rem',
     lineHeight: 1.5,
     whiteSpace: 'pre-wrap' as const,
-    color: 'var(--text-primary)'
+    color: 'var(--text-primary)',
+    overflowWrap: 'anywhere' as const,
+    wordBreak: 'break-word' as const,
   },
   systemMsg: {
     fontSize: '0.8rem',

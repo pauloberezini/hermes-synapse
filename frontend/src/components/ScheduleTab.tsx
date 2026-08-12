@@ -14,6 +14,7 @@ export interface TimerItem {
   type?: string;
   target_time?: string;
   interval_hours?: number;
+  cron_expr?: string;
   fire_count?: number;
   agent_id?: string;
   prompt?: string;
@@ -60,13 +61,14 @@ export function ScheduleTab({
 }: ScheduleTabProps) {
 
   // Create Form State
-  const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
+  const [taskType, setTaskType] = useState<'one-shot' | 'alarm' | 'recurring' | 'cron'>('one-shot');
   const [taskLabel, setTaskLabel] = useState('');
   const [targetAgent, setTargetAgent] = useState('jarvis');
   const [taskPrompt, setTaskPrompt] = useState('');
   const [taskDuration, setTaskDuration] = useState(60);
   const [taskTimeStr, setTaskTimeStr] = useState('');
   const [taskInterval, setTaskInterval] = useState(1);
+  const [taskCronExpr, setTaskCronExpr] = useState('*/15 * * * *');
 
   // Info Modal State
   const [infoTimer, setInfoTimer] = useState<TimerItem | null>(null);
@@ -74,13 +76,14 @@ export function ScheduleTab({
 
   // Edit Modal State
   const [editTimer, setEditTimer] = useState<TimerItem | null>(null);
-  const [editType, setEditType] = useState<'one-shot' | 'alarm' | 'recurring'>('one-shot');
+  const [editType, setEditType] = useState<'one-shot' | 'alarm' | 'recurring' | 'cron'>('one-shot');
   const [editLabel, setEditLabel] = useState('');
   const [editTargetAgent, setEditTargetAgent] = useState('jarvis');
   const [editPrompt, setEditPrompt] = useState('');
   const [editDuration, setEditDuration] = useState(60);
   const [editTimeStr, setEditTimeStr] = useState('');
   const [editInterval, setEditInterval] = useState(1);
+  const [editCronExpr, setEditCronExpr] = useState('*/15 * * * *');
   const [editSaving, setEditSaving] = useState(false);
 
   const safeSubagents = Array.isArray(subagents) ? subagents : [];
@@ -105,6 +108,12 @@ export function ScheduleTab({
       payload.time_str = taskTimeStr;
     } else if (taskType === 'recurring') {
       payload.interval_hours = taskInterval;
+    } else if (taskType === 'cron') {
+      if (!taskCronExpr.trim()) {
+        alert("Cron expression is required!");
+        return;
+      }
+      payload.cron_expr = taskCronExpr.trim();
     }
 
     doFetch('http://localhost:8000/api/timers', {
@@ -137,6 +146,7 @@ export function ScheduleTab({
     setEditDuration(timer.duration || 60);
     setEditTimeStr(timer.target_time || '');
     setEditInterval(timer.interval_hours || 1);
+    setEditCronExpr(timer.cron_expr || '*/15 * * * *');
   };
 
   const handleSaveEdit = () => {
@@ -159,6 +169,13 @@ export function ScheduleTab({
       payload.time_str = editTimeStr;
     } else if (editType === 'recurring') {
       payload.interval_hours = editInterval;
+    } else if (editType === 'cron') {
+      if (!editCronExpr.trim()) {
+        alert("Cron expression is required!");
+        setEditSaving(false);
+        return;
+      }
+      payload.cron_expr = editCronExpr.trim();
     }
 
     doFetch(`http://localhost:8000/api/timers/${editTimer.id}`, {
@@ -297,6 +314,7 @@ export function ScheduleTab({
                   <option value="one-shot">One-Shot (Timer)</option>
                   <option value="alarm">Alarm (Specific Time)</option>
                   <option value="recurring">Recurring (Interval)</option>
+                  <option value="cron">Cron (n8n Expression)</option>
                 </select>
               </div>
 
@@ -329,7 +347,7 @@ export function ScheduleTab({
 
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>
-                  {taskType === 'one-shot' ? 'DELAY (SECS)' : (taskType === 'alarm' ? 'TIME (HH:MM)' : 'INTERVAL (HRS)')}
+                  {taskType === 'one-shot' ? 'DELAY (SECS)' : (taskType === 'alarm' ? 'TIME (HH:MM)' : (taskType === 'recurring' ? 'INTERVAL (HRS)' : 'CRON (* * * * *)'))}
                 </label>
                 {taskType === 'one-shot' && (
                   <input 
@@ -359,6 +377,45 @@ export function ScheduleTab({
                     className="form-input"
                     style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(0, 240, 255, 0.15)', color: '#fff' }}
                   />
+                )}
+                {taskType === 'cron' && (
+                  <div>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. */15 * * * * or 0 9 * * 1-5" 
+                      value={taskCronExpr}
+                      onChange={(e) => setTaskCronExpr(e.target.value)}
+                      className="form-input"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(168, 85, 247, 0.3)', color: '#fff', fontFamily: 'var(--font-mono)' }}
+                    />
+                    <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
+                      {[
+                        { label: '1m', expr: '* * * * *' },
+                        { label: '15m', expr: '*/15 * * * *' },
+                        { label: '1h', expr: '0 * * * *' },
+                        { label: 'Daily 9:00', expr: '0 9 * * *' },
+                        { label: 'Mon-Fri 9:00', expr: '0 9 * * 1-5' }
+                      ].map((preset) => (
+                        <button
+                          key={preset.expr}
+                          type="button"
+                          onClick={() => setTaskCronExpr(preset.expr)}
+                          style={{
+                            fontSize: '0.65rem',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            background: taskCronExpr === preset.expr ? 'rgba(168, 85, 247, 0.25)' : 'rgba(255, 255, 255, 0.06)',
+                            border: `1px solid ${taskCronExpr === preset.expr ? 'rgba(168, 85, 247, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
+                            color: taskCronExpr === preset.expr ? '#e9d5ff' : 'var(--text-muted)',
+                            cursor: 'pointer',
+                            fontFamily: 'var(--font-mono)'
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -441,8 +498,8 @@ export function ScheduleTab({
                     badgeBorder = 'rgba(249, 115, 22, 0.35)';
                     badgeBg = 'rgba(249, 115, 22, 0.1)';
                   } else if (timer.type === 'recurring') {
-                    statusText = 'RECURRING';
-                    statusClass = 'recurring';
+                    statusText = 'RUNNING';
+                    statusClass = 'running';
                     badgeColor = '#10b981';
                     badgeBorder = 'rgba(16, 185, 129, 0.35)';
                     badgeBg = 'rgba(16, 185, 129, 0.1)';
@@ -491,13 +548,13 @@ export function ScheduleTab({
                           fontWeight: 700, 
                           padding: '2px 5px', 
                           borderRadius: '4px', 
-                          backgroundColor: timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.12)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(0, 240, 255, 0.12)'),
-                          color: timer.type === 'recurring' ? '#10b981' : (timer.type === 'alarm' ? '#f97316' : 'var(--accent-cyan)'),
-                          border: `1px solid ${timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : 'rgba(0, 240, 255, 0.25)')}`,
+                          backgroundColor: timer.type === 'cron' ? 'rgba(168, 85, 247, 0.15)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.12)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(0, 240, 255, 0.12)')),
+                          color: timer.type === 'cron' ? '#c084fc' : (timer.type === 'recurring' ? '#10b981' : (timer.type === 'alarm' ? '#f97316' : 'var(--accent-cyan)')),
+                          border: `1px solid ${timer.type === 'cron' ? 'rgba(168, 85, 247, 0.35)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : 'rgba(0, 240, 255, 0.25)'))}`,
                           textTransform: 'uppercase',
                           flexShrink: 0
                         }}>
-                          {timer.type === 'recurring' ? 'RECURRING' : (timer.type === 'alarm' ? 'ALARM' : 'ONE-SHOT')}
+                          {timer.type === 'cron' ? 'CRON' : (timer.type === 'recurring' ? 'RECURRING' : (timer.type === 'alarm' ? 'ALARM' : 'ONE-SHOT'))}
                         </span>
                       </div>
 
@@ -566,7 +623,9 @@ export function ScheduleTab({
                             {formatCreatedDate(timer.created_at)}
                           </span>
                         )}
-                        {timer.type === 'recurring' ? (
+                        {timer.type === 'cron' ? (
+                          <span>Cron: <code style={{ color: '#c084fc' }}>{timer.cron_expr}</code> | Fired: {timer.fire_count || 0}</span>
+                        ) : timer.type === 'recurring' ? (
                           <span>Every {timer.interval_hours}h | Fired: {timer.fire_count || 0}</span>
                         ) : timer.type === 'alarm' ? (
                           <span>Target: {timer.target_time}</span>
@@ -774,6 +833,7 @@ export function ScheduleTab({
                     <option value="one-shot">One-Shot (Timer)</option>
                     <option value="alarm">Alarm (Specific Time)</option>
                     <option value="recurring">Recurring (Interval)</option>
+                    <option value="cron">Cron (n8n Expression)</option>
                   </select>
                 </div>
 
@@ -805,7 +865,7 @@ export function ScheduleTab({
 
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px', fontWeight: 600 }}>
-                    {editType === 'one-shot' ? 'DELAY (SECS)' : (editType === 'alarm' ? 'TIME (HH:MM)' : 'INTERVAL (HRS)')}
+                    {editType === 'one-shot' ? 'DELAY (SECS)' : (editType === 'alarm' ? 'TIME (HH:MM)' : (editType === 'recurring' ? 'INTERVAL (HRS)' : 'CRON (* * * * *)'))}
                   </label>
                   {editType === 'one-shot' && (
                     <input 
@@ -833,6 +893,16 @@ export function ScheduleTab({
                       onChange={(e) => setEditInterval(parseFloat(e.target.value) || 0)}
                       className="form-input"
                       style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff' }}
+                    />
+                  )}
+                  {editType === 'cron' && (
+                    <input 
+                      type="text" 
+                      placeholder="e.g. */15 * * * *" 
+                      value={editCronExpr}
+                      onChange={(e) => setEditCronExpr(e.target.value)}
+                      className="form-input"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', height: '34px', background: 'rgba(6, 9, 19, 0.8)', border: '1px solid rgba(234, 179, 8, 0.3)', color: '#fff', fontFamily: 'var(--font-mono)' }}
                     />
                   )}
                 </div>

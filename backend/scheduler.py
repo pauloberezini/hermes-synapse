@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -200,6 +201,51 @@ async def _job_recurring(
     })
 
 
+async def _job_cron(
+    *,
+    job_id: str,
+    label: str,
+    cron_expr: str,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+    created_at: Optional[str] = None,
+    task_type: Optional[str] = None,
+    **kwargs,
+) -> None:
+    _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
+    count = _fire_counts[job_id]
+    logger.info(f"Cron task fired #{count}: '{label}' ({cron_expr})")
+    from backend.activity_logger import log_activity
+    task_session_id = f"task_{job_id}"
+    _register_scheduled_session(job_id, label, "cron", agent_id, prompt, status="running", extra={"cron_expr": cron_expr, "fire_count": count})
+
+    if agent_id and prompt:
+        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+    else:
+        log_activity("idle", "Scheduler", f"⚙️ Cron task #{count} triggered: '{label}' ({cron_expr})")
+        await _send_telegram_alert(
+            chat_id,
+            f"⚙️ **CRON TASK, SIR** (#{count})\n\n• {label}\n"
+            f"• Schedule: `{cron_expr}`",
+        )
+    job = scheduler.get_job(job_id)
+    next_run = getattr(job, "next_run_time", None) if job else None
+    now_tz = datetime.now(scheduler.timezone)
+    if not next_run or next_run <= now_tz:
+        if job and hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
+            next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
+    time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
+    await _broadcast_ws({
+        "type": "reminder_fired",
+        "reminder": {
+            "id": job_id, "label": label, "cron_expr": cron_expr,
+            "fire_count": count, "status": "running", "time_left": time_left, "type": "cron",
+        },
+        "session_id": task_session_id,
+    })
+
+
 def _register_scheduled_session(
     job_id: str,
     label: str,
@@ -360,6 +406,47 @@ def add_recurring_reminder(
     return reminder_id
 
 
+def add_cron_reminder(
+    label: str,
+    cron_expr: str,
+    chat_id: str,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> str:
+    reminder_id = str(uuid.uuid4())
+    created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+    cron_expr = cron_expr.strip()
+    try:
+        trigger = CronTrigger.from_crontab(cron_expr, timezone=scheduler.timezone)
+    except Exception as e:
+        raise ValueError(f"Invalid cron expression '{cron_expr}': {e}")
+
+    scheduler.add_job(
+        _job_cron,
+        trigger=trigger,
+        kwargs={"job_id": reminder_id, "label": label, "cron_expr": cron_expr,
+                "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                "created_at": created_at, "task_type": "cron"},
+        id=reminder_id, name=label, replace_existing=True,
+    )
+    _timer_meta[reminder_id] = {
+        "type": "cron",
+        "created_at": created_at,
+        "cron_expr": cron_expr,
+        "status": "running",
+        "agent_id": agent_id,
+        "prompt": prompt,
+        "label": label,
+    }
+
+    _register_scheduled_session(reminder_id, label, "cron", agent_id, prompt, status="running", extra={"cron_expr": cron_expr})
+
+    from backend.activity_logger import log_activity
+    log_activity("idle", "Scheduler", f"⚙️ Cron task scheduled '{label}' ({cron_expr})")
+    logger.info(f"Cron task scheduled: '{label}' ({cron_expr}) (id={reminder_id})")
+    return reminder_id
+
+
 def cancel_timer_or_alarm(item_id: str) -> bool:
     job = scheduler.get_job(item_id)
     if job is None:
@@ -403,6 +490,7 @@ def update_timer(
     duration_seconds: Optional[int] = None,
     time_str: Optional[str] = None,
     interval_hours: Optional[float] = None,
+    cron_expr: Optional[str] = None,
 ) -> bool:
     job = scheduler.get_job(item_id)
     if job is None:
@@ -476,6 +564,23 @@ def update_timer(
             id=item_id, name=label, replace_existing=True,
         )
         _timer_meta[item_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours, "status": "running"}
+    elif task_type == "cron":
+        if not cron_expr:
+            raise ValueError("cron_expr is required for cron task")
+        cron_expr_clean = cron_expr.strip()
+        try:
+            trigger = CronTrigger.from_crontab(cron_expr_clean, timezone=scheduler.timezone)
+        except Exception as e:
+            raise ValueError(f"Invalid cron expression '{cron_expr_clean}': {e}")
+        scheduler.add_job(
+            _job_cron,
+            trigger=trigger,
+            kwargs={"job_id": item_id, "label": label, "cron_expr": cron_expr_clean,
+                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                    "created_at": created_at, "task_type": "cron"},
+            id=item_id, name=label, replace_existing=True,
+        )
+        _timer_meta[item_id] = {"type": "cron", "created_at": created_at, "cron_expr": cron_expr_clean, "status": "running"}
     else:
         raise ValueError(f"Invalid task type: '{task_type}'")
 
@@ -486,6 +591,8 @@ def update_timer(
         extra["target_time"] = time_str
     if interval_hours is not None:
         extra["interval_hours"] = interval_hours
+    if cron_expr is not None:
+        extra["cron_expr"] = cron_expr
 
     _register_scheduled_session(
         job_id=item_id,
@@ -576,6 +683,7 @@ def restart_timer(item_id: str) -> bool:
     duration_seconds = kwargs.get("duration") or meta.get("duration") or 60
     time_str = kwargs.get("target_time_str") or meta.get("target_time")
     interval_hours = kwargs.get("interval_hours") or meta.get("interval_hours") or 1.0
+    cron_expr = kwargs.get("cron_expr") or meta.get("cron_expr")
 
     return update_timer(
         item_id=clean_id,
@@ -586,6 +694,7 @@ def restart_timer(item_id: str) -> bool:
         duration_seconds=duration_seconds,
         time_str=time_str,
         interval_hours=interval_hours,
+        cron_expr=cron_expr,
     )
 
 
@@ -689,6 +798,8 @@ def trigger_timer_now(item_id: str) -> bool:
 def _infer_type(job) -> str:
     func = getattr(job, "func", None)
     name = getattr(func, "__name__", "")
+    if "cron" in name:
+        return "cron"
     if "recurring" in name:
         return "recurring"
     if "alarm" in name:
@@ -721,6 +832,7 @@ def get_all_timers() -> List[Dict[str, Any]]:
                         "status": info.get("status"),
                         "created_at": info.get("created_at"),
                         "interval_hours": info.get("interval_hours"),
+                        "cron_expr": info.get("cron_expr"),
                         "duration": info.get("duration"),
                         "target_time": info.get("target_time"),
                         "task_type": schedule_type or info.get("task_type"),
@@ -746,7 +858,7 @@ def get_all_timers() -> List[Dict[str, Any]]:
         if not status:
             status = "paused" if next_run is None else "running"
 
-        if status != "paused" and job_type == "recurring" and (not next_run or next_run <= now_tz):
+        if status != "paused" and job_type in ("recurring", "cron") and (not next_run or next_run <= now_tz):
             if hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
                 next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
 
@@ -765,7 +877,10 @@ def get_all_timers() -> List[Dict[str, Any]]:
             "agent_id": agent_id,
             "prompt": prompt,
         }
-        if job_type == "recurring":
+        if job_type == "cron":
+            entry["cron_expr"] = kwargs.get("cron_expr") or meta.get("cron_expr") or db_fallback.get("cron_expr")
+            entry["fire_count"] = _fire_counts.get(job_id, 0)
+        elif job_type == "recurring":
             entry["interval_hours"] = kwargs.get("interval_hours") or meta.get("interval_hours") or db_fallback.get("interval_hours")
             entry["fire_count"] = _fire_counts.get(job_id, 0)
         elif job_type == "alarm":
@@ -804,7 +919,10 @@ def get_all_timers() -> List[Dict[str, Any]]:
             "agent_id": agent_id,
             "prompt": prompt,
         }
-        if job_type == "recurring":
+        if job_type == "cron":
+            entry["cron_expr"] = info.get("cron_expr") or meta.get("cron_expr")
+            entry["fire_count"] = _fire_counts.get(j_id, 0)
+        elif job_type == "recurring":
             entry["interval_hours"] = info.get("interval_hours") or meta.get("interval_hours")
             entry["fire_count"] = _fire_counts.get(j_id, 0)
         elif job_type == "alarm":
@@ -1111,6 +1229,7 @@ def restore_state() -> None:
                 "type": task_type,
                 "created_at": created_at,
                 "interval_hours": info.get("interval_hours", 1.0),
+                "cron_expr": info.get("cron_expr"),
                 "duration": info.get("duration"),
                 "target_time": info.get("target_time"),
                 "status": status,
@@ -1124,7 +1243,24 @@ def restore_state() -> None:
                 if status == "paused":
                     existing_job.pause()
             else:
-                if task_type == "recurring":
+                if task_type == "cron":
+                    cron_expr = info.get("cron_expr") or "* * * * *"
+                    try:
+                        trigger = CronTrigger.from_crontab(cron_expr, timezone=scheduler.timezone)
+                        job = scheduler.add_job(
+                            _job_cron,
+                            trigger=trigger,
+                            kwargs={"job_id": job_id, "label": label, "cron_expr": cron_expr,
+                                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                                    "created_at": created_at, "task_type": "cron"},
+                            id=job_id, name=label, replace_existing=True,
+                        )
+                        if status == "paused":
+                            job.pause()
+                        restored_count += 1
+                    except Exception as err:
+                        logger.error(f"Failed restoring cron job {job_id} ({cron_expr}): {err}")
+                elif task_type == "recurring":
                     interval_hours = float(info.get("interval_hours") or 1.0)
                     job = scheduler.add_job(
                         _job_recurring,

@@ -1206,10 +1206,10 @@ export function ChatTab({
                   cursor: 'pointer',
                   transition: 'all 0.15s ease'
                 }}
-                title="Копировать текст сообщения"
+                title="Copy message text"
               >
                 {copiedFullscreen ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
-                <span>{copiedFullscreen ? 'Скопировано!' : 'Копировать'}</span>
+                <span>{copiedFullscreen ? 'Copied!' : 'Copy'}</span>
               </button>
 
               {/* Close Button */}
@@ -1229,10 +1229,10 @@ export function ChatTab({
                   cursor: 'pointer',
                   transition: 'all 0.15s ease'
                 }}
-                title="Закрыть полноэкранный режим (Esc)"
+                title="Close fullscreen view (Esc)"
               >
                 <XIcon size={16} />
-                <span>Закрыть (Esc)</span>
+                <span>Close (Esc)</span>
               </button>
             </div>
           </div>

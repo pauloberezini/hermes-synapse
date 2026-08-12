@@ -298,7 +298,7 @@ export function SubagentsTab({
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', height: 'calc(100% - 60px)', flex: 1, minHeight: 0 }} className="subagents-layout">
+      <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, minWidth: 0, width: '100%' }} className="subagents-layout">
         {/* Sidebar */}
         <div style={{ width: '260px', display: 'flex', flexDirection: 'column', gap: '10px', borderRight: '1px solid rgba(255,255,255,0.05)', paddingRight: '15px', flexShrink: 0 }}>
           <button
@@ -405,9 +405,9 @@ export function SubagentsTab({
         </div>
 
         {/* Dynamic Content Pane */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, width: 0 }}>
           {currentChatId === '__create__' ? (
-            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }} className="glass-panel">
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, minHeight: 0, overflowY: 'auto' }} className="glass-panel">
               <div>
                 <h3 style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 600, marginBottom: '4px' }} className="glow-text-cyan">CREATE NEW SUB-AGENT</h3>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Configure a specialized virtual assistant to solve your tasks</p>
@@ -456,7 +456,7 @@ export function SubagentsTab({
               </form>
             </div>
           ) : currentChatId === '__edit__' ? (
-            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }} className="glass-panel">
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, minHeight: 0, overflowY: 'auto' }} className="glass-panel">
               <div>
                 <h3 style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 600, marginBottom: '4px' }} className="glow-text-cyan">EDIT SUB-AGENT SETTINGS</h3>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Modify configuration for sub-agent <strong>{editingAgentId}</strong></p>
@@ -512,89 +512,89 @@ export function SubagentsTab({
             </div>
           ) : (
             /* Chat Pane */
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
-              <div style={{ ...styles.chatArea, flex: 1, marginBottom: '15px' }} className="glass-panel">
-                <div style={styles.chatScroller}>
-                  {messages.map((msg, index) => (
-                    <div key={index} style={{ ...styles.msgBubbleWrapper, justifyContent: msg.role === 'user' ? 'flex-end' : (msg.role === 'system' ? 'center' : 'flex-start') }}>
-                      {msg.role === 'system' ? (
-                        <div style={styles.systemMsg}>{msg.content}</div>
-                      ) : (
-                        <div style={{ ...styles.msgBubble, backgroundColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.12)' : 'rgba(0, 240, 255, 0.05)', borderColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.3)' : 'rgba(0, 240, 255, 0.2)', alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                          <div style={styles.msgHeader}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={msg.role === 'user' ? styles.userLabel : styles.assistantLabel}>
-                                {msg.role === 'user' ? 'CREATOR' : (currentChatId === 'dashboard' ? 'JARVIS' : (subagents.find(a => a.id === currentChatId)?.name.toUpperCase() || 'SUB-AGENT'))}
+            <div style={{ ...styles.chatArea, flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }} className="glass-panel">
+              <div style={styles.chatScroller}>
+                {messages.map((msg, index) => (
+                  <div key={index} style={{ ...styles.msgBubbleWrapper, justifyContent: msg.role === 'user' ? 'flex-end' : (msg.role === 'system' ? 'center' : 'flex-start') }}>
+                    {msg.role === 'system' ? (
+                      <div style={styles.systemMsg}>{msg.content}</div>
+                    ) : (
+                      <div style={{ ...styles.msgBubble, backgroundColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.12)' : 'rgba(0, 240, 255, 0.05)', borderColor: msg.role === 'user' ? 'rgba(255, 159, 0, 0.3)' : 'rgba(0, 240, 255, 0.2)', alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                        <div style={styles.msgHeader}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={msg.role === 'user' ? styles.userLabel : styles.assistantLabel}>
+                              {msg.role === 'user' ? 'CREATOR' : (currentChatId === 'dashboard' ? 'JARVIS' : (subagents.find(a => a.id === currentChatId)?.name.toUpperCase() || 'SUB-AGENT'))}
+                            </span>
+                            {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--success)', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1px 5px', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.5px' }}>
+                                ${msg.cost_usd.toFixed(5)}
                               </span>
-                              {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--success)', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1px 5px', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.5px' }}>
-                                  ${msg.cost_usd.toFixed(5)}
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              {msg.role === 'assistant' && (
-                                <button onClick={() => speakText(msg.content, index)} title={playingMsgIndex === index ? 'Stop' : 'Play voice'}
-                                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '4px', color: playingMsgIndex === index ? '#ff9f00' : 'rgba(0, 240, 255, 0.45)', display: 'flex', alignItems: 'center', transition: 'color 0.2s, transform 0.15s', transform: playingMsgIndex === index ? 'scale(1.15)' : 'scale(1)' }}>
-                                  {playingMsgIndex === index ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
-                                </button>
-                              )}
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', opacity: 0.85, letterSpacing: '0.3px' }}>
-                                {formatMessageTimestamp(msg.timestamp || msg.created_at)}
-                              </span>
-                            </div>
+                            )}
                           </div>
-                          <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {msg.role === 'assistant' && (
+                              <button onClick={() => speakText(msg.content, index)} title={playingMsgIndex === index ? 'Stop' : 'Play voice'}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '4px', color: playingMsgIndex === index ? '#ff9f00' : 'rgba(0, 240, 255, 0.45)', display: 'flex', alignItems: 'center', transition: 'color 0.2s, transform 0.15s', transform: playingMsgIndex === index ? 'scale(1.15)' : 'scale(1)' }}>
+                                {playingMsgIndex === index ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
+                              </button>
+                            )}
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', opacity: 0.85, letterSpacing: '0.3px' }}>
+                              {formatMessageTimestamp(msg.timestamp || msg.created_at)}
+                            </span>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        <div style={styles.msgText}>{renderMarkdown(msg.content)}</div>
+                      </div>
+                    )}
+                  </div>
+                ))}
 
-                  {isGenerating && (
-                    <div className="hud-container">
-                      <div className="hud-scanner">
-                        <div className="hud-ring-outer" />
-                        <div className="hud-ring-inner" />
-                        <div className="hud-core" />
-                      </div>
-                      <div className="hud-telemetry">
-                        <span className="hud-title">COGNITIVE COMPILING...</span>
-                        <span className="hud-status">ENGAGING NEURAL ORCHESTRATION GRAPH [MODEL: {
-                          currentChatId === 'dashboard'
-                            ? (config?.model?.split('/').pop() || 'GEMINI')
-                            : (subagents.find(a => a.id === currentChatId)?.model.split('/').pop() || 'GEMINI')
-                        }]</span>
-                        <div className="hud-bar-wrapper"><div className="hud-bar-fill" /></div>
-                      </div>
+                {isGenerating && (
+                  <div className="hud-container">
+                    <div className="hud-scanner">
+                      <div className="hud-ring-outer" />
+                      <div className="hud-ring-inner" />
+                      <div className="hud-core" />
                     </div>
-                  )}
-                  <div ref={subagentChatEndRef} />
-                </div>
+                    <div className="hud-telemetry">
+                      <span className="hud-title">COGNITIVE COMPILING...</span>
+                      <span className="hud-status">ENGAGING NEURAL ORCHESTRATION GRAPH [MODEL: {
+                        currentChatId === 'dashboard'
+                          ? (config?.model?.split('/').pop() || 'GEMINI')
+                          : (subagents.find(a => a.id === currentChatId)?.model.split('/').pop() || 'GEMINI')
+                      }]</span>
+                      <div className="hud-bar-wrapper"><div className="hud-bar-fill" /></div>
+                    </div>
+                  </div>
+                )}
+                <div ref={subagentChatEndRef} />
               </div>
 
-              <form onSubmit={handleSendMessage} style={styles.chatInputRow}>
-                <textarea
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
-                  placeholder={`Request for assistant "${currentChatId === 'dashboard' ? 'Jarvis' : (subagents.find(a => a.id === currentChatId)?.name || 'Sub-agent')}"...`}
-                  style={styles.chatInput}
-                  className="form-input"
-                  disabled={!isConnected}
-                  rows={1}
-                />
-                {isSpeaking && (
-                  <button type="button" onClick={() => { window.speechSynthesis?.cancel(); setIsSpeaking(false); setPlayingMsgIndex(null); }}
-                    className="btn-primary" style={{ border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
-                    <Square size={14} fill="currentColor" />
-                    <span>Interrupt speech</span>
+              <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', background: 'rgba(6, 9, 19, 0.4)' }}>
+                <form onSubmit={handleSendMessage} style={styles.chatInputRow}>
+                  <textarea
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
+                    placeholder={`Request for assistant "${currentChatId === 'dashboard' ? 'Jarvis' : (subagents.find(a => a.id === currentChatId)?.name || 'Sub-agent')}"...`}
+                    style={styles.chatInput}
+                    className="form-input"
+                    disabled={!isConnected}
+                    rows={1}
+                  />
+                  {isSpeaking && (
+                    <button type="button" onClick={() => { window.speechSynthesis?.cancel(); setIsSpeaking(false); setPlayingMsgIndex(null); }}
+                      className="btn-primary" style={{ border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
+                      <Square size={14} fill="currentColor" />
+                      <span>Interrupt speech</span>
+                    </button>
+                  )}
+                  <button type="submit" className="btn-primary" disabled={!isConnected || !inputValue.trim()}>
+                    <Send size={16} />
+                    <span>Send</span>
                   </button>
-                )}
-                <button type="submit" className="btn-primary" disabled={!isConnected || !inputValue.trim()}>
-                  <Send size={16} />
-                  <span>Send</span>
-                </button>
-              </form>
+                </form>
+              </div>
             </div>
           )}
         </div>
