@@ -1343,10 +1343,22 @@ def get_account_balance():
         if isinstance(bal_res, str):
             bal_res = json.loads(bal_res)
         if isinstance(bal_res, dict):
-            eq = float(bal_res.get("equity", bal_res.get("balance", 0)))
-            fm = float(bal_res.get("freeMargin", bal_res.get("free_margin", eq)))
+            eq = 0.0
+            fm = 0.0
+            if "equity" in bal_res or "balance" in bal_res:
+                eq = float(bal_res.get("equity", bal_res.get("balance", 0)))
+                fm = float(bal_res.get("freeMargin", bal_res.get("free_margin", eq)))
+            elif "accounts" in bal_res and isinstance(bal_res["accounts"], list) and len(bal_res["accounts"]) > 0:
+                acc = bal_res["accounts"][0]
+                eq = float(acc.get("totalEquity", acc.get("equity", acc.get("totalMarginBalance", 0))))
+                fm = float(acc.get("totalAvailableBalance", acc.get("freeMargin", acc.get("free_margin", eq))))
+            elif "data" in bal_res and isinstance(bal_res["data"], dict):
+                data_dict = bal_res["data"]
+                eq = float(data_dict.get("equity", data_dict.get("balance", 0)))
+                fm = float(data_dict.get("freeMargin", data_dict.get("free_margin", eq)))
+
             if eq > 0:
-                print(f"✅ Account balance loaded from cTrader API: Equity=${eq:.2f}, FreeMargin=${fm:.2f}")
+                print(f"✅ Account balance loaded from Exchange API: Equity=${eq:.2f}, FreeMargin=${fm:.2f}")
                 return eq, fm
     except Exception as cbe:
         print(f"⚠️ cTrader direct balance fetch error: {cbe}")
