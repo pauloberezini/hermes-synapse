@@ -26,6 +26,35 @@ if not os.path.exists(VENV_PYTHON):
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 TRADER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autonomous_trader.py")
+STATE_FILE = os.path.join(LOG_DIR, "last_session_runs.json")
+
+def _has_run_today(session_name: str, today_str: str) -> bool:
+    if os.path.exists(STATE_FILE):
+        try:
+            import json
+            with open(STATE_FILE, "r") as f:
+                data = json.load(f)
+                return data.get(session_name) == today_str
+        except Exception:
+            pass
+    return False
+
+def _record_run_today(session_name: str, today_str: str):
+    import json
+    data = {}
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data[session_name] = today_str
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 def check_and_run():
@@ -37,11 +66,15 @@ def check_and_run():
         if local_time.weekday() >= 5:
             continue
 
-        # Fire exactly 1 hour after session open
+        # Fire exactly 1 hour after session open (once per day)
         target_hour = cfg["open"] + 1
+        today_str = local_time.strftime("%Y-%m-%d")
         if local_time.hour == target_hour:
+            if _has_run_today(session_name, today_str):
+                continue
             print(f"🎯 **Session Trigger: {session_name}** (open {cfg['open']}:00 → analysis at {target_hour}:00 local) [{il_now()}]")
             print(f"🔄 Checking: {', '.join(SYMBOLS)}")
+            _record_run_today(session_name, today_str)
             run_analysis(session_name)
             return  # Only trigger once per invocation
 

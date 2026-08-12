@@ -1601,12 +1601,13 @@ def run_autonomous_cycle(symbol_key):
         if isinstance(rsi_val, float):
             rsi_val = f"{rsi_val:.1f}"
         atr_val = extra_data.get('atr_d1', 'N/A')
-        msg = f"⏸️ *{symbol_key}* → WAIT\n"
-        if warnings_list:
-            msg += f"⚠️ {warnings_list[0]}\n"
-        msg += f"📊 RSI: {rsi_val} | ATR: {atr_val} | Remizov: {remizov_val:.3f}\n"
-        msg += f"💬 {decision.get('reasoning', '')[:600]}..."
-        send_telegram_msg(msg)
+        if os.environ.get("BCM_TELEGRAM_NOTIFY_WAIT", "false").lower() == "true":
+            msg = f"⏸️ *{symbol_key}* → WAIT\n"
+            if warnings_list:
+                msg += f"⚠️ {warnings_list[0]}\n"
+            msg += f"📊 RSI: {rsi_val} | ATR: {atr_val} | Remizov: {remizov_val:.3f}\n"
+            msg += f"💬 {decision.get('reasoning', '')[:600]}..."
+            send_telegram_msg(msg)
         return report
 
     if final_confidence < 80:

@@ -118,24 +118,27 @@ async def lifespan(app: FastAPI):
     from backend.mcp_client import init_mcp_servers, shutdown_mcp_servers
     await init_mcp_servers()
 
-    # Start BCM Session Scheduler in background (non-blocking)
-    async def _bcm_session_scheduler_task():
-        import sys
-        import subprocess
-        logger.info("BCM Session Scheduler background loop started.")
-        await asyncio.sleep(15)  # Allow FastAPI startup to complete & bind port first
-        while True:
-            try:
-                # Runs the session_scheduler checking rules in a background thread to prevent blocking main event loop
-                await asyncio.to_thread(
-                    subprocess.run,
-                    [sys.executable, "/app/backend/bcm/session_scheduler.py"],
-                    capture_output=True
-                )
-            except Exception as e:
-                logger.error(f"Error in BCM session scheduler task: {e}")
-            await asyncio.sleep(60)
-    asyncio.create_task(_bcm_session_scheduler_task())
+    # Start BCM Session Scheduler in background (non-blocking, opt-in via ENABLE_BCM_AUTO_TRADER)
+    if os.environ.get("ENABLE_BCM_AUTO_TRADER", "false").lower() == "true":
+        async def _bcm_session_scheduler_task():
+            import sys
+            import subprocess
+            logger.info("BCM Session Scheduler background loop started.")
+            await asyncio.sleep(15)  # Allow FastAPI startup to complete & bind port first
+            while True:
+                try:
+                    # Runs the session_scheduler checking rules in a background thread to prevent blocking main event loop
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        [sys.executable, "/app/backend/bcm/session_scheduler.py"],
+                        capture_output=True
+                    )
+                except Exception as e:
+                    logger.error(f"Error in BCM session scheduler task: {e}")
+                await asyncio.sleep(60)
+        asyncio.create_task(_bcm_session_scheduler_task())
+    else:
+        logger.info("BCM Session Scheduler is disabled (set ENABLE_BCM_AUTO_TRADER=true in .env to enable).")
 
     # Start background APScheduler & self-improving skill distillation loop
     try:
