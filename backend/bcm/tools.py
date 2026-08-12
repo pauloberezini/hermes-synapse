@@ -739,3 +739,31 @@ def handle_ctrader_place_order(args: dict) -> dict:
 def handle_ctrader_close_position(args: dict) -> dict:
     """Compatibility alias → handle_exchange_emergency_close_all."""
     return handle_exchange_emergency_close_all(args)
+
+
+def format_live_positions_guardrail(pos_data: dict) -> str:
+    """Format live cTrader/exchange positions into a strict prompt guardrail string."""
+    if not pos_data or "error" in pos_data or not isinstance(pos_data, dict):
+        return "\n[WARNING: Live account positions unavailable — proceed with caution]\n"
+
+    positions = pos_data.get("positions", [])
+    if not positions:
+        return (
+            "\n--- REAL-TIME CTRADER ACCOUNT POSITIONS ---\n"
+            "ACTIVE POSITIONS: NONE (0 open trades)\n"
+            "CRITICAL MANDATE: No positions are currently open. Do NOT assume or hallucinate open trades.\n"
+            "-------------------------------------------\n"
+        )
+
+    lines = ["--- REAL-TIME CTRADER ACCOUNT POSITIONS ---"]
+    for p in positions:
+        sym = p.get("symbol", "UNKNOWN")
+        side = p.get("side", "BUY")
+        vol = p.get("volume", p.get("qty", 0))
+        entry = p.get("entry_price", p.get("price", 0))
+        pnl = p.get("unrealized_pnl", p.get("pnl", 0))
+        lines.append(f"• {side} {vol} {sym} @ {entry} (Unrealized PnL: ${pnl:+.2f})")
+    lines.append("CRITICAL MANDATE: Only evaluate the positions listed above.")
+    lines.append("-------------------------------------------")
+    return "\n" + "\n".join(lines) + "\n"
+

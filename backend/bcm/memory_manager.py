@@ -25,13 +25,20 @@ COLLECTION_NAME = "bcm_market_memory"
 class BCMMemory:
     def __init__(self):
         self.init_db()
-        try:
-            os.makedirs(QDRANT_STORAGE_PATH, exist_ok=True)
-            self.qclient = QdrantClient(path=QDRANT_STORAGE_PATH)
-            self.init_qdrant()
-        except Exception as e:
-            print(f"⚠️ Memory Error (Qdrant local): {e}")
-            self.qclient = None
+        self.qclient = None
+        if HAS_QDRANT:
+            try:
+                q_host = os.getenv("QDRANT_HOST")
+                if q_host:
+                    q_port = int(os.getenv("QDRANT_PORT", "6333"))
+                    self.qclient = QdrantClient(host=q_host, port=q_port)
+                else:
+                    os.makedirs(QDRANT_STORAGE_PATH, exist_ok=True)
+                    self.qclient = QdrantClient(path=QDRANT_STORAGE_PATH)
+                self.init_qdrant()
+            except Exception as e:
+                print(f"⚠️ Memory Warning (Qdrant initialization): {e}")
+                self.qclient = None
 
     def init_db(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
