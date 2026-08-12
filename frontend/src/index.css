@@ -23,7 +23,12 @@
   --glow-blue: 0 0 15px rgba(30, 144, 255, 0.4);
   --glow-cyan-strong: 0 0 25px rgba(0, 240, 255, 0.7);
   
-  --glass-border: 1px solid rgba(0, 240, 255, 0.08);
+  --glass-bg-surface: rgba(16, 22, 42, 0.65);
+  --glass-bg-sidebar: rgba(6, 9, 19, 0.85);
+  --glass-blur: 16px;
+  --glass-border-color: rgba(0, 240, 255, 0.08);
+  --glass-border-hover: rgba(0, 240, 255, 0.15);
+  --glass-border: 1px solid var(--glass-border-color);
   --glass-border-focus: 1px solid rgba(0, 240, 255, 0.3);
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
   
@@ -78,17 +83,254 @@ body {
 
 /* Glass Card styling */
 .glass-panel {
-  background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--glass-bg-surface);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   border: var(--glass-border);
   box-shadow: var(--glass-shadow);
   border-radius: 12px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .glass-panel:hover {
-  border-color: rgba(0, 240, 255, 0.15);
+  border-color: var(--glass-border-hover);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-panel {
+    background: #0c1122;
+  }
+}
+
+/* ==========================================
+   Hover-Expandable Sidebar
+   ========================================== */
+
+/* ------ Icon bar baseline ------ */
+aside.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 68px;
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 200;
+
+  /* Glass */
+  background: var(--glass-bg-sidebar);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-right: var(--glass-border);
+
+  /* Expansion transition */
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.28s ease;
+  will-change: width;
+}
+
+/* ------ Expanded state (hover or .sidebar-expanded class) ------ */
+aside.sidebar:hover,
+aside.sidebar.sidebar-expanded {
+  width: 300px;
+  box-shadow: 4px 0 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 240, 255, 0.07);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  aside.sidebar { background: #060913; }
+}
+
+/* ------ Labels: hidden by default, fade in on expand ------ */
+.sidebar-label {
+  opacity: 0;
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: opacity 0.18s ease 0.05s, max-width 0.25s cubic-bezier(0.4,0,0.2,1);
+  pointer-events: none;
+}
+
+aside.sidebar:hover .sidebar-label,
+aside.sidebar.sidebar-expanded .sidebar-label {
+  opacity: 1;
+  max-width: 220px;
+  pointer-events: auto;
+}
+
+/* ------ Logo row ------ */
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px 0 22px;
+  margin-bottom: 4px;
+  min-height: 36px;
+}
+
+.sidebar-logo-text {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+}
+
+.sidebar-version {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  letter-spacing: 0.8px;
+  padding-left: 22px;
+  margin-bottom: 24px;
+}
+
+/* ------ Navigation ------ */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 8px;
+  scrollbar-width: none;
+}
+.sidebar-nav::-webkit-scrollbar { display: none; }
+
+.sidebar-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  position: relative;
+  min-width: 0;
+}
+
+.sidebar-nav-btn:hover {
+  background: rgba(0, 240, 255, 0.05);
+  border-color: rgba(0, 240, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.sidebar-nav-btn.active {
+  background: rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.25);
+  color: var(--accent-cyan);
+}
+
+/* sub-items indent */
+.sidebar-nav-btn.sub {
+  padding: 8px 14px;
+  font-size: 0.82rem;
+}
+
+/* Icon stays centered when collapsed */
+.sidebar-icon {
+  flex-shrink: 0;
+}
+
+/* Submenu */
+.sidebar-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+  overflow: hidden;
+}
+
+/* Settings chevron */
+.sidebar-chevron {
+  font-size: 1.1rem;
+  line-height: 1;
+  display: inline-block;
+  transition: transform 0.2s ease, opacity 0.15s ease;
+}
+.sidebar-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* Beta badge */
+.sidebar-badge-beta {
+  font-size: 0.58rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(234, 179, 8, 0.18);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  color: #eab308;
+  flex-shrink: 0;
+}
+
+/* ------ Status box ------ */
+.sidebar-status-box {
+  padding: 10px 8px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebar-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  min-height: 28px;
+  cursor: default;
+  transition: background 0.15s ease;
+}
+
+.sidebar-status-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sidebar-status-text {
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.3px;
+  line-height: 1;
+}
+
+.sidebar-logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 8px;
+  margin-top: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+  min-height: 28px;
+}
+
+.sidebar-logout-btn:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.06);
 }
 
 /* Hologram scanline effect */
@@ -331,28 +573,29 @@ body {
     display: block !important;
   }
   
-  /* Collapsible Left Sidebar (overrides JS style object using !important) */
+  /* On mobile: sidebar hides off-screen by default, slides in when .sidebar-open */
   aside.sidebar {
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
-    bottom: 0 !important;
-    width: 280px !important;
-    height: 100vh !important;
-    transform: translate3d(-100%, 0, 0) !important;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    z-index: 1000 !important;
-    border-radius: 0px 16px 16px 0px !important;
+    width: 280px;
+    transform: translate3d(-100%, 0, 0);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s ease;
   }
   
-  aside.sidebar-open {
-    transform: translate3d(0, 0, 0) !important;
-    box-shadow: 0 0 30px rgba(0, 0, 0, 0.7) !important;
+  /* Expand labels on mobile when .sidebar-open */
+  aside.sidebar.sidebar-open .sidebar-label {
+    opacity: 1;
+    max-width: 220px;
+    pointer-events: auto;
+  }
+
+  aside.sidebar.sidebar-open {
+    transform: translate3d(0, 0, 0);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.75);
   }
   
-  /* Main workspace padding adjustment to prevent content from being covered by floating toggle */
+  /* Main workspace: no left margin on mobile (sidebar is overlay) */
   main {
-    padding: 64px 16px 16px 16px !important;
+    margin-left: 0 !important;
+    padding: 64px 16px 16px 16px;
   }
   
   /* Chat tab sessions list/chat split view layout */
@@ -1574,6 +1817,7 @@ main.vexa-main {
   margin-right: 5px;
 }
 
+.status-dot-pulse.running,
 .status-dot-pulse.recurring {
   background-color: #10b981;
   box-shadow: 0 0 8px #10b981;

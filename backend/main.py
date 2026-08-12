@@ -43,13 +43,14 @@ class SubagentPositionsUpdate(BaseModel):
     positions: List[SubagentPosition]
 
 class ScheduledTaskCreate(BaseModel):
-    type: str  # "one-shot" | "alarm" | "recurring"
+    type: str  # "one-shot" | "alarm" | "recurring" | "cron"
     label: str
     agent_id: str
     prompt: str
     duration_seconds: Optional[int] = None
     time_str: Optional[str] = None
     interval_hours: Optional[float] = None
+    cron_expr: Optional[str] = None
 
 # Configure logging
 logging.basicConfig(
@@ -486,7 +487,7 @@ async def cancel_reminder_api(reminder_id: str):
 
 @app.post("/api/timers")
 async def create_timer_api(task: ScheduledTaskCreate):
-    from backend.scheduler import add_timer, add_alarm, add_recurring_reminder
+    from backend.scheduler import add_timer, add_alarm, add_recurring_reminder, add_cron_reminder
     chat_id = "dashboard"
     try:
         if task.type == "one-shot":
@@ -504,6 +505,11 @@ async def create_timer_api(task: ScheduledTaskCreate):
                 raise ValueError("interval_hours is required for recurring timer")
             reminder_id = add_recurring_reminder(task.label, task.interval_hours, chat_id, task.agent_id, task.prompt)
             return {"status": "success", "id": reminder_id}
+        elif task.type == "cron":
+            if not task.cron_expr:
+                raise ValueError("cron_expr is required for cron task")
+            cron_id = add_cron_reminder(task.label, task.cron_expr, chat_id, task.agent_id, task.prompt)
+            return {"status": "success", "id": cron_id}
         else:
             return JSONResponse(status_code=400, content={"status": "failed", "error": f"Invalid type: {task.type}"})
     except Exception as e:
@@ -530,6 +536,7 @@ async def update_timer_api(timer_id: str, task: ScheduledTaskCreate):
             duration_seconds=task.duration_seconds,
             time_str=task.time_str,
             interval_hours=task.interval_hours,
+            cron_expr=task.cron_expr,
         )
         if ok:
             return {"status": "success", "id": timer_id}

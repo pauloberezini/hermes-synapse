@@ -257,3 +257,51 @@ async def test_scheduled_session_creation_and_history():
         user_msgs = [c for c in broadcast_calls if c.get("type") == "chat_message" and c.get("role") == "user"]
         assert len(user_msgs) > 0
         assert user_msgs[0]["chat_id"] == session_id
+
+
+@pytest.mark.asyncio
+async def test_cron_reminder_valid_and_invalid():
+    # 1. Valid cron expression (every 15 min)
+    cron_id = scheduler.add_cron_reminder("Crypto Report", "*/15 * * * *", "123", agent_id="jarvis", prompt="Fetch crypto prices")
+    timers = scheduler.get_all_timers()
+    target = next((t for t in timers if t["id"] == cron_id), None)
+    assert target is not None
+    assert target["type"] == "cron"
+    assert target["cron_expr"] == "*/15 * * * *"
+    assert target["status"] == "running"
+
+    # 2. Invalid cron expression raises ValueError
+    with pytest.raises(ValueError):
+        scheduler.add_cron_reminder("Invalid Cron Task", "invalid cron string", "123")
+
+
+@pytest.mark.asyncio
+async def test_cron_reminder_update_and_restore():
+    cron_id = scheduler.add_cron_reminder("Morning Scan", "0 9 * * *", "123", agent_id="jarvis", prompt="Scan news")
+    
+    # Update task to a different cron schedule
+    ok = scheduler.update_timer(
+        item_id=cron_id,
+        label="Updated Scan",
+        task_type="cron",
+        agent_id="jarvis",
+        prompt="Scan news updated",
+        cron_expr="0 10 * * 1-5"
+    )
+    assert ok is True
+
+    timers = scheduler.get_all_timers()
+    updated = next((t for t in timers if t["id"] == cron_id), None)
+    assert updated is not None
+    assert updated["label"] == "Updated Scan"
+    assert updated["cron_expr"] == "0 10 * * 1-5"
+
+    # Test restoration after clearing memory
+    scheduler._timer_meta.clear()
+    scheduler.restore_state()
+    timers_restored = scheduler.get_all_timers()
+    restored = next((t for t in timers_restored if t["id"] == cron_id), None)
+    assert restored is not None
+    assert restored["type"] == "cron"
+    assert restored["cron_expr"] == "0 10 * * 1-5"
+
