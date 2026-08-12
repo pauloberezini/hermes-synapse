@@ -187,6 +187,51 @@ def test_cross_rss_deduplication_and_polling(auth_client):
     assert len(db_get_rss_items(node_id)) == 0
 
 
+def test_agent_rss_tool_schema_and_fallback_execution():
+    """
+    Cross-Component Integration Test 3:
+    Verifies that 'read_rss_node_feed' skill is correctly exposed to agents
+    and executing read_rss_node_feed without node_id returns all active RSS nodes.
+    """
+    from backend.agent import JarvisAgent
+    from backend.database import save_subagent, db_create_rss_node, db_save_rss_items, db_delete_rss_node
+
+    node_id = "cross_rss_fallback_node"
+    agent_id = "cross_agent_rss_listener"
+
+    # Save subagent with read_rss_node_feed skill
+    save_subagent(
+        id=agent_id,
+        name="RSS Listener Agent",
+        system_prompt="Listen to news.",
+        model="google/gemini-2.5-flash",
+        skills="read_rss_node_feed"
+    )
+
+    db_create_rss_node(
+        id=node_id,
+        name="Global News Feed",
+        feed_urls="https://example.com/feed.xml",
+        is_active=1
+    )
+
+    db_save_rss_items(node_id, [{
+        "guid": "fallback_item_1",
+        "title": "Global Innovation Summary 2026",
+        "link": "https://example.com/news/1",
+        "summary": "Latest breakthrough in multi-agent AI ecosystems.",
+        "published_at": "Sat, 08 Aug 2026 14:00:00 GMT"
+    }])
+
+    # Verify that tool execution without node_id automatically fetches active nodes
+    output = execute_tool("read_rss_node_feed", {})
+    assert "Global Innovation Summary 2026" in output
+    assert "Global News Feed" in output
+
+    # Cleanup
+    db_delete_rss_node(node_id)
+
+
 if __name__ == "__main__":
     print("Running test_cross_rss_full_workflow()...")
     c = TestClient(app)

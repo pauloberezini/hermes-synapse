@@ -321,10 +321,10 @@ def set_recurring_reminder(label: str, interval_hours: float, chat_id: str, agen
 def _get_calendar_service():
     """Build an authorized Google Calendar API service object."""
     token_path = os.path.join(os.path.dirname(__file__), "data", "google_token.json")
-    creds_path = os.path.join(os.path.dirname(__file__), "data", "google_credentials.json")
+    creds_path = os.getenv("GOOGLE_CLIENT_SECRET_PATH", os.path.join(os.path.dirname(__file__), "data", "google_credentials.json"))
 
     if not os.path.exists(creds_path):
-        return None, "google_credentials.json не найден. Запустите python backend/google_auth.py"
+        return None, "google_credentials.json не найден. Запустите python backend/google_auth.py или задайте GOOGLE_CLIENT_SECRET_PATH"
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
@@ -846,14 +846,14 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "read_rss_node_feed",
-            "description": "Считывает новости из автономной RSS-ноды, подключенной в архитектуре. Возвращает отфильтрованный список публикаций согласно настройкам ноды.",
+            "description": "Считывает новости из автономных RSS-нод, подключенных в архитектуре. Если node_id не указан, возвращает последние новости из всех активных RSS-нод.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (например, 'habr_tech_rss')"},
-                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опционально, переопределяет дефолтный лимит ноды)"}
+                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (опционально, например 'rss_node_123' или 'all')"},
+                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опционально)"}
                 },
-                "required": ["node_id"]
+                "required": []
             }
         }
     },
@@ -1269,10 +1269,40 @@ def get_rss_digest(feed_source: str = "Habr", limit: int = 5) -> str:
         return _run_async(_fetch())
     except Exception as e:
         return f"Ошибка при получении RSS: {e}"
-def read_rss_node_feed(node_id: str, limit: Optional[int] = None) -> str:
-    """Reads configured RSS feed news entries from an autonomous RSS node in the database."""
+
+
+def read_rss_node_feed(node_id: Optional[str] = None, limit: Optional[int] = None) -> str:
+    """Reads configured RSS feed news entries from autonomous RSS nodes in the database."""
     try:
         from backend.rss_service import get_rss_node_output
+        from backend.database import db_get_all_rss_nodes
+
+        if not node_id or node_id.strip() == "" or node_id == "all":
+            all_nodes = db_get_all_rss_nodes()
+            active_nodes = [n for n in all_nodes if n.get("is_active")]
+            if not active_nodes:
+                return "В системе пока нет активных RSS-нод."
+
+            all_outputs = []
+            for n in active_nodes:
+                res = get_rss_node_output(n["id"], override_limit=limit)
+                items = res.get("items", [])
+                if items:
+                    lines = [f"### RSS Нода: {res.get('name')} (ID: {n['id']})"]
+                    for idx, item in enumerate(items, 1):
+                        title = item.get("title", "Untitled")
+                        link = item.get("link", "")
+                        summary = item.get("summary", "")
+                        if len(summary) > 200:
+                            summary = summary[:200] + "..."
+                        lines.append(f"{idx}. **{title}**\n   {summary}\n   🔗 {link}")
+                    all_outputs.append("\n\n".join(lines))
+
+            if not all_outputs:
+                return "Активные RSS-ноды пока не накопили сохраненных записей."
+
+            return "## Сводка активных RSS-нод:\n\n" + "\n\n---\n\n".join(all_outputs)
+
         res = get_rss_node_output(node_id, override_limit=limit)
         if res.get("status") == "error":
             return json.dumps(res, ensure_ascii=False)
@@ -1631,7 +1661,7 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
 
     elif name == "read_rss_node_feed":
         return read_rss_node_feed(
-            node_id=arguments.get("node_id", ""),
+            node_id=arguments.get("node_id"),
             limit=arguments.get("limit")
         )
 

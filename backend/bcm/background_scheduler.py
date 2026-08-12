@@ -12,7 +12,7 @@ Layer 3: Parallel Workers (Asyncio background dispatch of autonomous_trader acro
 """
 
 # Path to the scheduler script
-SCHEDULER_SCRIPT = "/home/node/.openclaw/workspace/skills/pepperstone-trader/scripts/session_scheduler.py"
+SCHEDULER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_scheduler.py")
 
 def run_loop():
     print(f"[{datetime.now()}] 🛡️ Pepperstone Session Scheduler Service Started.")

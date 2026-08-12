@@ -871,27 +871,27 @@ async def _trigger_agent_task(
         if agent_id == "bcm_orchestrator":
             try:
                 from backend.bcm.tools import (
-                    handle_ctrader_get_positions,
-                    handle_ctrader_get_spot_prices,
+                    handle_exchange_get_positions,
+                    handle_exchange_get_spot_prices,
                     format_live_positions_guardrail,
                 )
                 pos_data = await asyncio.get_event_loop().run_in_executor(
-                    None, handle_ctrader_get_positions, {}
+                    None, handle_exchange_get_positions, {}
                 )
                 guardrail = format_live_positions_guardrail(pos_data)
 
                 # Also fetch live spot prices for the core watchlist
                 spot_data = await asyncio.get_event_loop().run_in_executor(
-                    None, handle_ctrader_get_spot_prices, {"symbol_ids": [10028, 10053, 10054, 10013, 10001, 2, 1]}
+                    None, handle_exchange_get_spot_prices, {"symbols": ["BTCUSD", "ETHUSD", "BRENT", "XAUUSD", "US500", "GBPUSD", "EURUSD"]}
                 )
                 if isinstance(spot_data, dict) and spot_data.get("prices"):
                     price_lines = []
                     for p in spot_data["prices"]:
                         price_lines.append(
-                            f"  {p['name']} (ID {p['symbolId']}): bid={p['bid']}, ask={p['ask']}, mid={p['mid']}"
+                            f"  {p['name']} (ID {p.get('symbolId', 'N/A')}): bid={p.get('bid', 'N/A')}, ask={p.get('ask', 'N/A')}, mid={p.get('mid', 'N/A')}"
                         )
                     guardrail += (
-                        "\n[LIVE PEPPERSTONE SPOT PRICES — AUTHORITATIVE]\n"
+                        "\n[LIVE EXCHANGE SPOT PRICES — AUTHORITATIVE]\n"
                         + "\n".join(price_lines)
                         + "\nUse these as the ONLY source for current market prices.\n\n"
                     )

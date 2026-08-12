@@ -74,7 +74,7 @@ export function NetworkTab({
   const [draggingNode, setDraggingNode] = useState<{
     mouseStartX: number;
     mouseStartY: number;
-    nodes: Array<{ id: string; isSkill: boolean; x: number; y: number }>;
+    nodes: Array<{ id: string; isSkill: boolean; isRss?: boolean; x: number; y: number }>;
   } | null>(null);
 
   // Skill Positions state (saves/loads from localStorage for persistence)
@@ -411,14 +411,19 @@ export function NetworkTab({
       const mouseCanvasX = (e.clientX - rect.left - panOffset.x) / zoom;
       const mouseCanvasY = (e.clientY - rect.top - panOffset.y) / zoom;
 
-      let dragNodes: Array<{ id: string; isSkill: boolean; x: number; y: number }> = [];
+      let dragNodes: Array<{ id: string; isSkill: boolean; isRss?: boolean; x: number; y: number }> = [];
       if (isSkill) {
         const skIndex = SKILLS_LIST.findIndex(s => s.id === nodeId);
         const pos = skillPositions[nodeId] || { x: 1050, y: 50 + skIndex * 120 };
-        dragNodes = [{ id: nodeId, isSkill: true, x: pos.x, y: pos.y }];
+        dragNodes = [{ id: nodeId, isSkill: true, isRss: false, x: pos.x, y: pos.y }];
       } else {
-        const node = subagents.find(n => n.id === nodeId) || { x: 100, y: 100 };
-        dragNodes = [{ id: nodeId, isSkill: false, x: node.x || 100, y: node.y || 100 }];
+        const rssNode = rssNodes.find(n => n.id === nodeId);
+        if (rssNode) {
+          dragNodes = [{ id: nodeId, isSkill: false, isRss: true, x: rssNode.x || 300, y: rssNode.y || 200 }];
+        } else {
+          const node = subagents.find(n => n.id === nodeId) || { x: 100, y: 100 };
+          dragNodes = [{ id: nodeId, isSkill: false, isRss: false, x: node.x || 100, y: node.y || 100 }];
+        }
       }
 
       setDraggingNode({
@@ -456,7 +461,18 @@ export function NetworkTab({
         });
       }
 
-      const subagentsToUpdate = draggingNode.nodes.filter(n => !n.isSkill);
+      const rssToUpdate = draggingNode.nodes.filter(n => n.isRss);
+      if (rssToUpdate.length > 0) {
+        setRssNodes(prev => prev.map(n => {
+          const match = rssToUpdate.find(dn => dn.id === n.id);
+          if (match) {
+            return { ...n, x: Math.round(match.x + dx), y: Math.round(match.y + dy) };
+          }
+          return n;
+        }));
+      }
+
+      const subagentsToUpdate = draggingNode.nodes.filter(n => !n.isSkill && !n.isRss);
       if (subagentsToUpdate.length > 0) {
         setSubagents(subagents.map(n => {
           const match = subagentsToUpdate.find(dn => dn.id === n.id);
@@ -499,7 +515,7 @@ export function NetworkTab({
 
     if (draggingNode) {
       const subagentNodesToSave = subagents.filter(n => 
-        draggingNode.nodes.some(dn => dn.id === n.id && !dn.isSkill)
+        draggingNode.nodes.some(dn => dn.id === n.id && !dn.isSkill && !dn.isRss)
       );
       if (subagentNodesToSave.length > 0) {
         try {
@@ -514,6 +530,24 @@ export function NetworkTab({
           console.error('Error saving node positions:', err);
         }
       }
+
+      const rssNodesToSave = rssNodes.filter(n =>
+        draggingNode.nodes.some(dn => dn.id === n.id && dn.isRss)
+      );
+      if (rssNodesToSave.length > 0) {
+        try {
+          await fetch('/api/rss/nodes/positions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              positions: rssNodesToSave.map(node => ({ id: node.id, x: node.x, y: node.y }))
+            })
+          });
+        } catch (err) {
+          console.error('Error saving RSS node positions:', err);
+        }
+      }
+
       setDraggingNode(null);
     }
   };
@@ -782,6 +816,16 @@ export function NetworkTab({
               <div
                 key={node.id}
                 onMouseDown={(e) => handleMouseDownNode(node.id, e, false)}
+                onMouseUp={() => {
+                  if (connectingFrom && connectingFrom.id !== node.id) {
+                    handleConnectInput(node.id, 'agent');
+                  }
+                }}
+                onClick={() => {
+                  if (connectingFrom && connectingFrom.id !== node.id) {
+                    handleConnectInput(node.id, 'agent');
+                  }
+                }}
                 onDoubleClick={() => isOrchestrator && handleDrillDownOrchestrator(node)}
                 style={{
                   position: 'absolute',
@@ -853,7 +897,9 @@ export function NetworkTab({
                 {/* Ports / Connection Handles */}
                 {/* Input Handle (Left) */}
                 <div
-                  onClick={() => handleConnectInput(node.id, 'agent')}
+                  onClick={(e) => { e.stopPropagation(); handleConnectInput(node.id, 'agent'); }}
+                  onMouseDown={(e) => { e.stopPropagation(); handleConnectInput(node.id, 'agent'); }}
+                  onMouseUp={(e) => { e.stopPropagation(); handleConnectInput(node.id, 'agent'); }}
                   title="Connect Input Handle"
                   style={{
                     position: 'absolute',
@@ -864,13 +910,15 @@ export function NetworkTab({
                     borderRadius: '50%',
                     background: '#38bdf8',
                     border: '2px solid #020617',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    zIndex: 5
                   }}
                 />
 
                 {/* Output Handle (Right) */}
                 <div
                   onClick={(e) => handleConnectOutput(node.id, isOrchestrator ? 'orchestrator' : 'agent', e)}
+                  onMouseDown={(e) => handleConnectOutput(node.id, isOrchestrator ? 'orchestrator' : 'agent', e)}
                   title="Drag Output Handle to Connect"
                   style={{
                     position: 'absolute',
@@ -881,7 +929,8 @@ export function NetworkTab({
                     borderRadius: '50%',
                     background: '#34d399',
                     border: '2px solid #020617',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    zIndex: 5
                   }}
                 />
               </div>
@@ -953,8 +1002,9 @@ export function NetworkTab({
 
                 {/* Output Handle (Right) */}
                 <div
-                  onClick={(e) => handleConnectOutput(node.id, 'rss_node', e)}
-                  title="Drag Output Handle to Connect Agent"
+                  onClick={(e) => { e.stopPropagation(); handleConnectOutput(node.id, 'rss_node', e); }}
+                  onMouseDown={(e) => { e.stopPropagation(); handleConnectOutput(node.id, 'rss_node', e); }}
+                  title="Click or Drag Output Handle to Connect Agent"
                   style={{
                     position: 'absolute',
                     right: '-8px',
@@ -964,7 +1014,8 @@ export function NetworkTab({
                     borderRadius: '50%',
                     background: '#ea580c',
                     border: '2px solid #020617',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    zIndex: 5
                   }}
                 />
               </div>

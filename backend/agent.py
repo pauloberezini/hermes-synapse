@@ -729,9 +729,22 @@ class JarvisAgent:
 
         return response_text
 
+    # Known tool fingerprints: set of required keys → tool name
+    _TOOL_FINGERPRINTS: List[Dict] = [
+        {"required": {"symbol", "side", "qty"}, "optional": {"category", "order_type", "market_unit", "price"}, "name": "bybit_place_order"},
+        {"required": {"symbol", "side", "qty", "category"}, "optional": {"order_type", "market_unit"}, "name": "bybit_place_order"},
+        {"required": {"base_coin"}, "optional": {"exp_date"}, "name": "bybit_get_options_chain"},
+        {"required": {"account_type"}, "optional": {}, "name": "bybit_get_balance"},
+    ]
+
     def _extract_json_tool_calls(self, text: str) -> Optional[List[Dict[str, Any]]]:
-        """Fallback extractor for models that output raw JSON function calls in text content."""
-        if not text or ("function" not in text and "name" not in text):
+        """Fallback extractor for models that output raw JSON function calls in text content.
+        
+        Handles two cases:
+        1. Structured: {"name": "tool_name", "parameters": {...}}
+        2. Raw args: {"symbol":"SOLUSDT","side":"Buy",...} — matched via fingerprint
+        """
+        if not text:
             return None
         import json
 
@@ -760,9 +773,24 @@ class JarvisAgent:
                     if "function" in parsed and isinstance(parsed["function"], dict):
                         fn_name = parsed["function"].get("name")
                         fn_args = parsed["function"].get("parameters") or parsed["function"].get("arguments") or {}
-                    elif "name" in parsed:
+                    elif "name" in parsed and ("parameters" in parsed or "arguments" in parsed):
                         fn_name = parsed.get("name")
                         fn_args = parsed.get("parameters") or parsed.get("arguments") or {}
+                    elif "name" in parsed and isinstance(parsed.get("name"), str) and any(
+                        parsed["name"].startswith(pfx) for pfx in ("bybit_", "ctrader_", "bcm_", "exchange_")
+                    ):
+                        # {"name": "bybit_place_order", "symbol": "SOLUSDT", ...}
+                        fn_name = parsed["name"]
+                        fn_args = {k: v for k, v in parsed.items() if k != "name"}
+                    else:
+                        # Try fingerprint matching for raw argument blobs (no name/function wrapper)
+                        parsed_keys = set(parsed.keys())
+                        for fp in self._TOOL_FINGERPRINTS:
+                            if fp["required"].issubset(parsed_keys):
+                                fn_name = fp["name"]
+                                fn_args = parsed
+                                logger.info(f"Fingerprint matched raw JSON args to tool '{fn_name}': {list(parsed_keys)}")
+                                break
 
                 if fn_name:
                     extracted.append({
@@ -853,6 +881,7 @@ class JarvisAgent:
             "get_market_prices",
             "add_price_alert",
             "get_rss_digest",
+            "read_rss_node_feed",
             "create_subagent",
             "call_subagent",
             "list_subagents",
@@ -884,7 +913,8 @@ class JarvisAgent:
             "google_calendar": ["get_calendar_events", "add_calendar_event"],
             "timers_alarms": ["set_timer", "set_alarm", "cancel_timer_or_alarm"],
             "shell_execution": ["get_system_stats", "execute_command"],
-            "python_sandbox": ["execute_command"]
+            "python_sandbox": ["execute_command"],
+            "read_rss_node_feed": ["read_rss_node_feed"]
         }
 
         skills_str = subagent.get("skills", "")

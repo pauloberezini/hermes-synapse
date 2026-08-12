@@ -168,6 +168,67 @@ class CTraderOpenApiClient:
         if res_msg.payloadType == 2103: # PROTO_OA_ACCOUNT_AUTH_RES
             print("Account Authorization Successful")
             return True
+        elif res_msg.payloadType == 2142: # PROTO_OA_ERROR_RES
+            err = pb2.ProtoOAErrorRes()
+            err.ParseFromString(res_msg.payload)
+            if err.errorCode == "CH_ACCESS_TOKEN_INVALID":
+                print("Access token is invalid. Attempting to refresh...")
+                if await self.refresh_access_token():
+                    req.accessToken = self.access_token
+                    res_msg2 = await self.send_message(2102, req)
+                    if res_msg2.payloadType == 2103:
+                        print("Account Authorization Successful after refresh")
+                        return True
+        return False
+
+    async def refresh_access_token(self):
+        import urllib.request
+        import urllib.parse
+        import json
+        
+        refresh_token = os.getenv("CTRADER_REFRESH_TOKEN", "")
+        if not refresh_token:
+            print("No refresh token available.")
+            return False
+            
+        url = "https://openapi.ctrader.com/apps/token"
+        data = urllib.parse.urlencode({
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': self.client_id,
+            'client_secret': self.client_secret
+        }).encode('utf-8')
+        
+        req = urllib.request.Request(url, data=data)
+        
+        try:
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                
+                new_access = result.get("accessToken", result.get("access_token"))
+                new_refresh = result.get("refreshToken", result.get("refresh_token"))
+                
+                if new_access and new_refresh:
+                    self.access_token = new_access
+                    
+                    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env'))
+                    if os.path.exists(env_path):
+                        with open(env_path, 'r') as f:
+                            lines = f.readlines()
+                        
+                        with open(env_path, 'w') as f:
+                            for line in lines:
+                                if line.startswith("CTRADER_ACCESS_TOKEN="):
+                                    f.write(f"CTRADER_ACCESS_TOKEN={new_access}\n")
+                                elif line.startswith("CTRADER_REFRESH_TOKEN="):
+                                    f.write(f"CTRADER_REFRESH_TOKEN={new_refresh}\n")
+                                else:
+                                    f.write(line)
+                    print("Successfully refreshed and saved tokens.")
+                    return True
+        except Exception as e:
+            print(f"Token refresh failed: {e}")
+            
         return False
 
     async def amend_position_sltp(self, position_id, stop_loss=None, take_profit=None):
@@ -341,13 +402,13 @@ async def run_cli():
     
     if not await client.authorize_app():
         print("Failed app auth.")
-        return
+        sys.exit(1)
     if not client.ctid or not client.access_token:
         print("CTID or Access Token missing in .env")
-        return
+        sys.exit(1)
     if not await client.authorize_account():
         print("Failed account auth.")
-        return
+        sys.exit(1)
         
     action = sys.argv[1]
     
@@ -390,6 +451,7 @@ async def run_cli():
             await client.get_trader_details()
     except Exception as e:
         print(f"Error during execution: {e}")
+        sys.exit(1)
         
     # Wait a bit for execution events to arrive
     await asyncio.sleep(2)

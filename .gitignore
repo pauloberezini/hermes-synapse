@@ -80,6 +80,9 @@ coverage.xml
 backend/data/*.db
 backend/data/*.db-wal
 backend/data/*.db-shm
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
 backend/data/*.corrupt*
 backend/data/*.bak*
 backend/data/*.json

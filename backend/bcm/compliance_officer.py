@@ -16,7 +16,10 @@ except ImportError:
 
 # Hardcoded Fund Mandates (Risk Limits)
 MAX_RISK_PER_TRADE_USD = 500  # Example max risk
-ALLOWED_SYMBOLS = ["BTC", "GBPUSD", "US500", "BRENT", "USOIL"]
+ALLOWED_SYMBOLS = ["BTC", "GBPUSD", "US500", "BRENT", "GOLD", "XAGUSD"]
+ALLOWED_BYBIT_BASE_COINS = ["BTC", "ETH"]  # Bybit options base coins
+BYBIT_OPTIONS_MAX_LOSS_PCT = 0.02  # Max 2% of equity per options trade
+BYBIT_OPTIONS_MAX_LEGS = 2  # Max legs in a single spread
 MAX_VOLUME_MULTIPLIER = 3  # Max allowed volume vs base volume
 
 class ComplianceOfficer:
@@ -63,7 +66,7 @@ class ComplianceOfficer:
         payload = {"model": self.model, "messages": [{"role": "system", "content": f"You are a strict Compliance Officer. Current Time: {current_time}"}, {"role": "user", "content": prompt}]}
         
         try:
-            r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
+            r = requests.post(f"{os.environ.get('LLM_API_BASE', 'https://openrouter.ai/api/v1').rstrip('/')}/chat/completions", headers=headers, json=payload, timeout=30)
             content = r.json()['choices'][0]['message']['content']
             
             # Extract JSON
@@ -94,3 +97,53 @@ class ComplianceOfficer:
             return False, f"LLM Sanity Check Failed: {llm_reason}"
             
         return True, "Compliance Approved."
+
+    def audit_options_trade(
+        self,
+        base_coin: str,
+        strategy: str,
+        max_loss_usd: float,
+        net_credit_usd: float,
+        account_equity: float,
+        num_legs: int = 2,
+        reasoning: str = ""
+    ):
+        """Compliance check specifically for Bybit options/spread trades.
+        
+        Returns:
+            (approved: bool, reason: str)
+        """
+        # 1. Hard limit: base coin must be on approved list
+        if base_coin.upper() not in ALLOWED_BYBIT_BASE_COINS:
+            return False, f"HARD LIMIT: Base coin {base_coin} is not on approved Bybit options list ({ALLOWED_BYBIT_BASE_COINS})."
+
+        # 2. Hard limit: only recognised strategies
+        allowed_strategies = ["put_spread", "call_spread", "iron_condor", "naked_put", "naked_call"]
+        if strategy not in allowed_strategies:
+            return False, f"HARD LIMIT: Strategy '{strategy}' is not recognised. Allowed: {allowed_strategies}."
+
+        # 3. Hard limit: max loss must not exceed 2% of equity
+        if account_equity > 0:
+            max_loss_pct = max_loss_usd / account_equity
+            if max_loss_pct > BYBIT_OPTIONS_MAX_LOSS_PCT:
+                return False, (
+                    f"HARD LIMIT: Max loss ${max_loss_usd:.2f} = {max_loss_pct:.1%} of equity "
+                    f"(${account_equity:,.2f}) exceeds {BYBIT_OPTIONS_MAX_LOSS_PCT:.0%} cap."
+                )
+
+        # 4. Hard limit: sanity check — credit trade must actually receive credit
+        if net_credit_usd < 0:
+            return False, f"HARD LIMIT: Net credit is negative (${net_credit_usd:.2f}). Debit spreads not allowed under this mandate."
+
+        # 5. Hard limit: leg count
+        if num_legs > BYBIT_OPTIONS_MAX_LEGS:
+            return False, f"HARD LIMIT: Trade has {num_legs} legs, max allowed is {BYBIT_OPTIONS_MAX_LEGS}."
+
+        # 6. Naked options: extra check — require explicit approval
+        if strategy in ("naked_put", "naked_call"):
+            return False, "HARD LIMIT: Naked options are prohibited under BCM mandate. Use a spread strategy."
+
+        return True, (
+            f"Compliance Approved. Strategy: {strategy} | Max Loss: ${max_loss_usd:.2f} "
+            f"({max_loss_usd / account_equity:.1%} of equity) | Net Credit: ${net_credit_usd:.2f}."
+        )

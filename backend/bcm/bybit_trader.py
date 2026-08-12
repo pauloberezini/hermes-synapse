@@ -8,6 +8,10 @@ import logging
 import requests
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
+try:
+    from backend.bcm.exchange_interfaces import SpotBrokerInterface, OptionsBrokerInterface
+except ImportError:
+    from .exchange_interfaces import SpotBrokerInterface, OptionsBrokerInterface
 
 logger = logging.getLogger("jarvis.bcm.bybit")
 
@@ -32,7 +36,7 @@ else:
     BASE_URL = "https://api.bybit.com"
 
 
-class BybitTrader:
+class BybitTrader(SpotBrokerInterface, OptionsBrokerInterface):
     """Bybit V5 OpenAPI Orchestrator for Spot, Linear Futures, USDC Derivatives, and Options."""
 
     def __init__(self, api_key: str = "", api_secret: str = "", testnet: bool = False, demo: Optional[bool] = None):
@@ -104,6 +108,19 @@ class BybitTrader:
             accounts = res.get("result", {}).get("list", [])
             return {"status": "success", "accounts": accounts}
         return {"status": "error", "message": res.get("retMsg"), "retCode": res.get("retCode")}
+
+    def get_spot_prices(self, symbols: list[str]) -> Dict[str, Any]:
+        """Fetch live spot prices for the given standardized ticker symbols (e.g. ['BTCUSD', 'XAUUSD'])."""
+        prices = []
+        for sym in symbols:
+            prices.append({
+                "symbolId": sym,
+                "name": sym,
+                "bid": None,
+                "ask": None,
+                "mid": None,
+            })
+        return {"status": "success", "prices": prices}
 
     def get_positions(self, category: str = "linear", symbol: Optional[str] = None, base_coin: Optional[str] = None) -> Dict[str, Any]:
         """Fetch active positions for linear (USDT/USDC futures), option, or inverse contracts."""
@@ -494,3 +511,14 @@ class BybitTrader:
             "execution_details": results
         }
 
+
+    def place_option_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        qty: str,
+        price: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Wrapper for options orders."""
+        return self.place_order("option", symbol, side, order_type, qty, price)

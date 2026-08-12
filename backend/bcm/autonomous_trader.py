@@ -1,3 +1,6 @@
+import pandas as pd
+import requests
+
 import sys
 import os
 
@@ -10,8 +13,9 @@ if INDICATORS_DIR not in sys.path:
 
 import subprocess
 import json
-import requests
+
 import time
+import threading
 from datetime import datetime
 
 try:
@@ -46,7 +50,7 @@ except Exception as de:
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-MODEL = "deepseek/deepseek-chat"
+MODEL = os.environ.get("BCM_MODEL", os.environ.get("LLM_MODEL", "deepseek/deepseek-chat"))
 
 def israel_time():
     """Return current Israel time string (IDT/IST)."""
@@ -132,10 +136,37 @@ def extract_json(text):
     except:
         return None
 
+
+def _fetch_yahoo_direct(ticker, period="60d", interval="1d"):
+    
+
+    url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={period}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    for attempt in range(3):
+        try:
+            print('  >>> GET', url); r = requests.get(url, headers=headers, timeout=(5,5)); print('  >>> GOT', r.status_code)
+            if r.status_code == 200:
+                data = r.json()['chart']['result'][0]
+                timestamps = data['timestamp']
+                quote = data['indicators']['quote'][0]
+                df = pd.DataFrame({
+                    'Open': quote['open'],
+                    'High': quote['high'],
+                    'Low': quote['low'],
+                    'Close': quote['close'],
+                    'Volume': quote.get('volume', [0]*len(timestamps))
+                }, index=pd.to_datetime(timestamps, unit='s'))
+                df.dropna(subset=['Close'], inplace=True)
+                return df
+        except Exception:
+            pass
+        import time; time.sleep(1)
+    return pd.DataFrame()
+
 def get_technical_analysis(ticker):
     """Fetch RSI/MACD/Bollinger technicals locally using yfinance and advanced BCM indicators."""
     import yfinance as yf
-    import pandas as pd
+
     try:
         try:
             from backend.bcm.tools import _normalize_yf_symbol
@@ -147,8 +178,10 @@ def get_technical_analysis(ticker):
         ticker = _normalize_yf_symbol(ticker)
         print(f"DEBUG: Fetching yfinance data for {ticker}...")
         
+        
+        
         # Changed to 15m interval for better volume profile resolution
-        df = yf.download(ticker, period="5d", interval="15m", progress=False)
+        df = _fetch_yahoo_direct(ticker, period="5d", interval="15m")
         if df.empty:
             raise ValueError(f"No data for {ticker}")
         
@@ -245,12 +278,13 @@ TICKER_MAP = {
     "BTC": {"analysis": "BTC-USD", "trade_id": 10028, "volume": 0.01},
     "GBPUSD": {"analysis": "GBPUSD=X", "trade_id": 2, "volume": 1000},
     "EURUSD": {"analysis": "EURUSD=X", "trade_id": 1, "volume": 1000},
-    "US500": {"analysis": "^GSPC", "trade_id": 10001, "volume": 0.1},
+    "US500": {"analysis": "^GSPC", "trade_id": 10013, "volume": 0.1},
     "BRENT": {"analysis": "BZ=F", "trade_id": 10053, "volume": 1},
-    "USOIL": {"analysis": "CL=F", "trade_id": 10054, "volume": 1},
-    "WTI": {"analysis": "CL=F", "trade_id": 10054, "volume": 1},
     "OIL": {"analysis": "BZ=F", "trade_id": 10053, "volume": 1},
-    "GOLD": {"analysis": "GC=F", "trade_id": 10013, "volume": 1}
+    "GOLD": {"analysis": "GC=F", "trade_id": 41, "volume": 1},
+    "XAUUSD": {"analysis": "GC=F", "trade_id": 41, "volume": 1},
+    "SILVER": {"analysis": "SI=F", "trade_id": 42, "volume": 1},
+    "XAGUSD": {"analysis": "SI=F", "trade_id": 42, "volume": 1},
 }
 
 def get_live_ctrader_positions():
@@ -335,8 +369,8 @@ def get_live_spot_prices(symbol_ids: list = None):
         dict: {symbolId: {'bid': float, 'ask': float, 'mid': float, 'name': str}, ...}
     """
     if symbol_ids is None:
-        # Default watchlist: BTC, SpotBrent, SpotCrude, Gold
-        symbol_ids = [10028, 10053, 10054, 10013]
+        # Default watchlist: BTC, SpotBrent, Gold, Silver, US500
+        symbol_ids = [10028, 10053, 41, 42, 10013]
     try:
         try:
             from backend.bcm.tools import handle_ctrader_get_spot_prices
@@ -439,7 +473,7 @@ def get_fred_macro_regime() -> str:
         return "FRED API module not installed."
         
     # Use the explicitly provided key or environment variable
-    api_key = os.getenv("FRED_API_KEY", "c2cd7e1b2cd623c7fa50dd2048539039")
+    api_key = os.getenv("FRED_API_KEY")
     if not api_key:
         return "FRED API Key missing."
         
@@ -464,10 +498,10 @@ def get_fred_macro_regime() -> str:
 def get_fred_intraday_filters() -> str:
     """Fetch daily FRED risk metrics and today's economic releases."""
     import os
-    import requests
+    
     from datetime import datetime
     
-    api_key = os.getenv("FRED_API_KEY", "c2cd7e1b2cd623c7fa50dd2048539039")
+    api_key = os.getenv("FRED_API_KEY")
     if not api_key:
         return ""
         
@@ -561,32 +595,31 @@ def get_macro_terminal_context(ticker: str) -> str:
         return ""
 
 
-def fetch_graphrag_playbook(ticker: str) -> str:
-    """Fetch historical trading channel playbook & retrospectives from Pride-GraphRAG."""
+def fetch_analytics_playbook(ticker: str) -> str:
+    """Fetch historical trading channel playbook & retrospectives from analytics provider."""
     try:
         try:
-            from backend.bcm.tools import handle_graphrag_query
+            from backend.bcm.tools import handle_analytics_query
         except ImportError:
-            from tools import handle_graphrag_query
-
-        res = handle_graphrag_query({"query": f"Историческая логика, сетапы и результаты по {ticker}"})
-        if isinstance(res, dict) and "answer" in res:
-            return res.get("answer", "")
-        elif isinstance(res, dict) and "error" not in res:
-            return str(res)
+            from tools import handle_analytics_query
+            
+        res = handle_analytics_query({"query": f"Историческая логика, сетапы и результаты по {ticker}"})
+        if res and isinstance(res, dict) and "answer" in res:
+            return res["answer"]
         return ""
     except Exception as e:
-        print(f"⚠️ Pride-GraphRAG playbook fetch error: {e}")
+        raise e
         return ""
 
 
 # Per-role AI model selection (overrideable via environment variables)
-DEFAULT_MODEL = os.environ.get("BCM_MODEL", "deepseek/deepseek-chat")
+DEFAULT_MODEL = os.environ.get("BCM_MODEL", os.environ.get("LLM_MODEL", "deepseek/deepseek-chat"))
 ROLE_MODELS = {
     "Quant Analyst": os.environ.get("BCM_MODEL_QUANT", DEFAULT_MODEL),
     "Macro Analyst": os.environ.get("BCM_MODEL_MACRO", DEFAULT_MODEL),
     "Risk Manager": os.environ.get("BCM_MODEL_RISK", DEFAULT_MODEL),
     "Managing Director": os.environ.get("BCM_MODEL_MD", DEFAULT_MODEL),
+    "Options Strategist": os.environ.get("BCM_MODEL_OPTIONS", DEFAULT_MODEL),
 }
 
 # Role-specific institutional system pre-prompts
@@ -594,7 +627,7 @@ ROLE_SYSTEM_PROMPTS = {
     "Quant Analyst": (
         "You are the Lead Quantitative & Technical Analyst at Berezini Capital Management (BCM). "
         "Your mandate is to perform rigorous technical analysis, price action evaluation, and momentum assessment. "
-        "Analyze technical indicators (RSI, ATR, Keltner Channels), structural price shifts, and historical setup patterns from GraphRAG. "
+        "Analyze technical indicators (RSI, ATR, Keltner Channels), structural price shifts, and historical setup patterns from analytics database. "
         "Provide a data-driven report with clear support/resistance zones, trend bias, and momentum signals."
     ),
     "Macro Analyst": (
@@ -620,11 +653,40 @@ ROLE_SYSTEM_PROMPTS = {
         "5. EXECUTIVE ACTION PLAN: A binding decision ('buy'|'sell'|'wait') with a detailed, in-depth reasoning essay and confidence rating. "
         "Your output MUST be valid JSON with keys: 'decision', 'reasoning', 'confidence', 'account_summary', 'recommended_sl', 'recommended_tp'."
     ),
+    "Options Strategist": (
+        "You are the Senior Options Strategist at Berezini Capital Management (BCM), specializing in Bitcoin and Ethereum derivatives. "
+        "Your mandate is to design and execute institutional-grade options spread strategies on Bybit. "
+        "CORE PRINCIPLES: "
+        "1. SELL PREMIUM when IV is elevated (IV > 50%). Prefer Put Spreads in bullish/neutral regimes. "
+        "2. ALWAYS use defined-risk spreads (Put Spread or Call Spread). NEVER recommend naked options. "
+        "3. Strikes must be OTM: Sell-leg at least 5% below spot (Puts) or 5% above spot (Calls). Buy-leg 8-12% from spot. "
+        "4. Max loss must be < 2% of account equity. "
+        "5. Target net credit > 0 (credit spread). If market structure makes credit impossible, output strategy='wait'. "
+        "OUTPUT FORMAT: You MUST respond with ONLY a valid JSON object (no markdown, no extra text): "
+        "{ "
+        "  \"strategy\": \"put_spread|call_spread|iron_condor|wait\", "
+        "  \"reasoning\": \"concise essay on why this setup qualifies\", "
+        "  \"confidence\": 0-100, "
+        "  \"sell_leg\": {\"symbol\": \"BTC-27DEC26-63000-P\", \"side\": \"Sell\", \"qty\": \"1\", \"price\": \"2200\"}, "
+        "  \"buy_leg\": {\"symbol\": \"BTC-27DEC26-60000-P\", \"side\": \"Buy\", \"qty\": \"1\", \"price\": \"1100\"}, "
+        "  \"net_credit_usd\": 1100, "
+        "  \"max_loss_usd\": 1900, "
+        "  \"breakeven_price\": 61900 "
+        "} "
+        "If strategy is 'wait', the sell_leg and buy_leg can be null. "
+        "CRITICAL: If you output strategy='wait', do NOT hallucinate order execution. The system will NOT place any orders."
+    ),
 }
 
 
+# Rate Limiting & Concurrency Control for OpenRouter API Calls
+BCM_MAX_CONCURRENT_LLM = int(os.environ.get("BCM_MAX_CONCURRENT_LLM", "2"))
+LLM_SEMAPHORE = threading.Semaphore(BCM_MAX_CONCURRENT_LLM)
+LLM_MIN_DELAY_SECONDS = 0.5
+
+
 def call_llm(role_name, prompt):
-    """Generic helper to call LLM with a specific role, system pre-prompt, and targeted model."""
+    """Generic helper to call LLM with a specific role, system pre-prompt, targeted model, retries, and rate limiting."""
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -643,13 +705,65 @@ def call_llm(role_name, prompt):
             {"role": "user", "content": prompt}
         ]
     }
-    try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=60)
-        data = response.json()
-        content = data.get('choices', [{}])[0].get('message', {}).get('content', "")
-        return content if content else f"Agent {role_name} returned empty content."
-    except Exception as e:
-        return f"Agent {role_name} Error: {str(e)}"
+
+    max_retries = 3
+    last_error = ""
+
+    with LLM_SEMAPHORE:
+        time.sleep(LLM_MIN_DELAY_SECONDS)
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.post(
+                    f"{os.environ.get('LLM_API_BASE', 'https://openrouter.ai/api/v1').rstrip('/')}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=60
+                )
+                if response.status_code != 200:
+                    try:
+                        err_json = response.json()
+                        err_msg = err_json.get("error", {}).get("message", response.text)
+                    except Exception:
+                        err_msg = response.text
+                    last_error = f"HTTP {response.status_code}: {err_msg}"
+                    if response.status_code in [429, 500, 502, 503, 504] and attempt < max_retries:
+                        time.sleep(attempt * 3)
+                        continue
+                    return f"Agent {role_name} Error: {last_error}"
+
+                data = response.json()
+                if "error" in data:
+                    err_msg = data["error"].get("message", str(data["error"]))
+                    last_error = err_msg
+                    if attempt < max_retries:
+                        time.sleep(attempt * 3)
+                        continue
+                    return f"Agent {role_name} Error: {err_msg}"
+
+                choices = data.get("choices")
+                if not choices or not isinstance(choices, list):
+                    last_error = "Empty or missing choices in response"
+                    if attempt < max_retries:
+                        time.sleep(attempt * 2)
+                        continue
+                    return f"Agent {role_name} Error: {last_error}"
+
+                content = choices[0].get("message", {}).get("content", "")
+                if not content:
+                    last_error = "Returned empty message content"
+                    if attempt < max_retries:
+                        time.sleep(attempt * 2)
+                        continue
+                    return f"Agent {role_name} returned empty content."
+
+                return content
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries:
+                    time.sleep(attempt * 3)
+                    continue
+
+    return f"Agent {role_name} Error: {last_error}"
 
 
 def get_completed_trades_summary(limit=10) -> str:
@@ -711,7 +825,7 @@ def ask_ai_decision(ticker, analysis_data):
 
     # Fetch live spot prices for the ticker being analysed + key watchlist symbols
     ticker_id = TICKER_MAP.get(ticker, {}).get("trade_id")
-    spot_ids = [10028, 10053, 10054, 10013, 10001, 2, 1]  # BTC, SpotBrent, SpotCrude, Gold, US500, GBPUSD, EURUSD
+    spot_ids = [10028, 10053, 41, 42, 10013, 2, 1]  # BTC, SpotBrent, Gold, Silver, US500, GBPUSD, EURUSD
     if ticker_id and ticker_id not in spot_ids:
         spot_ids.insert(0, ticker_id)
     live_prices = get_live_spot_prices(spot_ids)
@@ -720,11 +834,11 @@ def ask_ai_decision(ticker, analysis_data):
     equity, free_margin = get_account_balance()
     closed_trades_history = get_completed_trades_summary(limit=10)
 
-    # Fetch Pride-GraphRAG historical playbook & trade retrospectives
-    graphrag_playbook = fetch_graphrag_playbook(ticker)
-    graphrag_block = (
-        f"\n\n--- PRIDE-GRAPHRAG HISTORICAL PLAYBOOK & RETROSPECTIVES ({ticker}) ---\n{graphrag_playbook}\n---------------------------------------------------------------\n"
-        if graphrag_playbook else ""
+    # Fetch historical playbook & trade retrospectives from Analytics
+    analytics_playbook = fetch_analytics_playbook(ticker)
+    analytics_block = (
+        f"\n\n--- HISTORICAL PLAYBOOK & RETROSPECTIVES ({ticker}) ---\n{analytics_playbook}\n---------------------------------------------------------------\n"
+        if analytics_playbook else ""
     )
 
     # Format live prices block for LLM context
@@ -771,7 +885,7 @@ def ask_ai_decision(ticker, analysis_data):
     CRITICAL: Pay special attention to 'volume_profile.poc' (Point of Control) as a high-probability liquidity level, and 'vwap.daily' for intraday mean reversion and institutional positioning.
     CRITICAL VOLATILITY ADJUSTMENT: The current market session is '{market_session}'. You MUST weigh the importance of breakouts vs mean-reversions depending on this session's expected volatility. 
     Check 'past_experience' for historical similarities: {analysis_data}
-    {graphrag_block}
+    {analytics_block}
     {positions_guardrail}"""
     analyst_report = call_llm("Quant Analyst", analyst_prompt)
     print(f"Analyst Report Length: {len(str(analyst_report))}")
@@ -779,7 +893,7 @@ def ask_ai_decision(ticker, analysis_data):
     print("--- 🌍 Calling MACRO ANALYST ---")
     current_date = datetime.now().strftime("%Y-%m-%d")
     oil_context = ""
-    if "BRENT" in ticker or "USOIL" in ticker or "BZ" in ticker or "CL" in ticker:
+    if "BRENT" in ticker or "BZ" in ticker:
         print("   Fetching Petro-Macro Terminal context for Oil...")
         raw_oil = get_brent_oil_context()
         if raw_oil:
@@ -837,7 +951,7 @@ def ask_ai_decision(ticker, analysis_data):
     DATA: {analysis_data} 
     QUANT: {analyst_report}
     MACRO: {macro_report}
-    {graphrag_block}
+    {analytics_block}
     {positions_guardrail}"""
     risk_report = call_llm("Risk Manager", risk_prompt)
 
@@ -883,8 +997,14 @@ def ask_ai_decision(ticker, analysis_data):
         content = content.split("```")[1].split("```")[0].strip()
     return content
 
-def format_md_decision_summary(decision_data, symbol="BTC") -> str:
-    """Format Managing Director decision dictionary or JSON string into a best-practice UI/UX Markdown executive report."""
+def format_md_decision_summary(decision_data, symbol="BTC", execution_gates: list = None) -> str:
+    """Format Managing Director decision dictionary or JSON string into a best-practice UI/UX Markdown executive report.
+    
+    Args:
+        decision_data: dict or JSON string from MD agent
+        symbol: trading symbol
+        execution_gates: list of dicts {"name": str, "status": "pass"|"block"|"warn", "reason": str}
+    """
     if isinstance(decision_data, str):
         try:
             cleaned = decision_data.strip()
@@ -947,6 +1067,51 @@ def format_md_decision_summary(decision_data, symbol="BTC") -> str:
         "",
         f"{reasoning}",
     ]
+
+    # ── Execution Gate Status ──────────────────────────────────────────────
+    if execution_gates:
+        STATUS_ICON = {"pass": "✅", "block": "🚫", "warn": "⚠️", "skip": "⏭️"}
+        STATUS_LABEL = {"pass": "PASS", "block": "BLOCKED", "warn": "WARNING", "skip": "SKIPPED"}
+        
+        lines.extend([
+            "",
+            "---",
+            "",
+            "### 🚦 **Execution Gate Status**",
+            "",
+            "| Gate | Status | Details |",
+            "| :--- | :---: | :--- |",
+        ])
+        for gate in execution_gates:
+            g_status = gate.get("status", "warn")
+            icon = STATUS_ICON.get(g_status, "⚠️")
+            label = STATUS_LABEL.get(g_status, g_status.upper())
+            reason = gate.get("reason", "").replace("|", "│")  # escape table pipes
+            lines.append(f"| **{gate['name']}** | {icon} {label} | {reason} |")
+        
+        # Overall execution verdict
+        blocked_gates = [g for g in execution_gates if g.get("status") == "block"]
+        warn_gates = [g for g in execution_gates if g.get("status") == "warn"]
+        if blocked_gates:
+            lines.extend([
+                "",
+                f"> [!CAUTION]",
+                f"> **Trade NOT Executed** — blocked by: {', '.join(g['name'] for g in blocked_gates)}",
+            ])
+        elif warn_gates:
+            lines.extend([
+                "",
+                f"> [!WARNING]",
+                f"> Trade executed with warnings: {', '.join(g['name'] for g in warn_gates)}",
+            ])
+        else:
+            passed = [g for g in execution_gates if g.get("status") == "pass"]
+            if passed:
+                lines.extend([
+                    "",
+                    f"> [!TIP]",
+                    f"> **All gates passed** — order dispatched to cTrader OpenAPI",
+                ])
 
     if eq_status or pos_audit or learnings:
         lines.extend([
@@ -1046,11 +1211,11 @@ def pre_check_indicators(analysis_json, ticker_key, atr_data=None):
     except Exception as e:
         return True, f"Data parsing skipped, calling AI for safety: {str(e)}"
 
-import pandas as pd
+
 def calculate_atr_keltner(ticker):
     """Fetch historical data and calculate ATR + Keltner Channel locally."""
     import yfinance as yf
-    import pandas as pd
+
     try:
         try:
             from backend.bcm.tools import _normalize_yf_symbol
@@ -1061,9 +1226,11 @@ def calculate_atr_keltner(ticker):
                 _normalize_yf_symbol = lambda s: s
         ticker = _normalize_yf_symbol(ticker)
         print(f"DEBUG: Calculating extra indicators for {ticker} using yfinance...", flush=True)
+        
+        
         # ponytail: Daily ATR for swing SL/TP — 1H ATR is 4-5x smaller and would stop out on normal intraday noise
         # RSI/MACD entry signals stay on 1H (get_technical_analysis) for precise timing
-        df = yf.download(ticker, period="60d", interval="1d", progress=False)
+        df = _fetch_yahoo_direct(ticker, period="60d", interval="1d")
         if df.empty:
             return {}
         
@@ -1095,15 +1262,15 @@ def calculate_atr_keltner(ticker):
 
 def get_brent_oil_context():
     """Fetch live Brent oil context from Petro-Macro Terminal (brent-oil-analyst skill)."""
+    import requests
     try:
-        result = subprocess.run(
-            ["curl", "-s", "-X", "GET",
-             "https://oil.berezini.com/api/context/raw?commodity=Brent&period=1mo",
-             "-H", "accept: text/plain"],
-            capture_output=True, text=True, timeout=15
+        response = requests.get(
+            "https://oil.berezini.com/api/context/raw?commodity=Brent&period=1mo",
+            headers={"accept": "text/plain"},
+            timeout=15
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+        if response.status_code == 200 and response.text.strip():
+            return response.text.strip()
     except Exception as e:
         print(f"WARNING: Petro-Macro Terminal unavailable: {e}")
     return None
@@ -1112,11 +1279,13 @@ def get_brent_oil_context():
 def get_account_balance():
     """Fetch current account equity using mcporter/n8n with retries."""
     import time
+    import shutil
     
     # Dynamic paths for cross-platform compatibility (Linux/Amvera vs Mac)
-    node_bin = "/usr/local/bin/node" if os.path.exists("/usr/local/bin/node") else "/opt/homebrew/bin/node" if os.path.exists("/opt/homebrew/bin/node") else "node"
-    mcporter_bin = "/usr/local/bin/mcporter" if os.path.exists("/usr/local/bin/mcporter") else "/opt/homebrew/bin/mcporter" if os.path.exists("/opt/homebrew/bin/mcporter") else "mcporter"
-    
+    node_bin = "/usr/local/bin/node" if os.path.exists("/usr/local/bin/node") else "/opt/homebrew/bin/node" if os.path.exists("/opt/homebrew/bin/node") else shutil.which("node")
+    mcporter_bin = "/usr/local/bin/mcporter" if os.path.exists("/usr/local/bin/mcporter") else "/opt/homebrew/bin/mcporter" if os.path.exists("/opt/homebrew/bin/mcporter") else shutil.which("mcporter")
+    npx_bin = "/usr/local/bin/npx" if os.path.exists("/usr/local/bin/npx") else "/opt/homebrew/bin/npx" if os.path.exists("/opt/homebrew/bin/npx") else shutil.which("npx")
+
     # Find mcporter.json: try workspace/config first (Amvera), then project config
     script_dir = os.path.dirname(os.path.abspath(__file__))
     search_paths = [
@@ -1133,40 +1302,35 @@ def get_account_balance():
     if not config_path:
         config_path = "./config/mcporter.json"  # last resort
 
-    # Try direct npx mcporter if binary not found
-    if mcporter_bin == "mcporter" and not os.path.exists("/usr/local/bin/mcporter"):
-        npx_bin = "/usr/local/bin/npx" if os.path.exists("/usr/local/bin/npx") else "/opt/homebrew/bin/npx" if os.path.exists("/opt/homebrew/bin/npx") else "npx"
+    cmd = None
+    if mcporter_bin and node_bin and os.path.exists(str(mcporter_bin)) and os.path.exists(str(node_bin)):
+        cmd = [node_bin, mcporter_bin, "call", "my-n8n-mcp.Get_account_data", "--config", config_path, "--timeout", "60000"]
+    elif npx_bin:
         cmd = [npx_bin, "-y", "mcporter", "call", "my-n8n-mcp.Get_account_data", "--config", config_path, "--timeout", "60000"]
-    else:
-        cmd = [
-            node_bin, 
-            mcporter_bin, 
-            "call", "my-n8n-mcp.Get_account_data",
-            "--config", config_path,
-            "--timeout", "60000"
-        ]
-    for attempt in range(3):
-        try:
-            raw = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
-            json_str = extract_json(raw)
-            if not json_str: continue
-            
-            parsed = json.loads(json_str)
-            if isinstance(parsed, list) and len(parsed) > 0:
-                data = parsed[0]
-            else:
-                data = parsed
-            
-            # Deep extract
-            margin_data = data.get('data', {}).get('margin', data)
-            equity = float(margin_data.get('equity', margin_data.get('equity', 0)))
-            free_margin = float(margin_data.get('free_margin', margin_data.get('freeMargin', 0)))
-            
-            return equity, free_margin
-        except Exception as e:
-            raw_val = raw if 'raw' in locals() else 'None'
-            print(f"Attempt {attempt+1} failed: {str(e)}")
-            time.sleep(2)
+
+    if cmd:
+        for attempt in range(3):
+            try:
+                raw = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
+                json_str = extract_json(raw)
+                if not json_str: continue
+                
+                parsed = json.loads(json_str)
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    data = parsed[0]
+                else:
+                    data = parsed
+                
+                # Deep extract
+                margin_data = data.get('data', {}).get('margin', data)
+                equity = float(margin_data.get('equity', margin_data.get('equity', 0)))
+                free_margin = float(margin_data.get('free_margin', margin_data.get('freeMargin', 0)))
+                
+                return equity, free_margin
+            except Exception as e:
+                raw_val = raw if 'raw' in locals() else 'None'
+                print(f"Attempt {attempt+1} failed: {str(e)}")
+                time.sleep(2)
 
     # Direct fallback to cTrader API tool if n8n/mcporter failed
     try:
@@ -1248,42 +1412,88 @@ def run_autonomous_cycle(symbol_key):
     analysis_ticker = config['analysis']
     trade_id = config['trade_id']
 
-    # Guard: skip if we already have an active live position for this symbol
+    # ── Gate tracker — every check appends here ────────────────────────────
+    execution_gates = []
+
+    def gate(name, status, reason):
+        """Register an execution gate result."""
+        icon = {"pass": "✅", "block": "🚫", "warn": "⚠️", "skip": "⏭️"}.get(status, "❓")
+        print(f"[GATE] {icon} {name}: {reason}")
+        execution_gates.append({"name": name, "status": status, "reason": reason})
+
+    def emit_report_and_return(decision_obj=None):
+        """Format and return the final report with all gate results, and send Telegram."""
+        if decision_obj is None:
+            decision_obj = {
+                "decision": "wait",
+                "confidence": 0.0,
+                "reasoning": "Cycle terminated early — see Execution Gate Status for details.",
+                "recommended_sl": None,
+                "recommended_tp": None,
+            }
+        report = format_md_decision_summary(decision_obj, symbol=symbol_key, execution_gates=execution_gates)
+        # Send concise Telegram summary for blocked/warned gates
+        blocked = [g for g in execution_gates if g["status"] == "block"]
+        warned  = [g for g in execution_gates if g["status"] == "warn"]
+        if blocked:
+            tg_msg = f"🚫 *BCM Blocked* — {symbol_key}\n"
+            for g in blocked:
+                tg_msg += f"  • *{g['name']}*: {g['reason']}\n"
+            send_telegram_msg(tg_msg)
+        elif warned:
+            tg_msg = f"⚠️ *BCM Warning* — {symbol_key}\n"
+            for g in warned:
+                tg_msg += f"  • *{g['name']}*: {g['reason']}\n"
+            send_telegram_msg(tg_msg)
+        return report
+
+    # ── Guard: skip if open position already exists ────────────────────────
     live_positions, pos_summary = get_live_ctrader_positions()
     has_live_pos = any(p.get("symbol") == symbol_key for p in live_positions)
     if has_live_pos or memory.has_open_position(symbol_key):
-        print(f"⏸️ {symbol_key}: Open position active in Pepperstone cTrader / memory — skipping new cycle.")
-        return
+        gate("Open Position Guard", "skip",
+             f"Already have an active position for {symbol_key} in cTrader/memory — new cycle skipped")
+        print(f"⏸️ {symbol_key}: Open position active — skipping new cycle.")
+        return emit_report_and_return()
 
     print(f"--- Starting PROFESSIONAL cycle for {symbol_key} ---")
     
+    # ── Step 1: Account Balance ────────────────────────────────────────────
     print("Step 1: Checking Account Balance and Margin...")
     equity, free_margin = get_account_balance()
     if not equity:
+        gate("Account Balance", "block", "Could not fetch account equity/margin from cTrader")
         print("Error: Could not fetch account data.")
-        return
+        return emit_report_and_return()
+    gate("Account Balance", "pass", f"Equity: ${equity:,.2f} | Free Margin: ${free_margin:,.2f}")
     print(f"Equity: ${equity:.2f} | Free Margin: ${free_margin:.2f}")
 
+    # ── Step 1.5: Liquidity Layer 0 ───────────────────────────────────────
     print("Step 1.5: [Layer 0] Liquidity & Market Structure check...")
     liq_res = check_liquidity_layer_0(symbol_key)
     if not liq_res.get("passed", True):
-        print(f"⏸️ [Layer 0 BLOCKED] {symbol_key}: {liq_res.get('reason')}. Skipping cycle.")
-        return
+        reason = liq_res.get('reason', 'Unknown liquidity issue')
+        gate("Liquidity Layer 0", "block", reason)
+        print(f"⏸️ [Layer 0 BLOCKED] {symbol_key}: {reason}. Skipping cycle.")
+        return emit_report_and_return()
+    gate("Liquidity Layer 0", "pass", liq_res.get("reason", "Market structure OK"))
 
+    # ── Step 2: Technical Analysis ────────────────────────────────────────
     print(f"Step 2: Getting technical analysis for {analysis_ticker}...")
     analysis_json = get_technical_analysis(analysis_ticker)
     if not analysis_json or analysis_json == "None":
         analysis_json = json.dumps({"rsi": {analysis_ticker: 50}, "warning": "Empty result from MCP"})
     
+    # ── Step 3: Remizov Volatility Shift ──────────────────────────────────
     print("Step 3: Calculating Remizov Volatility Shift...")
     try:
         import yfinance as yf
-        hist_df = yf.download(analysis_ticker, period="30d", interval="1d", progress=False)
+        
+        
+        hist_df = _fetch_yahoo_direct(analysis_ticker, period="30d", interval="1d")
         if not hist_df.empty:
-            # Clean multi-index columns
             if isinstance(hist_df.columns, pd.MultiIndex):
                 hist_df.columns = hist_df.columns.get_level_values(0)
-            
             remizov_val, resolvent = calculate_remizov_shift(hist_df)
             print(f"📈 Remizov Shift: {remizov_val}")
         else:
@@ -1293,20 +1503,24 @@ def run_autonomous_cycle(symbol_key):
         print(f"⚠️ Historical Data Error (yfinance): {he}")
         remizov_val = 0
 
+    # ── Step 4: ATR / Keltner ─────────────────────────────────────────────
     print("Step 4: Fetching ATR/Keltner for pre-check and risk sizing...")
     try:
         extra_data = calculate_atr_keltner(analysis_ticker)
     except:
         extra_data = {}
         
+    # ── Step 4.5: Algorithmic Pre-Check ───────────────────────────────────
     print("Step 4.5: Performing algorithmic pre-check (RSI / MACD / ATR)...")
     should_call_ai, reason = pre_check_indicators(analysis_json, symbol_key, atr_data=extra_data)
     if not should_call_ai:
         atr_val = extra_data.get("atr_d1", "N/A")
+        gate("Algo Pre-Check (RSI/MACD/ATR)", "block",
+             f"{reason} | Remizov: {remizov_val:.4f} | ATR: {atr_val}")
         print(f"Action: SKIP AI. Reason: {reason}")
-        print(f"Remizov Shift: {remizov_val:.4f} | ATR: {atr_val}")
-        print(f"Verdict: WAIT (Confidence: 0.0%)")
-        return
+        return emit_report_and_return()
+    gate("Algo Pre-Check (RSI/MACD/ATR)", "pass",
+         f"Indicators clear | Remizov: {remizov_val:.4f} | ATR: {extra_data.get('atr_d1', 'N/A')}")
 
     try:
         analysis_data = json.loads(analysis_json)
@@ -1320,148 +1534,493 @@ def run_autonomous_cycle(symbol_key):
     full_data.update(extra_data)
     full_data['remizov_shift'] = remizov_val
 
+    # ── Step 5: BCM Memory ────────────────────────────────────────────────
     print("Step 5: Consulting BCM Memory for similar past situations...")
     experience = memory.get_similar_experience(full_data)
-    # Collect warnings for reporting
-    warnings = []
+    warnings_list = []
     if not extra_data:
-        warnings.append("⚠️ Missing Volatility/Keltner data (Analysis incomplete).")
+        warnings_list.append("⚠️ Missing Volatility/Keltner data (Analysis incomplete).")
+        gate("Keltner/ATR Data", "warn", "Keltner/ATR data unavailable — volatility analysis incomplete")
     if remizov_val == 0:
-        warnings.append("⚠️ Remizov Shift failed to calculate (using 0).")
+        warnings_list.append("⚠️ Remizov Shift failed to calculate (using 0).")
+        gate("Remizov Shift", "warn", "Failed to calculate Remizov Volatility Shift — defaulting to 0")
 
     full_data['past_experience'] = experience
-    full_data['technical_warnings'] = warnings
+    full_data['technical_warnings'] = warnings_list
 
+    # ── Step 6: Multi-Agent AI Decision ───────────────────────────────────
     print(f"Step 6: Asking Team for decision (Context: 8D Market Vector + ATR + Memory)...")
     decision_raw = ask_ai_decision(symbol_key, json.dumps(full_data))
     try:
         decision = json.loads(decision_raw)
-    except: 
+    except Exception as parse_err: 
         print(f"Error parsing MD decision: {decision_raw}")
-        return
+        decision = {
+            "decision": "wait",
+            "reasoning": f"Executive Managing Director decision failed due to API response format or disconnect: {str(decision_raw)[:300]}",
+            "confidence": 0.0,
+            "account_summary": {
+                "equity_status": f"Equity preserved at ${equity:.2f}",
+                "open_positions_audit": "No position opened due to AI decision error",
+                "historical_learnings": "N/A"
+            },
+            "recommended_sl": None,
+            "recommended_tp": None
+        }
+        gate("MD Decision Parse", "block", f"Could not parse AI response as JSON: {str(parse_err)[:150]}")
+        return emit_report_and_return(decision)
 
-    # Apply Remizov Shift
+    # Apply Remizov Shift to confidence
     final_confidence = decision['confidence'] + (remizov_val * 100)
     final_confidence = max(min(final_confidence, 100), 0)
 
     print(f"Verdict: {decision['decision'].upper()} (Confidence: {final_confidence:.1f}%)")
     print(f"MD Reasoning: {decision.get('reasoning', '')[:500]}")
-    
-    # Check if confidence meets execution threshold
+
+    # ── Confidence Gate ────────────────────────────────────────────────────
     action = decision['decision']
-    if action in ['buy', 'sell'] and final_confidence >= 85:
-        # ... existing execution code continues
-        sl = extra_data.get('keltner_upper') if action == 'sell' else extra_data.get('keltner_lower')
-        tp = extra_data.get('keltner_lower') if action == 'sell' else extra_data.get('keltner_upper')
-        
-        if not sl or not tp:
-            msg = f"⏸️ *BCM Skip*: Вердикт был {decision['decision'].upper()}, но сделка пропущена.\n"
-            msg += f"Причина: Отсутствуют критические данные по волатильности (Keltner/ATR).\n"
-            msg += f"Confidence: {final_confidence:.1f}%"
-            send_telegram_msg(msg)
-            return
-
-        # R:R Validation — минимум 1:1.5 иначе сделка не стоит риска
-        entry_price = full_data.get('ema20', 0)
-        sl_dist = abs(entry_price - sl) if entry_price else 0
-        tp_dist = abs(entry_price - tp) if entry_price else 0
-        rr = (tp_dist / sl_dist) if sl_dist > 0 else 0
-        if rr < 1.5:
-            msg = f"⏸️ *BCM Skip* ({symbol_key}): R:R = {rr:.2f} < 1.5 минимума\n"
-            msg += f"Entry: {entry_price:.4f} | SL: {sl:.4f} ({sl_dist:.4f}) | TP: {tp:.4f} ({tp_dist:.4f})"
-            print(msg)
-            send_telegram_msg(msg)
-            return
-        
-        # Step 7: Execution
-        current_price_yahoo = full_data.get('ema20', 0)
-        
-        # Calculate DISTANCE (Offset) from Yahoo data
-        sl_dist = abs(current_price_yahoo - sl)
-        tp_dist = abs(current_price_yahoo - tp)
-        
-        # Determine lot size using Yahoo distance (risk mapping)
-        lot = calculate_lot_size(equity, 1.0, sl_dist, symbol_key)
-        
-        # --- COMPLIANCE CHECK (Segregation of Duties) ---
-        print(f"Step 7: Sending draft order to Compliance Officer for Audit...")
-        cco = ComplianceOfficer()
-        base_volume = TICKER_MAP[symbol_key]['volume']
-        action = decision['decision']
-        
-        # We need a summarized risk report to pass to CCO. Since we don't have the exact text here, we create a short summary.
-        risk_summary = f"Equity: {equity}, Margin: {free_margin}. Calculated lot: {lot}. SL Distance: {sl_dist:.4f}. Remizov Shift: {remizov_val:.4f}."
-        
-        passed, cco_reason = cco.audit_trade(
-            symbol=symbol_key, 
-            action=action, 
-            volume=lot, 
-            base_volume=base_volume, 
-            sl=sl, 
-            tp=tp, 
-            entry_price=current_price_yahoo, 
-            md_decision=decision.get('reasoning', ''), 
-            risk_report=risk_summary
-        )
-        
-        if not passed:
-            err_msg = f"🚫 *BCM COMPLIANCE REJECTION*\nAsset: {symbol_key} | Action: {action.upper()}\nReason: {cco_reason}"
-            print(err_msg)
-            send_telegram_msg(err_msg)
-            return
-
-        print(f"✅ Compliance Approved: {cco_reason}")
-        print(f"Step 8: Executing cTrader Order (Lot: {lot}) via OpenAPI...")
-        print(f"   Using Symbol ID: {trade_id} | Risk Offset: {sl_dist:.5f}")
-        
-        # 1. Place Market Order using trade.sh (OpenAPI wrapper)
-        side_cmd = "buy" if action == 'buy' else "sell"
-        try:
-            # We use the trade_id from TICKER_MAP for execution
-            cmd_place = ["bash", os.path.join(script_dir, "trade.sh"), side_cmd, str(trade_id), str(lot), str(sl), str(tp)]
-            res_raw = subprocess.check_output(cmd_place, stderr=subprocess.STDOUT).decode('utf-8')
-            print(f"cTrader Response: {res_raw}")
-            
-            # LOG TO MEMORY
-            tracking_id = f"BCM-{int(time.time())}"
-            memory.log_decision(tracking_id, symbol_key, action, lot, current_price_yahoo, decision['reasoning'] + f"\n[CCO Audit: {cco_reason}]", full_data)
-            
-            msg = f"🏛️ *BCM Opinion: EXECUTION*\n"
-            msg += f"Asset: `{symbol_key}` | Action: *{action.upper()}*\n"
-            msg += f"Volume: `{lot}` | Conf: `{final_confidence:.1f}%`\n"
-            msg += f"Risk Offset: `SL {sl}` | `TP {tp}`\n\n"
-            msg += f"📋 *Resolutions:*\n"
-            msg += f"• *Quant:* Approved (Remizov {remizov_val:.4f})\n"
-            msg += f"• *Macro:* Reviewed (No critical blocks)\n"
-            msg += f"• *MD:* {decision['reasoning'][:200]}...\n"
-            msg += f"✅ *CCO Audit:* {cco_reason}\n\n"
-            msg += f"*(Executed via cTrader OpenAPI)*"
-            send_telegram_msg(msg)
-            
-        except Exception as e:
-            err_msg = f"❌ Execution Failed for {symbol_key}: {str(e)}"
-            print(err_msg)
-            send_telegram_msg(err_msg)
-    else:
-        if action in ['buy', 'sell']:
-            print(f"Action: WAIT (Override: MD said {action.upper()}, but confidence {final_confidence:.1f}% < 85% threshold)")
-            reason_text = f"MD said {action.upper()} but confidence {final_confidence:.1f}% < 85% threshold"
-        else:
-            print(f"Action: WAIT (Confidence {final_confidence:.1f}%)")
-            reason_text = f"Confidence {final_confidence:.1f}%"
-        msg = f"⏸️ *{symbol_key}* → WAIT\n"
-        if warnings:
-            msg += f"⚠️ {warnings[0]}\n"
-        # Extract RSI value (it's nested as {ticker: value})
+    if action not in ['buy', 'sell']:
+        gate("Confidence Threshold", "skip",
+             f"MD verdict is WAIT — no execution needed (Confidence: {final_confidence:.1f}%)")
+        report = format_md_decision_summary(decision, symbol=symbol_key, execution_gates=execution_gates)
+        # Telegram WAIT message
         rsi_data = full_data.get('rsi', {})
         rsi_val = list(rsi_data.values())[0] if rsi_data else 'N/A'
         if isinstance(rsi_val, float):
             rsi_val = f"{rsi_val:.1f}"
         atr_val = extra_data.get('atr_d1', 'N/A')
+        msg = f"⏸️ *{symbol_key}* → WAIT\n"
+        if warnings_list:
+            msg += f"⚠️ {warnings_list[0]}\n"
         msg += f"📊 RSI: {rsi_val} | ATR: {atr_val} | Remizov: {remizov_val:.3f}\n"
         msg += f"💬 {decision.get('reasoning', '')[:600]}..."
         send_telegram_msg(msg)
+        return report
+
+    if final_confidence < 80:
+        gate("Confidence Threshold", "block",
+             f"MD said {action.upper()} but confidence {final_confidence:.1f}% < 80% execution threshold")
+        decision['decision'] = 'wait'  # Override for report display
+        return emit_report_and_return(decision)
+
+    gate("Confidence Threshold", "pass", f"{action.upper()} with {final_confidence:.1f}% confidence ≥ 80% threshold")
+
+    # ── Keltner SL/TP Gate ─────────────────────────────────────────────────
+    sl = extra_data.get('keltner_upper') if action == 'sell' else extra_data.get('keltner_lower')
+    tp = extra_data.get('keltner_lower') if action == 'sell' else extra_data.get('keltner_upper')
+
+    if not sl or not tp:
+        gate("Keltner SL/TP", "block",
+             f"Missing Keltner channel data — cannot compute SL/TP. "
+             f"keltner_lower={extra_data.get('keltner_lower')}, keltner_upper={extra_data.get('keltner_upper')}")
+        return emit_report_and_return(decision)
+    gate("Keltner SL/TP", "pass", f"SL={sl:.5f} | TP={tp:.5f} (from Keltner channels)")
+
+    # ── R:R Validation Gate ───────────────────────────────────────────────
+    entry_price = full_data.get('ema20', 0)
+    sl_dist = abs(entry_price - sl) if entry_price else 0
+    tp_dist = abs(entry_price - tp) if entry_price else 0
+    rr = (tp_dist / sl_dist) if sl_dist > 0 else 0
+    if rr < 1.5:
+        gate("Risk:Reward Ratio", "block",
+             f"R:R = {rr:.2f} < 1.5 minimum. Entry: {entry_price:.5f} | SL dist: {sl_dist:.5f} | TP dist: {tp_dist:.5f}")
+        print(f"⏸️ BCM Skip ({symbol_key}): R:R = {rr:.2f} < 1.5")
+        return emit_report_and_return(decision)
+    gate("Risk:Reward Ratio", "pass", f"R:R = {rr:.2f} ≥ 1.5 minimum")
+
+    # ── Lot Size Calculation ───────────────────────────────────────────────
+    current_price_yahoo = full_data.get('ema20', 0)
+    sl_dist = abs(current_price_yahoo - sl)
+    tp_dist = abs(current_price_yahoo - tp)
+    lot = calculate_lot_size(equity, 1.0, sl_dist, symbol_key)
+
+    # ── Compliance Gate ────────────────────────────────────────────────────
+    print(f"Step 7: Sending draft order to Compliance Officer for Audit...")
+    cco = ComplianceOfficer()
+    base_volume = TICKER_MAP[symbol_key]['volume']
+    risk_summary = (f"Equity: {equity}, Margin: {free_margin}. "
+                    f"Calculated lot: {lot}. SL Distance: {sl_dist:.4f}. Remizov Shift: {remizov_val:.4f}.")
+
+    cco_passed, cco_reason = cco.audit_trade(
+        symbol=symbol_key,
+        action=action,
+        volume=lot,
+        base_volume=base_volume,
+        sl=sl,
+        tp=tp,
+        entry_price=current_price_yahoo,
+        md_decision=decision.get('reasoning', ''),
+        risk_report=risk_summary
+    )
+
+    if not cco_passed:
+        gate("Compliance Officer (CCO)", "block", f"Rejected: {cco_reason}")
+        print(f"🚫 BCM COMPLIANCE REJECTION — {symbol_key}: {cco_reason}")
+        return emit_report_and_return(decision)
+    gate("Compliance Officer (CCO)", "pass", f"Approved: {cco_reason}")
+    print(f"✅ Compliance Approved: {cco_reason}")
+
+    # ── cTrader Execution Gate ────────────────────────────────────────────
+    print(f"Step 8: Executing cTrader Order (Lot: {lot}) via OpenAPI...")
+    print(f"   Using Symbol ID: {trade_id} | Risk Offset: {sl_dist:.5f}")
+
+    side_cmd = "buy" if action == 'buy' else "sell"
+    try:
+        cmd_place = ["bash", os.path.join(script_dir, "trade.sh"),
+                     side_cmd, str(trade_id), str(lot), str(sl), str(tp)]
+        res_raw = subprocess.check_output(cmd_place, stderr=subprocess.STDOUT).decode('utf-8')
+        print(f"cTrader Response: {res_raw}")
+
+        gate("cTrader Execution", "pass",
+             f"Order dispatched: {action.upper()} {lot} lots of {symbol_key} "
+             f"@ SL={sl} TP={tp} | Symbol ID: {trade_id}")
+
+        # Log to BCM memory
+        tracking_id = f"BCM-{int(time.time())}"
+        memory.log_decision(tracking_id, symbol_key, action, lot, current_price_yahoo,
+                            decision['reasoning'] + f"\n[CCO Audit: {cco_reason}]", full_data)
+
+        # Build final formatted report
+        report = format_md_decision_summary(decision, symbol=symbol_key, execution_gates=execution_gates)
+
+        # Telegram execution success
+        msg = f"🏛️ *BCM EXECUTION*\n"
+        msg += f"Asset: `{symbol_key}` | Action: *{action.upper()}*\n"
+        msg += f"Volume: `{lot}` | Conf: `{final_confidence:.1f}%`\n"
+        msg += f"SL: `{sl}` | TP: `{tp}`\n\n"
+        msg += f"📋 *Gates:*\n"
+        msg += f"• *Quant:* ✅ Approved (Remizov {remizov_val:.4f})\n"
+        msg += f"• *CCO:* ✅ {cco_reason}\n"
+        msg += f"• *MD:* {decision['reasoning'][:200]}...\n\n"
+        msg += f"*(Executed via cTrader OpenAPI — Symbol ID: {trade_id})*"
+        send_telegram_msg(msg)
+        return report
+
+    except Exception as e:
+        error_detail = str(e)
+        import subprocess
+        if isinstance(e, subprocess.CalledProcessError) and e.output:
+            error_detail += "\n" + e.output.decode('utf-8', errors='replace')
+        gate("cTrader Execution", "block",
+             f"subprocess failed: {error_detail[:300]}")
+        print(f"❌ Execution Failed for {symbol_key}: {error_detail}")
+        return emit_report_and_return(decision)
+
+
+
+
+def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
+    """
+    Autonomous Options Spread Cycle — BCM v2.0
+
+    Workflow:
+    1. Fetch broker balance & equity
+    2. Fetch live option chain (Greeks, IV, Mark prices)
+    3. Fetch macro context (VIX, FRED, sentiment)
+    4. Call Options Strategist LLM → get JSON spread decision
+    5. Compliance audit (hard limits + 2% equity cap)
+    6. Execute both legs via place_option_order (REAL API calls)
+    7. Log to BCM memory + Telegram
+
+    Returns:
+        dict with status, strategy, execution results
+    """
+    try:
+        from backend.bcm.exchange_factory import ExchangeFactory
+    except ImportError:
+        from exchange_factory import ExchangeFactory
+        
+    broker = ExchangeFactory.get_options_broker()
+
+    print(f"\n{'='*60}")
+    print(f"  🏛️ BCM OPTIONS CYCLE — {base_coin} (exp: {exp_date or 'all'}) via {type(broker).__name__}")
+    print(f"{'='*60}")
+
+    # ── Step 1: Account Balance ──────────────────────────────────
+    print("Step 1: Fetching account balance...")
+    balance_res = broker.get_wallet_balance(account_type="UNIFIED")
+    account_equity = 0.0
+    usdc_avail = 0.0
+
+    if balance_res.get("status") == "success":
+        for acct in balance_res.get("accounts", []):
+            coins = acct.get("coin", [])
+            for c in coins:
+                if c.get("coin") in ("USDC", "USDT"):
+                    try:
+                        account_equity += float(c.get("equity", 0) or 0)
+                        usdc_avail += float(c.get("availableToWithdraw", 0) or 0)
+                    except Exception:
+                        pass
+        print(f"   Bybit Equity: ${account_equity:,.2f} | Available: ${usdc_avail:,.2f}")
+    else:
+        print(f"   ⚠️ Balance fetch failed: {balance_res.get('message', 'Unknown error')}")
+        return {"status": "error", "reason": "Cannot fetch Bybit balance", "details": balance_res}
+
+    if account_equity < 500:
+        msg = f"⏸️ BCM Options: Insufficient equity (${account_equity:.2f}). Min $500 required."
+        print(msg)
+        send_telegram_msg(msg)
+        return {"status": "skipped", "reason": msg}
+
+    # ── Step 2: Option Chain ─────────────────────────────────────
+    print(f"Step 2: Fetching {base_coin} option chain...")
+    chain_res = broker.get_option_chain(base_coin=base_coin, exp_date=exp_date)
+
+    if chain_res.get("status") != "success" or not chain_res.get("chain"):
+        msg = f"⏸️ BCM Bybit Options: Option chain unavailable for {base_coin}. Skipping."
+        print(msg)
+        return {"status": "skipped", "reason": msg}
+
+    chain = chain_res.get("chain", [])
+    print(f"   Chain loaded: {len(chain)} contracts")
+
+    # Summarize chain for LLM (top 30 by open interest, with IV and Greeks)
+    def _fmt_chain_summary(contracts, limit=30):
+        """Extract key fields for LLM context."""
+        rows = []
+        for c in contracts[:limit]:
+            rows.append({
+                "symbol": c.get("symbol"),
+                "markPrice": c.get("markPrice"),
+                "openInterest": c.get("openInterest"),
+                "iv": c.get("iv"),
+                "delta": c.get("delta"),
+                "gamma": c.get("gamma"),
+                "theta": c.get("theta"),
+                "vega": c.get("vega"),
+                "bid1Price": c.get("bid1Price"),
+                "ask1Price": c.get("ask1Price"),
+            })
+        return rows
+
+    chain_summary = _fmt_chain_summary(chain)
+    # Spot price from first contract's underlying or direct fetch
+    spot_price = 0.0
+    try:
+        try:
+            from backend.bcm.exchange_factory import ExchangeFactory
+        except ImportError:
+            from exchange_factory import ExchangeFactory
+        spot_broker = ExchangeFactory.get_spot_broker()
+        # TODO: Implement get_spot_price in spot broker or get it from chain
+        if hasattr(spot_broker, 'get_spot_price'):
+            spot_price = spot_broker.get_spot_price(f"{base_coin}USDT")
+        else:
+            spot_price = 1000.0  # Fallback for now if not implemented
+        print(f"   Spot {base_coin}: ${spot_price:,.2f}")
+    except Exception as e:
+        print(f"   Spot price fetch failed: {e}")
+
+    # ── Step 3: Macro Context ────────────────────────────────────
+    print("Step 3: Fetching macro context for options pricing...")
+    global_macro = get_global_macro_metrics()
+    fred_data = get_fred_macro_regime()
+    macro_terminal = get_macro_terminal_context(base_coin)
+    current_date = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+
+    # ── Step 4: Options Strategist LLM Decision ──────────────────
+    print("Step 4: Consulting Options Strategist LLM...")
+    max_loss_cap = round(account_equity * 0.02, 2)  # 2% equity hard cap
+
+    # Pre-compute conditional blocks (backslash not allowed in f-string expressions in Python < 3.12)
+    macro_terminal_section = ("--- MACRO TERMINAL ---\n" + macro_terminal) if macro_terminal else ""
+
+    options_prompt = (
+        f"You are the BCM Options Strategist. Today is {current_date}.\n\n"
+        f"## Account State\n"
+        f"- Bybit UNIFIED Equity: ${account_equity:,.2f}\n"
+        f"- Available Capital: ${usdc_avail:,.2f}\n"
+        f"- Max Allowed Loss (2% cap): ${max_loss_cap:.2f}\n\n"
+        f"## Asset\n"
+        f"- Base Coin: {base_coin}\n"
+        f"- Current Spot Price: ${spot_price:,.2f}\n"
+        f"- Expiry Filter: {exp_date or 'All expirations'}\n\n"
+        f"## Option Chain Summary (Top 30 by Open Interest)\n"
+        f"{json.dumps(chain_summary, indent=2)}\n\n"
+        f"## Macro Environment\n"
+        f"{global_macro}\n\n"
+        f"{fred_data}\n\n"
+        f"{macro_terminal_section}\n\n"
+        f"## Task\n"
+        f"Design the BEST defined-risk credit spread for current conditions.\n"
+        f"Constraints:\n"
+        f"- Max loss must be <= ${max_loss_cap:.2f} (2% equity cap)\n"
+        f"- Only OTM strikes (sell-leg >= 5% from spot)\n"
+        f"- Prefer longer-dated expiry (>60 days) for stable IV premium\n"
+        f"- Both legs must exist in the chain above (check symbols carefully)\n"
+        f"- Output ONLY valid JSON, no markdown, no explanation outside JSON\n\n"
+        f"Required JSON keys: strategy, reasoning, confidence, sell_leg, buy_leg, net_credit_usd, max_loss_usd, breakeven_price\n"
+        f"If no suitable setup exists, output strategy=\"wait\" with sell_leg=null and buy_leg=null."
+    )
+
+    decision_raw = call_llm("Options Strategist", options_prompt)
+    print(f"   Options Strategist response ({len(decision_raw)} chars)")
+
+
+    # Parse LLM JSON
+    try:
+        content = decision_raw.strip()
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        decision = json.loads(content)
+    except Exception as parse_err:
+        err_msg = f"❌ BCM Options: Failed to parse Options Strategist JSON: {str(decision_raw)[:300]}"
+        print(err_msg)
+        send_telegram_msg(err_msg)
+        return {"status": "error", "reason": "JSON parse error", "raw": decision_raw[:500]}
+
+    strategy = decision.get("strategy", "wait")
+    reasoning = decision.get("reasoning", "")
+    confidence = float(decision.get("confidence", 0))
+    sell_leg = decision.get("sell_leg")
+    buy_leg = decision.get("buy_leg")
+    net_credit = float(decision.get("net_credit_usd", 0))
+    max_loss = float(decision.get("max_loss_usd", 0))
+    breakeven = decision.get("breakeven_price", "N/A")
+
+    print(f"   Strategy: {strategy.upper()} | Confidence: {confidence:.0f}% | Net Credit: ${net_credit:.0f} | Max Loss: ${max_loss:.0f}")
+
+    # ── Step 4a: Wait path ───────────────────────────────────────
+    if strategy == "wait" or not sell_leg or not buy_leg:
+        msg = (
+            f"⏸️ *BCM Bybit Options — WAIT*\n"
+            f"Asset: `{base_coin}` | Confidence: `{confidence:.0f}%`\n"
+            f"💬 {reasoning[:500]}"
+        )
+        print(f"   Decision: WAIT — {reasoning[:200]}")
+        send_telegram_msg(msg)
+        return {"status": "wait", "strategy": strategy, "reasoning": reasoning}
+
+    # ── Step 5: Compliance Audit ─────────────────────────────────
+    print("Step 5: Compliance audit...")
+    try:
+        cco = ComplianceOfficer()
+        cco_passed, cco_reason = cco.audit_options_trade(
+            base_coin=base_coin,
+            strategy=strategy,
+            max_loss_usd=max_loss,
+            net_credit_usd=net_credit,
+            account_equity=account_equity,
+            num_legs=2,
+            reasoning=reasoning
+        )
+    except Exception as cco_err:
+        cco_passed, cco_reason = False, f"Compliance system error: {cco_err}"
+
+    if not cco_passed:
+        msg = (
+            f"🚫 *BCM Bybit Options — COMPLIANCE REJECTION*\n"
+            f"Strategy: `{strategy}` | Asset: `{base_coin}`\n"
+            f"Reason: {cco_reason}"
+        )
+        print(f"   ❌ REJECTED: {cco_reason}")
+        send_telegram_msg(msg)
+        return {"status": "rejected", "reason": cco_reason}
+
+    print(f"   ✅ Compliance Approved: {cco_reason}")
+
+    # ── Step 6: Execute Both Legs ────────────────────────────────
+    print("Step 6: Executing options spread on Bybit...")
+    exec_results = {}
+
+    for leg_name, leg in [("sell_leg", sell_leg), ("buy_leg", buy_leg)]:
+        if not leg:
+            continue
+        print(f"   Placing {leg_name}: {leg.get('side')} {leg.get('symbol')} @ {leg.get('price')}")
+        try:
+            result = broker.place_option_order(
+                symbol=leg["symbol"],
+                side=leg["side"],
+                order_type=leg.get("order_type", "Limit"),
+                qty=str(leg.get("qty", "1")),
+                price=str(leg.get("price", "0"))
+            )
+            exec_results[leg_name] = result
+            print(f"   → {leg_name} result: {result}")
+
+            # If first leg fails, abort second leg to avoid unhedged exposure
+            if leg_name == "sell_leg" and result.get("status") != "success":
+                abort_msg = (
+                    f"⚠️ *BCM Bybit Options — SELL LEG FAILED*\n"
+                    f"Symbol: `{leg.get('symbol')}`\n"
+                    f"Error: {result.get('message', 'Unknown')}\n"
+                    f"Buy leg NOT placed (avoiding naked exposure)."
+                )
+                print(f"   ⚠️ Sell leg failed — aborting spread to avoid naked position")
+                send_telegram_msg(abort_msg)
+                return {"status": "partial_failure", "sell_leg": result, "buy_leg": None}
+
+        except Exception as exec_err:
+            exec_results[leg_name] = {"status": "error", "error": str(exec_err)}
+            print(f"   ❌ {leg_name} exception: {exec_err}")
+
+    # ── Step 7: Log & Notify ─────────────────────────────────────
+    print("Step 7: Logging and sending Telegram notification...")
+    sell_ok = exec_results.get("sell_leg", {}).get("status") == "success"
+    buy_ok  = exec_results.get("buy_leg",  {}).get("status") == "success"
+
+    # Log to BCM memory
+    try:
+        tracking_id = f"BCM-OPT-{int(time.time())}"
+        log_entry = {
+            "base_coin": base_coin,
+            "strategy": strategy,
+            "sell_leg": sell_leg,
+            "buy_leg": buy_leg,
+            "net_credit_usd": net_credit,
+            "max_loss_usd": max_loss,
+            "breakeven": breakeven,
+            "exec_sell": exec_results.get("sell_leg"),
+            "exec_buy":  exec_results.get("buy_leg"),
+            "confidence": confidence,
+            "compliance": cco_reason,
+        }
+        memory.log_decision(
+            tracking_id,
+            f"{base_coin}_OPTIONS",
+            strategy,
+            1,
+            spot_price,
+            reasoning,
+            log_entry
+        )
+    except Exception as mem_err:
+        print(f"   ⚠️ Memory log failed: {mem_err}")
+
+    # Telegram report
+    status_emoji = "✅" if (sell_ok and buy_ok) else "⚠️"
+    msg = (
+        f"{status_emoji} *BCM Bybit Options — EXECUTED*\n"
+        f"Strategy: `{strategy.upper()}` | Asset: `{base_coin}` | Conf: `{confidence:.0f}%`\n\n"
+        f"📊 *Spread Parameters:*\n"
+        f"• Sell: `{sell_leg.get('symbol')}` @ `${sell_leg.get('price')}` → {'✅' if sell_ok else '❌'}\n"
+        f"• Buy:  `{buy_leg.get('symbol')}` @ `${buy_leg.get('price')}` → {'✅' if buy_ok else '❌'}\n\n"
+        f"💰 Net Credit: `${net_credit:.0f}` | Max Loss: `${max_loss:.0f}` | BE: `${breakeven}`\n"
+        f"✅ *CCO:* {cco_reason[:120]}\n\n"
+        f"📝 {reasoning[:300]}..."
+    )
+    send_telegram_msg(msg)
+    print(f"\n{'='*60}")
+    print(f"  Options Cycle Complete: sell_ok={sell_ok}, buy_ok={buy_ok}")
+    print(f"{'='*60}\n")
+
+    return {
+        "status": "executed" if (sell_ok and buy_ok) else "partial",
+        "strategy": strategy,
+        "sell_leg": exec_results.get("sell_leg"),
+        "buy_leg":  exec_results.get("buy_leg"),
+        "net_credit_usd": net_credit,
+        "max_loss_usd": max_loss,
+        "breakeven_price": breakeven,
+        "confidence": confidence,
+        "cco_reason": cco_reason
+    }
+
 
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "BTC"
     run_autonomous_cycle(target)
+
