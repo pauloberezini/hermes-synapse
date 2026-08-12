@@ -44,7 +44,10 @@ def _find_executable(cmd: str) -> str:
 class MCPServerClient:
     def __init__(self, name: str, config: Dict[str, Any]):
         self.name = name
-        self.url = config.get("url")
+        raw_url = config.get("url")
+        if raw_url and os.path.exists("/.dockerenv") and ("localhost" in raw_url or "127.0.0.1" in raw_url):
+            raw_url = raw_url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+        self.url = raw_url
         self.http_headers = config.get("headers", {})
         self.command = config.get("command")
         self.args = config.get("args", [])
