@@ -123,10 +123,15 @@ async def lifespan(app: FastAPI):
         import sys
         import subprocess
         logger.info("BCM Session Scheduler background loop started.")
+        await asyncio.sleep(15)  # Allow FastAPI startup to complete & bind port first
         while True:
             try:
-                # Runs the session_scheduler checking rules every minute
-                subprocess.run([sys.executable, "/app/backend/bcm/session_scheduler.py"], capture_output=True)
+                # Runs the session_scheduler checking rules in a background thread to prevent blocking main event loop
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, "/app/backend/bcm/session_scheduler.py"],
+                    capture_output=True
+                )
             except Exception as e:
                 logger.error(f"Error in BCM session scheduler task: {e}")
             await asyncio.sleep(60)
