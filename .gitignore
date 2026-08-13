@@ -97,4 +97,9 @@ backend/bcm/package-lock.json
 backend/bcm/*.log
 backend/logs/
 
-
+# Local databases and scratch files
+*.db
+*.db-wal
+*.db-shm
+scratch/
+scratch_test.py
