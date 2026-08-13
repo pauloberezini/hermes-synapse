@@ -425,7 +425,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'en',
         const token = localStorage.getItem('jarvis_auth_token');
         const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
         const response = fetchWithAuth
-          ? await fetchWithAuth('/api/office/state', { signal: controller.signal })
+          ? await fetchWithAuth('/api/office/state', { headers, signal: controller.signal })
           : await fetch('/api/office/state', { headers, signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json() as { agents?: AgentModel[] };
