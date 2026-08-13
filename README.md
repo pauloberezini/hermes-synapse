@@ -190,7 +190,9 @@ hermes-synapse/
 │   ├── tools.py          # All skill tool implementations
 │   └── subagents.py      # Specialized agent classes
 ├── frontend/             # React + Vite dashboard
-├── docker-compose.yml    # Production stack
+├── k8s/                  # Kubernetes Deployment Manifests
+├── docker-compose.yml    # Production stack (Docker)
+├── docker-compose.swarm.yml # Docker Swarm Stack
 ├── docker-compose.dev.yml # Development stack (hot-reload)
 └── .env.example          # Configuration template
 ```
@@ -205,8 +207,10 @@ hermes-synapse/
 - [x] Qdrant RAG memory with fastembed (local embeddings)
 - [x] Python code sandbox with self-correction loop
 - [x] Telegram bot interface
+- [x] **Open-Core Skills Marketplace** — community-contributed plugins and MCP servers
+- [x] **Kubernetes & Swarm Ready** — production scaling
+- [x] **100% English OSS Localization** — global community adoption
 - [ ] **Plugin SDK** — `pip install hermes-sdk` → write your own skills
-- [ ] **Skills Marketplace** — community-contributed connectors
 - [ ] **Voice interface** — Whisper STT + TTS replies
 - [ ] **SaaS mode** — multi-tenant namespace isolation
 
