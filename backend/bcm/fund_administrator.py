@@ -77,7 +77,7 @@ def generate_weekly_report():
 
 def generate_global_macro_dashboard():
     """
-    Stage 3: Global Macro Dashboard (Картина Мира).
+    Stage 3: Global Macro Dashboard (Картиon Мира).
     Collects high-level macro context and saves it to an Obsidian/RAG accessible Markdown file.
     """
     try:
@@ -93,22 +93,22 @@ def generate_global_macro_dashboard():
     
     # In a full implementation, this calls Macro MCP / yfinance for real data.
     # For now, it initializes the living document structure.
-    content = f"""# 🌍 Картина Мира (Global Macro Dashboard)
+    content = f"""# 🌍 Картиon Мира (Global Macro Dashboard)
 *Последнее авто-обновление: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
 
-## 🏦 Монетарная политика (Центробанки)
+## 🏦 Монетарonя политика (Центробанки)
 - **FED (ФРС США):** Ожидание удержания или снижения ставки. Следить за CPI.
 - **ECB (ЕЦБ):** Склонность к смягчению.
 
 ## 📊 Ключевые метрики
-- **DXY (Индекс доллара):** Оценка силы доллара (влияет на золото и мажоры).
+- **DXY (Индекс доллара):** Оценка силы доллара (влияет on золото и мажоры).
 - **US10Y (Облигации):** Доходность 10-леток как индикатор перетока капитала.
 
 ## 🛡️ Геополитика & Риски
 - Оценка глобальных рисков, цепочек поставок и конфликтов.
 
-## 📈 Крипто-доминация
-- **BTC.D:** Доминация биткоина.
+## 📈 Крипто-домиonция
+- **BTC.D:** Домиonция биткоиon.
 - **Altseason Index:** Состояние альткоинов.
 
 ---

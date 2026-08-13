@@ -14,7 +14,7 @@ services:
       - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-flash}
+      - LLM_MODEL=${LLM_MODEL:-ollama/llama3}
       - QDRANT_HOST=qdrant
       - OBSIDIAN_HOST=host.docker.internal
     extra_hosts:

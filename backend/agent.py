@@ -69,13 +69,13 @@ Respond with ONLY one word: direct, agent, or orchestrate."""
 
 # Keyword fallback (used when LLM classifier fails)
 _ORCHESTRATE_KEYWORDS = [
-    "вычисли", "посчитай", "сравни", "построй", "график", "нарисуй", "диаграмма",
-    "анализ", "аналитик", "прогноз", "ставка", "коэффициент", "исследуй",
+    "calculate", "compute", "compare", "build", "chart", "draw", "diagram",
+    "analysis", "analyst", "forecast", "bet", "odds", "investigate",
     "calculate", "compare", "plot", "chart", "predict", "forecast", "analytics", "odds"
 ]
 _AGENT_KEYWORDS = [
-    "найди", "поищи", "курс", "цена", "новости", "погода", "find", "search", "news",
-    "btc", "биткоин", "ethereum", "крипто", "акции",
+    "find", "search", "rate", "price", "news", "weather", "find", "search", "news",
+    "btc", "bitcoin", "ethereum", "crypto", "stocks",
 ]
 
 async def generate_chat_title(user_message: str, api_key: str, api_base: str, model: str) -> str:
@@ -132,7 +132,7 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str) ->
     
     # Try LLM classifier with the fast/cheap planner model
     from backend.subagents import get_agent_model
-    classifier_model = get_agent_model("planner", os.getenv("LLM_MODEL", "google/gemini-2.5-pro"))
+    classifier_model = get_agent_model("planner", os.getenv("LLM_MODEL", "ollama/llama3"))
     
     try:
         import httpx
@@ -207,10 +207,10 @@ CRITICAL RULES FOR CREATING SUB-AGENTS:
 - If Sir asks to "create an agent," "make a sub-agent," "add a subagent," or "write an assistant," you MUST IMMEDIATELY call the `create_subagent` tool to persist it in the database. NEVER state or confirm that you created an agent unless the `create_subagent` tool call was executed and returned success!
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
   * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1` model.
-  * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `google/gemini-2.5-flash` model.
-  * For sub-agents managing document indexing, processing research papers, knowledge curation, or RAG tasks (which require a large context window and robust tool calling) — choose the `google/gemini-2.5-flash` model.
+  * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `ollama/llama3` model.
+  * For sub-agents managing document indexing, processing research papers, knowledge curation, or RAG tasks (which require a large context window and robust tool calling) — choose the `ollama/llama3` model.
   * For simple tasks, quick web search, RSS news reading, or basic Q&A — choose the `deepseek/deepseek-v4-flash` model.
-  * For general intellectual and text tasks of high complexity (sophisticated assistant) — choose the `google/gemini-2.5-pro` model.
+  * For general intellectual and text tasks of high complexity (sophisticated assistant) — choose the `ollama/llama3` model.
 
 
 CRITICAL RULES FOR SPORTS ANALYSIS AND BETTING:
@@ -254,7 +254,7 @@ class JarvisAgent:
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
-        self.model = os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
+        self.model = os.getenv("LLM_MODEL", "ollama/llama3")
         self.system_prompt = DEFAULT_SYSTEM_PROMPT
         self.max_history_len = 20  # Keep last 20 messages for context
         self.last_costs: Dict[str, float] = {}
@@ -284,7 +284,7 @@ class JarvisAgent:
     async def respond(self, user_message: str, session_id: str = "default", override_agent_id: Optional[str] = None) -> str:
         """Sends chat request to OpenRouter LLM model with memory context and system prompt."""
         if not self.api_key:
-            return "Ошибка: OPENROUTER_API_KEY не задан в конфигурации .env, Сэр."
+            return "Error: OPENROUTER_API_KEY is not set in the .env configuration, Sir."
 
         # IMMEDIATE persistence of user message to prevent session loss on UI refresh
         from backend import database as db
@@ -302,7 +302,7 @@ class JarvisAgent:
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
                 if not response_text or not response_text.strip():
-                    response_text = "Сэр, процесс оркестрации завершен, но результат ответа оказался пустым."
+                    response_text = "Sir, the orchestration process has completed, but the response was empty."
                 latency_ms = int((time.time() - start_time) * 1000)
                 
                 # Save the assistant message exchange in the DB
@@ -355,7 +355,7 @@ class JarvisAgent:
         log_activity(
             activity_type="active",
             source="Agent",
-            message=f"👤 Получен запрос от Сэра: '{user_message}'"
+            message=f"👤 Received request from Sir: '{user_message}'"
         )
 
         # ── Complexity routing (Fugu-style) ───────────────────────────────────────
@@ -364,7 +364,7 @@ class JarvisAgent:
         log_activity(
             activity_type="active",
             source="Router",
-            message=f"🎯 Сложность запроса: {complexity.upper()} — '{user_message[:60]}'"
+            message=f"🎯 Request complexity: {complexity.upper()} — '{user_message[:60]}'"
         )
 
         if complexity in ("agent", "orchestrate"):
@@ -377,9 +377,9 @@ class JarvisAgent:
             
             context_query = user_message
             if hits:
-                context_block = "\n\n[Контекст из вашей базы знаний для справки]:\n"
+                context_block = "\n\n[Context from your knowledge base for reference]:\n"
                 for hit in hits:
-                    context_block += f"- Из документа '{hit['title']}': \"{hit['content']}\"\n"
+                    context_block += f"- From document '{hit['title']}': \"{hit['content']}\"\n"
                 context_query = f"{user_message}\n{context_block}"
                 
             start_time = time.time()
@@ -387,7 +387,7 @@ class JarvisAgent:
                 orch_result = await run_orchestration(context_query, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
                 if not response_text or not response_text.strip():
-                    response_text = "Сэр, процесс оркестрации завершен, но результат ответа оказался пустым."
+                    response_text = "Sir, the orchestration process has completed, but the response was empty."
                 traces = orch_result["traces"]
                 error_msg = None
                 self.last_run_metadata[session_id] = {
@@ -396,7 +396,7 @@ class JarvisAgent:
                     "steps": orch_result.get("steps", [])
                 }
             except Exception as e:
-                response_text = f"Простите, Сэр. Возник сбой при координации моих субагентов: {str(e)}"
+                response_text = f"Apologies, Sir. A failure occurred while coordinating my subagents: {str(e)}"
                 traces = [{"timestamp": time.strftime("%H:%M:%S"), "agent": "Orchestrator", "action": "Error", "message": str(e), "status": "error"}]
                 error_msg = str(e)
                 self.last_run_metadata[session_id] = {
@@ -456,23 +456,23 @@ class JarvisAgent:
         
         user_content = user_message
         if hits:
-            context_block = "\n\n[Контекст из вашей базы знаний для справки]:\n"
+            context_block = "\n\n[Context from your knowledge base for reference]:\n"
             for hit in hits:
-                context_block += f"- Из документа '{hit['title']}': \"{hit['content']}\"\n"
+                context_block += f"- From document '{hit['title']}': \"{hit['content']}\"\n"
             user_content = f"{user_message}\n{context_block}"
         
         # Build payload with system prompt + chat history + current message
         from datetime import datetime
         from zoneinfo import ZoneInfo
         _now_il = datetime.now(ZoneInfo("Asia/Jerusalem"))
-        _day_names_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+        _day_names_en = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         current_time_str = _now_il.strftime("%Y-%m-%d %H:%M:%S")
-        day_of_week = _day_names_ru[_now_il.weekday()]
+        day_of_week = _day_names_en[_now_il.weekday()]
         system_info = (
-            f"\n\n[Системная информация]:\n"
-            f"Текущая дата и время: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
-            f"День недели: {day_of_week}\n"
-            f"ВАЖНОЕ ПРАВИЛО: Ваши встроенные знания ограничены прошлым. Для получения ЛЮБОЙ актуальной информации о событиях, спортивных матчах (например, сегодняшние игры, коэффициенты ставок, аналитика), новостях, котировках или погоде, вы ОБЯЗАНЫ использовать поиск по интернету через инструмент web_search. Никогда не выдумывайте события и не опирайтесь на свои старые данные!"
+            f"\n\n[System Information]:\n"
+            f"Current date and time: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
+            f"Day of the week: {day_of_week}\n"
+            f"IMPORTANT RULE: Your built-in knowledge is limited to the past. To get ANY up-to-date information about events, sports matches (e.g., today\'s games, betting odds, analytics), news, quotes, or weather, you MUST use the internet search via the web_search tool. Never fabricate events or rely on your outdated data!"
         )
         from backend.database import get_setting as _get_setting
         _lang = _get_setting("language") or "en"
@@ -526,7 +526,7 @@ class JarvisAgent:
                     if response.status_code != 200:
                         error_msg = f"HTTP Error {response.status_code}: {response.text}"
                         provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code}."
+                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {response.status_code}."
                         break
                         
                     raw_data = response.json()
@@ -611,7 +611,7 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source="Agent",
-                            message=f"💬 Ответ Сэру сформирован. Затраты: ${cost_usd:.6f}",
+                            message=f"💬 Response to Sir formulated. Cost: ${cost_usd:.6f}",
                             token_cost=cost_usd
                         )
                         
@@ -632,7 +632,7 @@ class JarvisAgent:
                     log_activity(
                         activity_type="active",
                         source="Agent",
-                        message=f"🧠 Решение: запуск инструментов {[tc.get('function', {}).get('name') for tc in tool_calls]}"
+                        message=f"🧠 Decision: launching tools {[tc.get('function', {}).get('name') for tc in tool_calls]}"
                     )
                     
                     # 1. Append assistant's tool-call response to messages thread
@@ -640,9 +640,36 @@ class JarvisAgent:
                     
                     # 2. Run each tool call and append the results
                     import json
+                    from backend.marketplace.lifecycle import LifecycleManager
+                    from backend.marketplace.billing_adapter import get_billing_adapter
+                    
+                    billing = get_billing_adapter()
+                    user_id = "default_user"  # Single-tenant fallback for now
+                    
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
+                        
+                        # --- BILLING ENFORCEMENT ---
+                        skill_id = LifecycleManager.get_skill_for_tool(tool_name)
+                        if skill_id:
+                            is_entitled = await billing.check_entitlement(user_id, skill_id)
+                            if not is_entitled:
+                                error_msg = f"Access denied: You do not have an active license for the '{skill_id}' skill. Please upgrade your plan."
+                                log_activity(
+                                    activity_type="active",
+                                    source="Agent",
+                                    message=f"🚫 Blocked: {error_msg}"
+                                )
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.get("id"),
+                                    "name": tool_name,
+                                    "content": json.dumps({"error": error_msg})
+                                })
+                                continue
+                        # ---------------------------
+                        
                         try:
                             tool_args = json.loads(tool_args_str)
                         except Exception:
@@ -652,7 +679,7 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source="Agent",
-                            message=f"🛠️ Выполнение: '{tool_name}' с аргументами {tool_args_str}"
+                            message=f"🛠️ Execution: \'{tool_name}\' with arguments {tool_args_str}"
                         )
                         result_str = execute_tool(tool_name, tool_args, chat_id=session_id)
                         
@@ -662,13 +689,13 @@ class JarvisAgent:
                                 log_activity(
                                     activity_type="active",
                                     source="Agent",
-                                    message=f"❌ Ошибка в '{tool_name}': {res_obj['error']}"
+                                    message=f"❌ Error in \'{tool_name}\': {res_obj['error']}"
                                 )
                             else:
                                 log_activity(
                                     activity_type="active",
                                     source="Agent",
-                                    message=f"✅ Результат '{tool_name}' получен успешно"
+                                    message=f"✅ Result for \'{tool_name}\' received successfully"
                                 )
                         except Exception:
                             pass
@@ -688,7 +715,7 @@ class JarvisAgent:
             latency_ms = int((time.time() - start_time) * 1000)
             error_msg = str(e)
             logger.exception("Error during OpenRouter chat completion call")
-            response_text = "Прошу прощения, Сэр. Произошел сбой при обработке вашего запроса."
+            response_text = "Apologies, Sir. A failure occurred while processing your request."
 
         # Add call record to global decision logs
         from datetime import datetime
@@ -777,7 +804,7 @@ class JarvisAgent:
                         fn_name = parsed.get("name")
                         fn_args = parsed.get("parameters") or parsed.get("arguments") or {}
                     elif "name" in parsed and isinstance(parsed.get("name"), str) and any(
-                        parsed["name"].startswith(pfx) for pfx in ("bybit_", "ctrader_", "bcm_", "exchange_")
+                        parsed["name"].startswith(pfx) for pfx in ("bybit_", "bcm_", "exchange_")
                     ):
                         # {"name": "bybit_place_order", "symbol": "SOLUSDT", ...}
                         fn_name = parsed["name"]
@@ -817,7 +844,7 @@ class JarvisAgent:
         log_activity(
             activity_type="active",
             source=subagent_name,
-            message=f"👤 Получен запрос для субагента '{subagent_name}': '{user_message}'"
+            message=f"👤 Received request for subagent '{subagent_name}': '{user_message}'"
         )
 
         history = self.get_history(session_id)
@@ -828,25 +855,25 @@ class JarvisAgent:
         
         user_content = user_message
         if hits:
-            context_block = "\n\n[Контекст из вашей базы знаний для справки]:\n"
+            context_block = "\n\n[Context from your knowledge base for reference]:\n"
             for hit in hits:
-                context_block += f"- Из документа '{hit['title']}': \"{hit['content']}\"\n"
+                context_block += f"- From document '{hit['title']}': \"{hit['content']}\"\n"
             user_content = f"{user_message}\n{context_block}"
         
         # Build payload with subagent prompt + chat history + current message
         from datetime import datetime
         from zoneinfo import ZoneInfo
         _now_il = datetime.now(ZoneInfo("Asia/Jerusalem"))
-        _day_names_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+        _day_names_en = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         current_time_str = _now_il.strftime("%Y-%m-%d %H:%M:%S")
-        day_of_week = _day_names_ru[_now_il.weekday()]
+        day_of_week = _day_names_en[_now_il.weekday()]
         system_info = (
-            f"\n\n[Системная информация]:\n"
-            f"Текущая дата и время: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
-            f"День недели: {day_of_week}\n"
-            f"ВАЖНОЕ ПРАВИЛО: Ваши встроенные знания ограничены прошлым. Для получения ЛЮБОЙ актуальной информации о событиях, спортивных матчах (например, сегодняшние игры, коэффициенты ставок, аналитика), новостях, котировках или погоде, вы ОБЯЗАНЫ использовать поиск по интернету через инструмент web_search. Никогда не выдумывайте события и не опирайтесь на свои старые данные!\n"
-            f"КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО искать, использовать, упоминать, цитировать или пересказывать в ответах Сэру готовые прогнозы, чужие статьи, советы или мнения о валуйных ставках (например, 'готовые прогнозы', 'валуйные ставки по версии LiveSport', 'экспертные мнения'). Вы должны искать исключительно сырые числовые данные: пары соперников, точное время начала матчей и коэффициенты (odds/котировки) букмекеров. Любые выводы и математические расчеты валуйности (EV = Probability * Odds - 1) вы обязаны делать строго самостоятельно и приводить только свои собственные результаты, не ссылаясь на чужие мнения!\n"
-            f"Вы не имеете права лениться делать расчеты: если точных числовых коэффициентов в поиске нет, вы обязаны провести математическое прогнозирование (например, рассчитать вероятности победы/ничьей/поражения по распределению Пуассона на основе средней результативности или статистики голов команд) и рассчитать ожидаемую валуйность (EV = P * Odds - 1) на основе расчетных вероятностей и примерных коэффициентов, вместо выдачи сухого отказа или цитирования чужих прогнозов."
+            f"\n\n[System Information]:\n"
+            f"Current date and time: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
+            f"Day of the week: {day_of_week}\n"
+            f"IMPORTANT RULE: Your built-in knowledge is limited to the past. To get ANY up-to-date information about events, sports matches (e.g., today\'s games, betting odds, analytics), news, quotes, or weather, you MUST use the internet search via the web_search tool. Never fabricate events or rely on your outdated data!\n"
+            f"IT IS STRICTLY FORBIDDEN to search, use, mention, quote, or retell ready-made forecasts, other people\'s articles, advice, or opinions about value bets (e.g., \'ready forecasts\', \'value bets according to LiveSport\', \'expert opinions\') in responses to Sir. You must search exclusively for raw numerical data: opponent pairs, exact match start times, and bookmaker odds. Any conclusions and mathematical calculations of value (EV = Probability * Odds - 1) must be done strictly independently, and you must provide only your own results without referring to external opinions!\n"
+            f"You are not allowed to be lazy in calculations: if exact numerical odds are not found in the search, you must perform mathematical forecasting (e.g., calculate probabilities of win/draw/loss using Poisson distribution based on average scoring or team goal statistics) and calculate expected value (EV = P * Odds - 1) based on calculated probabilities and approximate odds, instead of giving a dry refusal or quoting external forecasts."
         )
         from backend.database import get_setting as _get_setting
         _lang = _get_setting("language") or "en"
@@ -1029,7 +1056,7 @@ class JarvisAgent:
                         error_msg = f"HTTP Error {response.status_code if response else 'No Response'}: {response.text if response else ''}"
                         logger.error(f"Subagent '{subagent_name}' ({subagent_model}) API error: {error_msg}")
                         provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        response_text = f"Простите, Сэр. Возникли трудности при связи с сервером {provider_name}: {response.status_code if response else 'Timeout'}."
+                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {response.status_code if response else 'Timeout'}."
                         break
                         
                     raw_data = response.json()
@@ -1050,13 +1077,13 @@ class JarvisAgent:
                         
                         # Programmatic anti-hallucination guardrail for trading agents:
                         # If no successful bybit_place_order was executed in this turn, strictly forbid claims of trade execution.
-                        if not order_placed_successfully and any(w in response_text.lower() for w in ["successfully executed", "- executed", "сделка открыта", "placed via bybit_place_order"]):
+                        if not order_placed_successfully and any(w in response_text.lower() for w in ["successfully executed", "- executed", "trade opened", "placed via bybit_place_order"]):
                             logger.warning(f"Subagent '{subagent_name}' claimed trade execution without successful bybit_place_order. Overriding response.")
-                            response_text = "⚠️ Внимание: Вызов размещения ордеров (`bybit_place_order`) в данном ходу не выполнялся. Сделки на Bybit НЕ открывались."
+                            response_text = "⚠️ Warning: Order placement call (`bybit_place_order`) was not executed in this turn. Trades on Bybit were NOT opened."
 
                         # Fallback for empty text content after tools
                         if not response_text.strip() and tool_executed:
-                            response_text = "Действия успешно выполнены, Сэр."
+                            response_text = "Actions successfully executed, Sir."
                         
                         cost_usd = calculate_cost(subagent_model, total_prompt_tokens, total_completion_tokens)
                         self.last_costs[session_id] = cost_usd
@@ -1064,7 +1091,7 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source=subagent_name,
-                            message=f"💬 Ответ от '{subagent_name}' получен. Затраты: ${cost_usd:.6f}",
+                            message=f"💬 Response from \'{subagent_name}\' received. Cost: ${cost_usd:.6f}",
                             token_cost=cost_usd
                         )
                         
@@ -1082,9 +1109,38 @@ class JarvisAgent:
                     
                     messages.append(choice_msg)
                     
+                    from backend.marketplace.lifecycle import LifecycleManager
+                    from backend.marketplace.billing_adapter import get_billing_adapter
+                    
+                    billing = get_billing_adapter()
+                    user_id = "default_user"  # Single-tenant fallback for now
+                    
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
+                        
+                        # --- BILLING ENFORCEMENT ---
+                        skill_id = LifecycleManager.get_skill_for_tool(tool_name)
+                        if skill_id:
+                            is_entitled = await billing.check_entitlement(user_id, skill_id)
+                            if not is_entitled:
+                                error_msg = f"Access denied: You do not have an active license for the '{skill_id}' skill. Please upgrade your plan."
+                                from backend.activity_logger import log_activity
+                                log_activity(
+                                    activity_type="active",
+                                    source=f"Subagent {subagent_name}",
+                                    message=f"🚫 Blocked: {error_msg}"
+                                )
+                                import json
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.get("id"),
+                                    "name": tool_name,
+                                    "content": json.dumps({"error": error_msg})
+                                })
+                                continue
+                        # ---------------------------
+                        
                         try:
                             import json
                             tool_args = json.loads(tool_args_str)
@@ -1094,7 +1150,7 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source=subagent_name,
-                            message=f"🛠️ Выполнение (субагент): '{tool_name}' с аргументами {tool_args_str}"
+                            message=f"🛠️ Execution (subagent): '{tool_name}' с аргументами {tool_args_str}"
                         )
                         result_str = execute_tool(tool_name, tool_args, chat_id=session_id)
                         if tool_name == "bybit_place_order" and ("success" in result_str.lower() or "orderid" in result_str.lower()):
@@ -1112,7 +1168,7 @@ class JarvisAgent:
             latency_ms = int((time.time() - start_time) * 1000)
             error_msg = str(e)
             logger.exception("Error during OpenRouter subagent chat completion call")
-            response_text = "Прошу прощения, Сэр. Произошел сбой при обработке запроса субагента."
+            response_text = "Apologies, Sir. A failure occurred while processing the subagent\'s request."
 
         # Add call record to global decision logs
         prompt_est = sum(len(m.get("content") or "") for m in messages) // 4

@@ -520,7 +520,7 @@ export function IsoOfficeCanvas({
         ref={canvasRef}
         className="pixel-office-canvas iso-scene-canvas"
         role="img"
-        aria-label={language === 'ru' ? `Изометрический офис: ${room.label.ru}` : `Isometric office: ${room.label.en}`}
+        aria-label={`Isometric office: ${room.label}`}
         tabIndex={0}
         onWheel={event => {
           event.preventDefault();
@@ -572,12 +572,12 @@ export function IsoOfficeCanvas({
       />
 
       <div className="iso-room-heading" aria-live="polite">
-        <span>{language === 'ru' ? room.shortLabel.ru : room.shortLabel.en}</span>
-        <strong>{language === 'ru' ? room.label.ru : room.label.en}</strong>
-        <small>{language === 'ru' ? room.description.ru : room.description.en}</small>
+        <span>{language === 'ru' ? room.shortLabel : room.shortLabel}</span>
+        <strong>{language === 'ru' ? room.label : room.label}</strong>
+        <small>{language === 'ru' ? room.description : room.description}</small>
       </div>
 
-      <nav className="iso-room-switcher" aria-label={language === 'ru' ? 'Комнаты офиса' : 'Office rooms'}>
+      <nav className="iso-room-switcher" aria-label={'Office rooms'}>
         {ISO_ROOMS.map(item => {
           const Icon = ROOM_ICONS[item.id];
           return (
@@ -587,10 +587,10 @@ export function IsoOfficeCanvas({
               className={room.id === item.id ? 'is-active' : ''}
               onClick={() => setRoomId(item.id)}
               aria-pressed={room.id === item.id}
-              title={language === 'ru' ? item.label.ru : item.label.en}
+              title={item.label}
             >
               <Icon size={16} />
-              <span>{language === 'ru' ? item.shortLabel.ru : item.shortLabel.en}</span>
+              <span>{item.shortLabel}</span>
               <b>{roomCounts[item.id]}</b>
             </button>
           );
@@ -603,7 +603,7 @@ export function IsoOfficeCanvas({
             type="button"
             className={`pixel-theme-toggle${themeMenuOpen ? ' is-active' : ''}`}
             onClick={() => setThemeMenuOpen(value => !value)}
-            title={language === 'ru' ? 'Цвет интерфейса' : 'Interface colour'}
+            title={'Interface colour'}
             aria-haspopup="true"
             aria-expanded={themeMenuOpen}
             style={{ '--theme-accent': palette.accent } as React.CSSProperties}

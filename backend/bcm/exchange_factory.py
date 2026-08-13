@@ -3,12 +3,10 @@ try:
     from backend.bcm.exchange_interfaces import ExchangeBrokerInterface, SpotBrokerInterface, OptionsBrokerInterface
     from backend.bcm.bybit_trader import BybitTrader
     from backend.bcm.mock_exchange import MockExchange
-    from backend.bcm.ctrader_broker import CTraderBroker
 except ImportError:
     from exchange_interfaces import ExchangeBrokerInterface, SpotBrokerInterface, OptionsBrokerInterface
     from bybit_trader import BybitTrader
     from mock_exchange import MockExchange
-    from ctrader_broker import CTraderBroker
 
 class ExchangeFactory:
     """Factory to return the active exchange broker based on configuration."""

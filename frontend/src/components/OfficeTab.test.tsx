@@ -62,16 +62,16 @@ describe('OfficeTab interactions', () => {
     expect(screen.getByLabelText('Search agents…')).toBeInTheDocument();
 
     rerender(<OfficeTab t={key => key} language="ru" isConnected />);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Пиксельный офис');
-    expect(screen.getByRole('img', { name: /Изометрический офис:/i })).toBeInTheDocument();
-    expect(screen.getByLabelText('Поиск агента…')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Pixel office');
+    expect(screen.getByRole('img', { name: /Isometric office:/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Search agent...')).toBeInTheDocument();
   });
 
   it('filters agents, opens the inspector, and restores it with keyboard controls', async () => {
     render(<OfficeTab t={key => key} language="ru" isConnected />);
-    await screen.findByRole('img', { name: /Изометрический офис:/i });
+    await screen.findByRole('img', { name: /Isometric office:/i });
     expect(document.querySelector('.office-brand img')).toHaveAttribute('src', '/favicon.svg');
-    fireEvent.change(screen.getByLabelText('Поиск агента…'), { target: { value: 'Data Analyst' } });
+    fireEvent.change(screen.getByLabelText('Search agent...'), { target: { value: 'Data Analyst' } });
     expect(await screen.findByRole('dialog', { name: 'Data Analyst' })).toBeInTheDocument();
     expect((document.querySelector('.inspector-portrait-sprite') as HTMLElement).style.backgroundImage).toContain('/iso-office-assets/scene/characters/');
     expect(localStorage.getItem('hermes_office_agent')).toBe('analyst');
@@ -80,7 +80,7 @@ describe('OfficeTab interactions', () => {
   });
 
   it('switches modes without refetching and persists the selected view', async () => {
-    const { unmount } = render(<OfficeTab t={() => 'ИИ-офис'} language="en" isConnected />);
+    const { unmount } = render(<OfficeTab t={() => 'AI-office'} language="en" isConnected />);
     await screen.findByRole('img', { name: 'Isometric office: Engineering Studio' });
     fireEvent.click(screen.getByRole('tab', { name: 'Command Center' }));
     expect(screen.getByRole('tab', { name: 'Command Center' })).toHaveAttribute('aria-selected', 'true');
@@ -89,19 +89,19 @@ describe('OfficeTab interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: /Project focus: Analytics Platform/i }));
     expect(screen.getByText('Project focus')).toBeInTheDocument();
     unmount();
-    render(<OfficeTab t={() => 'ИИ-офис'} language="en" isConnected />);
+    render(<OfficeTab t={() => 'AI-office'} language="en" isConnected />);
     expect(screen.getByRole('tab', { name: 'Command Center' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('renders a dedicated empty state', async () => {
     mockOfficeResponse([]);
-    render(<OfficeTab t={() => 'ИИ-офис'} language="en" />);
+    render(<OfficeTab t={() => 'AI-office'} language="en" />);
     expect(await screen.findByText('The office is empty')).toBeInTheDocument();
   });
 
   it('keeps the page usable when the initial refresh fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-    render(<OfficeTab t={() => 'ИИ-офис'} language="en" />);
+    render(<OfficeTab t={() => 'AI-office'} language="en" />);
     expect(await screen.findByText('Could not refresh data. Retrying in the background.')).toBeInTheDocument();
   });
 
@@ -117,7 +117,7 @@ describe('OfficeTab interactions', () => {
     }));
     localStorage.setItem('hermes_office_view', 'list');
     mockOfficeResponse(manyAgents);
-    render(<OfficeTab t={() => 'ИИ-офис'} language="en" isConnected />);
+    render(<OfficeTab t={() => 'AI-office'} language="en" isConnected />);
     expect(await screen.findByText('Scale Agent 54')).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(55);
   });

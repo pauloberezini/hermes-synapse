@@ -77,24 +77,10 @@ def get_market_session():
     else:
         return "Late NY / Sydney Session (VERY LOW VOLATILITY - Market is quiet, spreads may widen)"
 
-def send_telegram_msg(message):
-    """Send a notification to Telegram with retries."""
-    if not TELEGRAM_CHAT_ID:
-        print("Telegram Chat ID not set. Skipping notification.")
-        return
-    # Prepend Israel time
-    il_time = israel_time()
-    message = f"[{il_time}] {message}"
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    
-    for attempt in range(3):
-        try:
-            requests.post(url, json=payload, timeout=10)
-            return # Success
-        except Exception as e:
-            print(f"Telegram Attempt {attempt+1} failed: {e}")
-            time.sleep(2)
+try:
+    from backend.bcm.notifications import get_notifier
+except ImportError:
+    from notifications import get_notifier
 
 def extract_json(text):
     """Safely extract the FIRST JSON (object or list) from a noisy string."""
@@ -273,7 +259,7 @@ def get_technical_analysis(ticker):
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Mapping between Analysis Ticker (Yahoo format) and Trading ID (Pepperstone cTrader format)
+# Mapping between Analysis Ticker (Yahoo format) and Trading ID (Exchange Exchange format)
 TICKER_MAP = {
     "BTC": {"analysis": "BTC-USD", "trade_id": 10028, "volume": 0.01},
     "GBPUSD": {"analysis": "GBPUSD=X", "trade_id": 2, "volume": 1000},
@@ -287,15 +273,15 @@ TICKER_MAP = {
     "XAGUSD": {"analysis": "SI=F", "trade_id": 42, "volume": 1},
 }
 
-def get_live_ctrader_positions():
-    """Fetch live positions from Pepperstone cTrader API via tools module."""
+def get_live_exchange_positions():
+    """Fetch live positions from Exchange Exchange API via tools module."""
     try:
         try:
-            from backend.bcm.tools import handle_ctrader_get_positions, VOLUME_FACTOR, FX_VOLUME_FACTOR
+            from backend.bcm.tools import handle_exchange_get_positions, VOLUME_FACTOR, FX_VOLUME_FACTOR
         except ImportError:
-            from tools import handle_ctrader_get_positions, VOLUME_FACTOR, FX_VOLUME_FACTOR
+            from tools import handle_exchange_get_positions, VOLUME_FACTOR, FX_VOLUME_FACTOR
             
-        res = handle_ctrader_get_positions({})
+        res = handle_exchange_get_positions({})
         if isinstance(res, str):
             try:
                 res = json.loads(res)
@@ -309,9 +295,9 @@ def get_live_ctrader_positions():
             positions = res
             
         if not isinstance(positions, list) or len(positions) == 0:
-            return [], "LIVE CTRADER OPEN POSITIONS: NONE (0 open positions)."
+            return [], "LIVE EXCHANGE OPEN POSITIONS: NONE (0 open positions)."
 
-        # Enrich positions with live spot prices from Pepperstone
+        # Enrich positions with live spot prices from Exchange
         sym_ids = list({p.get("symbolId") or p.get("symbol_id") for p in positions
                         if p.get("symbolId") or p.get("symbol_id")})
         live_prices = get_live_spot_prices(sym_ids) if sym_ids else {}
@@ -352,18 +338,19 @@ def get_live_ctrader_positions():
                 "unrealized_pnl": pnl
             })
 
-        summary = f"LIVE CTRADER OPEN POSITIONS ({len(formatted_positions)} active):\n"
+        summary = f"LIVE EXCHANGE OPEN POSITIONS ({len(formatted_positions)} active):\n"
         for item in formatted_positions:
             summary += f"• {item['symbol']} (ID: {item['position_id']}): {item['side']} {item['volume']} lots @ Entry: {item['entry_price']} | Current: {item['current_price']} | SL: {item['sl']} | TP: {item['tp']} | PnL: ${item['unrealized_pnl']}\n"
             
         return formatted_positions, summary
     except Exception as e:
-        print(f"⚠️ Error fetching live cTrader positions: {e}")
-        return [], f"LIVE CTRADER OPEN POSITIONS: Unavailable ({str(e)})"
+        print(f"⚠️ Error fetching live Exchange positions: {e}")
+        return [], f"LIVE EXCHANGE OPEN POSITIONS: Unavailable ({str(e)})"
 
 
 def get_live_spot_prices(symbol_ids: list = None):
-    """Запросить текущие bid/ask котировки напрямую с Pepperstone cTrader.
+    """
+    Request current bid/ask quotes directly from Exchange.
 
     Returns:
         dict: {symbolId: {'bid': float, 'ask': float, 'mid': float, 'name': str}, ...}
@@ -373,11 +360,11 @@ def get_live_spot_prices(symbol_ids: list = None):
         symbol_ids = [10028, 10053, 41, 42, 10013]
     try:
         try:
-            from backend.bcm.tools import handle_ctrader_get_spot_prices
+            from backend.bcm.tools import handle_exchange_get_spot_prices
         except ImportError:
-            from tools import handle_ctrader_get_spot_prices
+            from tools import handle_exchange_get_spot_prices
 
-        res = handle_ctrader_get_spot_prices({"symbol_ids": symbol_ids})
+        res = handle_exchange_get_spot_prices({"symbol_ids": symbol_ids})
         if isinstance(res, str):
             res = json.loads(res)
 
@@ -412,7 +399,7 @@ def check_liquidity_layer_0(symbol: str) -> dict:
         if 21 <= hour <= 23:
             return {"passed": False, "reason": f"Dead zone (Hour {hour} UTC). Low liquidity.", "spread": 0}
 
-    # 2. Check live spread via Pepperstone if available
+    # 2. Check live spread via Exchange if available
     try:
         trade_id = None
         for k, v in TICKER_MAP.items():
@@ -449,7 +436,7 @@ def check_liquidity_layer_0(symbol: str) -> dict:
     return {"passed": True, "reason": "Liquidity assumed OK", "spread": 0}
 
 def get_global_macro_metrics() -> str:
-    """Fetch live VIX and 10Y Yield via yfinance for macro context."""
+    """Fetch live VIX and Ten Year Yield via yfinance for macro context."""
     import yfinance as yf
     try:
         # Fetch ^VIX and ^TNX (10Y Yield)
@@ -598,6 +585,19 @@ def get_macro_terminal_context(ticker: str) -> str:
 def fetch_analytics_playbook(ticker: str) -> str:
     """Fetch historical trading channel playbook & retrospectives from analytics provider."""
     try:
+        notifier = get_notifier()
+        
+        try:
+            from backend.bcm.exchange_factory import ExchangeFactory
+        except ImportError:
+            from exchange_factory import ExchangeFactory
+            
+        broker = ExchangeFactory.get_spot_broker()
+        try:
+            options_broker = ExchangeFactory.get_options_broker()
+        except ValueError:
+            options_broker = broker # fallback if options not supported, we'll handle below
+            
         try:
             from backend.bcm.tools import handle_analytics_query
         except ImportError:
@@ -640,7 +640,7 @@ ROLE_SYSTEM_PROMPTS = {
         "You are the Chief Risk Officer (CRO) at Berezini Capital Management (BCM). "
         "Your sole mandate is capital preservation, strict risk containment, and drawdown prevention. "
         "You MUST verify ATR volatility safety margins, check for a minimum 1:1.5 Risk-to-Reward ratio for proposed SL/TP, "
-        "review active cTrader open positions to prevent duplicate exposure, and veto any high-risk setup."
+        "review active Exchange open positions to prevent duplicate exposure, and veto any high-risk setup."
     ),
     "Managing Director": (
         "You are the Managing Director & Chief Investment Officer (CIO) at Berezini Capital Management (BCM). "
@@ -655,7 +655,7 @@ ROLE_SYSTEM_PROMPTS = {
     ),
     "Options Strategist": (
         "You are the Senior Options Strategist at Berezini Capital Management (BCM), specializing in Bitcoin and Ethereum derivatives. "
-        "Your mandate is to design and execute institutional-grade options spread strategies on Bybit. "
+        "Your mandate is to design and execute institutional-grade options spread strategies. "
         "CORE PRINCIPLES: "
         "1. SELL PREMIUM when IV is elevated (IV > 50%). Prefer Put Spreads in bullish/neutral regimes. "
         "2. ALWAYS use defined-risk spreads (Put Spread or Call Spread). NEVER recommend naked options. "
@@ -687,7 +687,12 @@ LLM_MIN_DELAY_SECONDS = 0.5
 
 def call_llm(role_name, prompt):
     """Generic helper to call LLM with a specific role, system pre-prompt, targeted model, retries, and rate limiting."""
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
+    
+    api_key = OPENROUTER_API_KEY
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Select role-specific model and system prompt
@@ -713,12 +718,14 @@ def call_llm(role_name, prompt):
         time.sleep(LLM_MIN_DELAY_SECONDS)
         for attempt in range(1, max_retries + 1):
             try:
-                response = requests.post(
-                    f"{os.environ.get('LLM_API_BASE', 'https://openrouter.ai/api/v1').rstrip('/')}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=60
-                )
+                # Fallback to local LLM endpoint if no API_BASE provided and no API_KEY
+                base_url = os.environ.get('LLM_API_BASE')
+                if not base_url:
+                    base_url = 'https://openrouter.ai/api/v1' if api_key else 'http://localhost:11434/v1'
+                
+                url = f"{base_url.rstrip('/')}/chat/completions"
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                
                 if response.status_code != 200:
                     try:
                         err_json = response.json()
@@ -821,7 +828,7 @@ def get_completed_trades_summary(limit=10) -> str:
 
 def ask_ai_decision(ticker, analysis_data):
     """A true Multi-Agent workflow: Analyst -> Risk Manager -> Managing Director."""
-    _, live_pos_summary = get_live_ctrader_positions()
+    _, live_pos_summary = get_live_exchange_positions()
 
     # Fetch live spot prices for the ticker being analysed + key watchlist symbols
     ticker_id = TICKER_MAP.get(ticker, {}).get("trade_id")
@@ -849,17 +856,17 @@ def ask_ai_decision(ticker, analysis_data):
                 f"  {pdata['name']} (ID {sid}): bid={pdata['bid']}, ask={pdata['ask']}, mid={pdata['mid']}"
             )
         live_price_block = (
-            "\n\n--- LIVE PEPPERSTONE SPOT PRICES (FROM CTRADER) ---\n"
+            "\n\n--- LIVE PEPPERSTONE SPOT PRICES (FROM EXCHANGE) ---\n"
             + "\n".join(price_lines)
             + "\n---------------------------------------------------\n"
             "Use these prices as the AUTHORITATIVE current market prices. "
             "Do NOT use any other price sources.\n"
         )
     else:
-        live_price_block = "\n[WARNING: Live spot prices unavailable from Pepperstone — use caution]\n"
+        live_price_block = "\n[WARNING: Live spot prices unavailable from Exchange — use caution]\n"
 
     positions_guardrail = (
-        f"\n\n--- REAL-TIME PEPPERSTONE CTRADER ACCOUNT POSITIONS ---\n"
+        f"\n\n--- REAL-TIME PEPPERSTONE EXCHANGE ACCOUNT POSITIONS ---\n"
         f"{live_pos_summary}\n"
         f"CRITICAL MANDATE: You MUST ONLY evaluate real positions listed above. "
         f"Do NOT assume or hallucinate any other open positions or trades that are not explicitly in this list.\n"
@@ -1110,7 +1117,7 @@ def format_md_decision_summary(decision_data, symbol="BTC", execution_gates: lis
                 lines.extend([
                     "",
                     f"> [!TIP]",
-                    f"> **All gates passed** — order dispatched to cTrader OpenAPI",
+                    f"> **All gates passed** — order dispatched to Exchange OpenAPI",
                 ])
 
     if eq_status or pos_audit or learnings:
@@ -1332,14 +1339,14 @@ def get_account_balance():
                 print(f"Attempt {attempt+1} failed: {str(e)}")
                 time.sleep(2)
 
-    # Direct fallback to cTrader API tool if n8n/mcporter failed
+    # Direct fallback to Exchange API tool if n8n/mcporter failed
     try:
         try:
-            from backend.bcm.tools import handle_ctrader_get_balance
+            from backend.bcm.tools import handle_exchange_get_balance
         except ImportError:
-            from tools import handle_ctrader_get_balance
+            from tools import handle_exchange_get_balance
 
-        bal_res = handle_ctrader_get_balance({})
+        bal_res = handle_exchange_get_balance({})
         if isinstance(bal_res, str):
             bal_res = json.loads(bal_res)
         if isinstance(bal_res, dict):
@@ -1361,9 +1368,9 @@ def get_account_balance():
                 print(f"✅ Account balance loaded from Exchange API: Equity=${eq:.2f}, FreeMargin=${fm:.2f}")
                 return eq, fm
     except Exception as cbe:
-        print(f"⚠️ cTrader direct balance fetch error: {cbe}")
+        print(f"⚠️ Exchange direct balance fetch error: {cbe}")
 
-    print("⚠️ WARNING: Failed to fetch balance from Pepperstone API. Using fallback evaluation balance.")
+    print("⚠️ WARNING: Failed to fetch balance from Exchange API. Using fallback evaluation balance.")
     return 10000.0, 9000.0
 
 def calculate_lot_size(equity, risk_pct, distance, symbol_key):
@@ -1451,20 +1458,20 @@ def run_autonomous_cycle(symbol_key):
             tg_msg = f"🚫 *BCM Blocked* — {symbol_key}\n"
             for g in blocked:
                 tg_msg += f"  • *{g['name']}*: {g['reason']}\n"
-            send_telegram_msg(tg_msg)
+            notifier.send(tg_msg)
         elif warned:
             tg_msg = f"⚠️ *BCM Warning* — {symbol_key}\n"
             for g in warned:
                 tg_msg += f"  • *{g['name']}*: {g['reason']}\n"
-            send_telegram_msg(tg_msg)
+            notifier.send(tg_msg)
         return report
 
     # ── Guard: skip if open position already exists ────────────────────────
-    live_positions, pos_summary = get_live_ctrader_positions()
+    live_positions, pos_summary = get_live_exchange_positions()
     has_live_pos = any(p.get("symbol") == symbol_key for p in live_positions)
     if has_live_pos or memory.has_open_position(symbol_key):
         gate("Open Position Guard", "skip",
-             f"Already have an active position for {symbol_key} in cTrader/memory — new cycle skipped")
+             f"Already have an active position for {symbol_key} in Exchange/memory — new cycle skipped")
         print(f"⏸️ {symbol_key}: Open position active — skipping new cycle.")
         return emit_report_and_return()
 
@@ -1474,7 +1481,7 @@ def run_autonomous_cycle(symbol_key):
     print("Step 1: Checking Account Balance and Margin...")
     equity, free_margin = get_account_balance()
     if not equity:
-        gate("Account Balance", "block", "Could not fetch account equity/margin from cTrader")
+        gate("Account Balance", "block", "Could not fetch account equity/margin from Exchange")
         print("Error: Could not fetch account data.")
         return emit_report_and_return()
     gate("Account Balance", "pass", f"Equity: ${equity:,.2f} | Free Margin: ${free_margin:,.2f}")
@@ -1607,7 +1614,7 @@ def run_autonomous_cycle(symbol_key):
                 msg += f"⚠️ {warnings_list[0]}\n"
             msg += f"📊 RSI: {rsi_val} | ATR: {atr_val} | Remizov: {remizov_val:.3f}\n"
             msg += f"💬 {decision.get('reasoning', '')[:600]}..."
-            send_telegram_msg(msg)
+            notifier.send(msg)
         return report
 
     if final_confidence < 80:
@@ -1673,8 +1680,8 @@ def run_autonomous_cycle(symbol_key):
     gate("Compliance Officer (CCO)", "pass", f"Approved: {cco_reason}")
     print(f"✅ Compliance Approved: {cco_reason}")
 
-    # ── cTrader Execution Gate ────────────────────────────────────────────
-    print(f"Step 8: Executing cTrader Order (Lot: {lot}) via OpenAPI...")
+    # ── Exchange Execution Gate ────────────────────────────────────────────
+    print(f"Step 8: Executing Exchange Order (Lot: {lot}) via OpenAPI...")
     print(f"   Using Symbol ID: {trade_id} | Risk Offset: {sl_dist:.5f}")
 
     side_cmd = "buy" if action == 'buy' else "sell"
@@ -1682,9 +1689,9 @@ def run_autonomous_cycle(symbol_key):
         cmd_place = ["bash", os.path.join(script_dir, "trade.sh"),
                      side_cmd, str(trade_id), str(lot), str(sl), str(tp)]
         res_raw = subprocess.check_output(cmd_place, stderr=subprocess.STDOUT).decode('utf-8')
-        print(f"cTrader Response: {res_raw}")
+        print(f"Exchange Response: {res_raw}")
 
-        gate("cTrader Execution", "pass",
+        gate("Exchange Execution", "pass",
              f"Order dispatched: {action.upper()} {lot} lots of {symbol_key} "
              f"@ SL={sl} TP={tp} | Symbol ID: {trade_id}")
 
@@ -1705,8 +1712,8 @@ def run_autonomous_cycle(symbol_key):
         msg += f"• *Quant:* ✅ Approved (Remizov {remizov_val:.4f})\n"
         msg += f"• *CCO:* ✅ {cco_reason}\n"
         msg += f"• *MD:* {decision['reasoning'][:200]}...\n\n"
-        msg += f"*(Executed via cTrader OpenAPI — Symbol ID: {trade_id})*"
-        send_telegram_msg(msg)
+        msg += f"*(Executed via Exchange OpenAPI — Symbol ID: {trade_id})*"
+        notifier.send(msg)
         return report
 
     except Exception as e:
@@ -1714,7 +1721,7 @@ def run_autonomous_cycle(symbol_key):
         import subprocess
         if isinstance(e, subprocess.CalledProcessError) and e.output:
             error_detail += "\n" + e.output.decode('utf-8', errors='replace')
-        gate("cTrader Execution", "block",
+        gate("Exchange Execution", "block",
              f"subprocess failed: {error_detail[:300]}")
         print(f"❌ Execution Failed for {symbol_key}: {error_detail}")
         return emit_report_and_return(decision)
@@ -1765,15 +1772,15 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
                         usdc_avail += float(c.get("availableToWithdraw", 0) or 0)
                     except Exception:
                         pass
-        print(f"   Bybit Equity: ${account_equity:,.2f} | Available: ${usdc_avail:,.2f}")
+        print(f"   Broker Equity: ${account_equity:,.2f} | Available: ${usdc_avail:,.2f}")
     else:
         print(f"   ⚠️ Balance fetch failed: {balance_res.get('message', 'Unknown error')}")
-        return {"status": "error", "reason": "Cannot fetch Bybit balance", "details": balance_res}
+        return {"status": "error", "reason": "Cannot fetch Broker balance", "details": balance_res}
 
     if account_equity < 500:
         msg = f"⏸️ BCM Options: Insufficient equity (${account_equity:.2f}). Min $500 required."
         print(msg)
-        send_telegram_msg(msg)
+        notifier.send(msg)
         return {"status": "skipped", "reason": msg}
 
     # ── Step 2: Option Chain ─────────────────────────────────────
@@ -1781,7 +1788,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     chain_res = broker.get_option_chain(base_coin=base_coin, exp_date=exp_date)
 
     if chain_res.get("status") != "success" or not chain_res.get("chain"):
-        msg = f"⏸️ BCM Bybit Options: Option chain unavailable for {base_coin}. Skipping."
+        msg = f"⏸️ BCM Options: Option chain unavailable for {base_coin}. Skipping."
         print(msg)
         return {"status": "skipped", "reason": msg}
 
@@ -1842,7 +1849,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     options_prompt = (
         f"You are the BCM Options Strategist. Today is {current_date}.\n\n"
         f"## Account State\n"
-        f"- Bybit UNIFIED Equity: ${account_equity:,.2f}\n"
+        f"- Broker UNIFIED Equity: ${account_equity:,.2f}\n"
         f"- Available Capital: ${usdc_avail:,.2f}\n"
         f"- Max Allowed Loss (2% cap): ${max_loss_cap:.2f}\n\n"
         f"## Asset\n"
@@ -1882,7 +1889,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     except Exception as parse_err:
         err_msg = f"❌ BCM Options: Failed to parse Options Strategist JSON: {str(decision_raw)[:300]}"
         print(err_msg)
-        send_telegram_msg(err_msg)
+        notifier.send(err_msg)
         return {"status": "error", "reason": "JSON parse error", "raw": decision_raw[:500]}
 
     strategy = decision.get("strategy", "wait")
@@ -1899,12 +1906,12 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     # ── Step 4a: Wait path ───────────────────────────────────────
     if strategy == "wait" or not sell_leg or not buy_leg:
         msg = (
-            f"⏸️ *BCM Bybit Options — WAIT*\n"
+            f"⏸️ *BCM Options — WAIT*\n"
             f"Asset: `{base_coin}` | Confidence: `{confidence:.0f}%`\n"
             f"💬 {reasoning[:500]}"
         )
         print(f"   Decision: WAIT — {reasoning[:200]}")
-        send_telegram_msg(msg)
+        notifier.send(msg)
         return {"status": "wait", "strategy": strategy, "reasoning": reasoning}
 
     # ── Step 5: Compliance Audit ─────────────────────────────────
@@ -1925,18 +1932,18 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
 
     if not cco_passed:
         msg = (
-            f"🚫 *BCM Bybit Options — COMPLIANCE REJECTION*\n"
+            f"🚫 *BCM Options — COMPLIANCE REJECTION*\n"
             f"Strategy: `{strategy}` | Asset: `{base_coin}`\n"
             f"Reason: {cco_reason}"
         )
         print(f"   ❌ REJECTED: {cco_reason}")
-        send_telegram_msg(msg)
+        notifier.send(msg)
         return {"status": "rejected", "reason": cco_reason}
 
     print(f"   ✅ Compliance Approved: {cco_reason}")
 
     # ── Step 6: Execute Both Legs ────────────────────────────────
-    print("Step 6: Executing options spread on Bybit...")
+    print("Step 6: Executing options spread on Broker...")
     exec_results = {}
 
     for leg_name, leg in [("sell_leg", sell_leg), ("buy_leg", buy_leg)]:
@@ -1957,13 +1964,13 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
             # If first leg fails, abort second leg to avoid unhedged exposure
             if leg_name == "sell_leg" and result.get("status") != "success":
                 abort_msg = (
-                    f"⚠️ *BCM Bybit Options — SELL LEG FAILED*\n"
+                    f"⚠️ *BCM Options — SELL LEG FAILED*\n"
                     f"Symbol: `{leg.get('symbol')}`\n"
                     f"Error: {result.get('message', 'Unknown')}\n"
                     f"Buy leg NOT placed (avoiding naked exposure)."
                 )
                 print(f"   ⚠️ Sell leg failed — aborting spread to avoid naked position")
-                send_telegram_msg(abort_msg)
+                notifier.send(abort_msg)
                 return {"status": "partial_failure", "sell_leg": result, "buy_leg": None}
 
         except Exception as exec_err:
@@ -2006,7 +2013,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     # Telegram report
     status_emoji = "✅" if (sell_ok and buy_ok) else "⚠️"
     msg = (
-        f"{status_emoji} *BCM Bybit Options — EXECUTED*\n"
+        f"{status_emoji} *BCM Options — EXECUTED*\n"
         f"Strategy: `{strategy.upper()}` | Asset: `{base_coin}` | Conf: `{confidence:.0f}%`\n\n"
         f"📊 *Spread Parameters:*\n"
         f"• Sell: `{sell_leg.get('symbol')}` @ `${sell_leg.get('price')}` → {'✅' if sell_ok else '❌'}\n"
@@ -2015,7 +2022,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
         f"✅ *CCO:* {cco_reason[:120]}\n\n"
         f"📝 {reasoning[:300]}..."
     )
-    send_telegram_msg(msg)
+    notifier.send(msg)
     print(f"\n{'='*60}")
     print(f"  Options Cycle Complete: sell_ok={sell_ok}, buy_ok={buy_ok}")
     print(f"{'='*60}\n")

@@ -248,6 +248,52 @@ def list_documents(source_filter: str = "") -> List[Dict[str, str]]:
         logger.error(f"Error listing documents: {e}")
         return []
 
+def raw_index_vector(doc_id: str, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
+    """Index a raw vector directly to Qdrant (used by BCM trading memory)."""
+    try:
+        client = get_qdrant_client()
+        client.upsert(
+            collection_name=collection_name,
+            points=[
+                models.PointStruct(
+                    id=doc_id,
+                    vector=vector,
+                    payload=payload
+                )
+            ]
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error indexing raw vector to {collection_name}: {e}")
+        return False
+
+def raw_search_vector(vector: List[float], limit: int, collection_name: str) -> List[Dict[str, Any]]:
+    """Search Qdrant using a raw vector directly."""
+    try:
+        client = get_qdrant_client()
+        
+        # Try query_points (newer versions) then search (older versions)
+        if hasattr(client, "query_points"):
+            search_result = client.query_points(
+                collection_name=collection_name,
+                query=vector,
+                limit=limit
+            ).points
+        elif hasattr(client, "search"):
+            search_result = client.search(
+                collection_name=collection_name,
+                query_vector=vector,
+                limit=limit
+            )
+        else:
+            logger.error("QdrantClient has neither 'query_points' nor 'search' method.")
+            return []
+            
+        return [res.payload for res in search_result]
+    except Exception as e:
+        logger.error(f"Error searching raw vector in {collection_name}: {e}")
+        return []
+
 # ─── PLUGGABLE ADAPTERS ────────────────────────────────-----------------------
 
 def init_rag():

@@ -124,11 +124,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         try:
             import json
-            from backend.bcm.tools import handle_ctrader_get_positions, handle_ctrader_get_balance
+            from backend.bcm.tools import handle_exchange_get_positions, handle_exchange_get_balance
             if user_text.lower() in ["/pnl", "/balance"]:
-                res = handle_ctrader_get_balance({})
+                res = handle_exchange_get_balance({})
             elif user_text.lower() == "/positions":
-                res = handle_ctrader_get_positions({})
+                res = handle_exchange_get_positions({})
             else:
                 res = {"status": "Fast command recognized but not fully mapped yet."}
             

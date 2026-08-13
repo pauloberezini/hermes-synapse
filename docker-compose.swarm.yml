@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  backend:
+    image: jarvis-backend:latest
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - hermes_mesh
+
+  frontend:
+    image: jarvis-frontend:latest
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "9119:80"
+    networks:
+      - hermes_mesh
+
+  sandbox:
+    image: jarvis-sandbox:latest
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+    networks:
+      - hermes_mesh
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: hermes
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - hermes_mesh
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - hermes_mesh
+
+networks:
+  hermes_mesh:
+    driver: overlay
+
+volumes:
+  db_data:
+  qdrant_data:

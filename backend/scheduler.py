@@ -90,8 +90,10 @@ async def _job_one_shot(
     _register_scheduled_session(job_id, label, "one-shot", agent_id, prompt, status="completed", extra={"duration": duration})
 
     completion_msg = f"⏰ Timer complete: '{label}' ({duration}s)"
-    if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+    is_agent = (agent_id and agent_id != "jarvis") or prompt
+    if is_agent:
+        task_prompt = prompt or f"Execute scheduled task: {label}"
+        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"✅ Timer complete: '{label}'")
         save_message(task_session_id, "assistant", completion_msg)
@@ -131,8 +133,10 @@ async def _job_alarm(
     _register_scheduled_session(job_id, label, "alarm", agent_id, prompt, status="completed", extra={"target_time": target_time_str})
 
     completion_msg = f"⏰ Alarm fired: '{label}' ({target_time_str})"
-    if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+    is_agent = (agent_id and agent_id != "jarvis") or prompt
+    if is_agent:
+        task_prompt = prompt or f"Execute scheduled task: {label}"
+        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"🔔 Alarm triggered: '{label}'")
         save_message(task_session_id, "assistant", completion_msg)
@@ -171,8 +175,10 @@ async def _job_recurring(
     task_session_id = f"task_{job_id}"
     _register_scheduled_session(job_id, label, "recurring", agent_id, prompt, status="running", extra={"interval_hours": interval_hours, "fire_count": count})
 
-    if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+    is_agent = (agent_id and agent_id != "jarvis") or prompt
+    if is_agent:
+        task_prompt = prompt or f"Execute scheduled task: {label}"
+        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         hours_str = (
             f"{int(interval_hours)} h" if interval_hours >= 1
@@ -220,8 +226,10 @@ async def _job_cron(
     task_session_id = f"task_{job_id}"
     _register_scheduled_session(job_id, label, "cron", agent_id, prompt, status="running", extra={"cron_expr": cron_expr, "fire_count": count})
 
-    if agent_id and prompt:
-        asyncio.create_task(_trigger_agent_task(agent_id, prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+    is_agent = (agent_id and agent_id != "jarvis") or prompt
+    if is_agent:
+        task_prompt = prompt or f"Execute scheduled task: {label}"
+        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
     else:
         log_activity("idle", "Scheduler", f"⚙️ Cron task #{count} triggered: '{label}' ({cron_expr})")
         await _send_telegram_alert(
@@ -973,12 +981,19 @@ async def _trigger_agent_task(
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_prompt_display = f"[Scheduled Run - {now_str}] {prompt}"
 
+        # Immediate persistence so UI history API returns the prompt instantly (only for BCM since agent.py handles others)
+        user_msg_id = None
+        if agent_id == "bcm_orchestrator":
+            from backend.database import save_message
+            user_msg_id = save_message(session_id, "user", user_prompt_display)
+
         await manager.broadcast({
             "type": "chat_message",
             "role": "user",
             "content": user_prompt_display,
             "chat_id": session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "id": user_msg_id
         })
 
         # ── Live positions guardrail for BCM orchestrator ─────────────────
@@ -1037,6 +1052,11 @@ async def _trigger_agent_task(
                 symbols_to_run = requested_syms if requested_syms else list(TICKER_MAP.keys())
                 reports = []
                 for target_sym in symbols_to_run:
+                    await manager.broadcast({
+                        "type": "trace_update",
+                        "chat_id": session_id,
+                        "trace": {"agent": "bcm_orchestrator", "action": f"Analyzing market data for {target_sym}...", "status": "running"}
+                    })
                     analysis_raw = await asyncio.get_event_loop().run_in_executor(
                         None, get_technical_analysis, target_sym
                     )
@@ -1078,7 +1098,6 @@ async def _trigger_agent_task(
 
         if bcm_executed:
             from backend.database import save_message
-            user_msg_id = save_message(session_id, "user", user_prompt_display)
             assistant_msg_id = save_message(session_id, "assistant", response_text)
         else:
             saved_ids = agent_instance.last_saved_ids.get(session_id, {})

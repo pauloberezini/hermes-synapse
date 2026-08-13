@@ -76,7 +76,7 @@ describe('canvas office engine', () => {
 
   it('maps keywords to specialist personas', () => {
     expect(inferSpecialist('fix the crash', 'traceback')).toBe('Debugger');
-    expect(inferSpecialist('обнови вёрстку', undefined)).toBe('Frontend');
+    expect(inferSpecialist('update layout', undefined)).toBe('Frontend');
     expect(inferSpecialist('rotate the auth token')).toBe('Security');
     expect(inferSpecialist('just chatting')).toBeNull();
   });

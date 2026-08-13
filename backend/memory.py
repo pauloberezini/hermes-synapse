@@ -33,6 +33,16 @@ class MemoryEngine(ABC):
         pass
 
     @abstractmethod
+    def index_vector(self, doc_id: str, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
+        """Index a raw vector into a specific collection."""
+        pass
+
+    @abstractmethod
+    def search_vector(self, vector: List[float], limit: int, collection_name: str) -> List[Dict[str, Any]]:
+        """Search a specific collection using a raw vector."""
+        pass
+
+    @abstractmethod
     def delete_document(self, doc_id: str) -> bool:
         """Delete all records/vectors associated with a document ID."""
         pass
@@ -63,6 +73,14 @@ class QdrantMemoryEngine(MemoryEngine):
                       source_filter: str = "") -> List[Dict[str, Any]]:
         from backend.rag import raw_search_memory
         return raw_search_memory(query, limit, threshold, source_filter)
+        
+    def index_vector(self, doc_id: str, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
+        from backend.rag import raw_index_vector
+        return raw_index_vector(doc_id, vector, payload, collection_name)
+        
+    def search_vector(self, vector: List[float], limit: int, collection_name: str) -> List[Dict[str, Any]]:
+        from backend.rag import raw_search_vector
+        return raw_search_vector(vector, limit, collection_name)
 
     def delete_document(self, doc_id: str) -> bool:
         from backend.rag import raw_delete_document
@@ -92,11 +110,21 @@ class SQLiteGraphMemoryEngine(MemoryEngine):
     with entity-relationship extraction stored in the relational database.
     """
 
-    def __init__(self) -> None:
-        self._qdrant_engine = QdrantMemoryEngine()
+    def __init__(self, base_engine: Optional[MemoryEngine] = None) -> None:
+        if base_engine is None:
+            # Fallback for backwards compatibility
+            self._qdrant_engine = QdrantMemoryEngine()
+        else:
+            self._qdrant_engine = base_engine
 
     def init_memory(self) -> None:
         self._qdrant_engine.init_memory()
+
+    def index_vector(self, doc_id: str, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
+        return self._qdrant_engine.index_vector(doc_id, vector, payload, collection_name)
+
+    def search_vector(self, vector: List[float], limit: int, collection_name: str) -> List[Dict[str, Any]]:
+        return self._qdrant_engine.search_vector(vector, limit, collection_name)
 
     def index_document(self, doc_id: str, title: str, text: str,
                        source: str = "manual", note_path: str = "") -> bool:
@@ -262,8 +290,18 @@ class SQLiteGraphMemoryEngine(MemoryEngine):
 def get_memory_engine(engine_override: Optional[str] = None) -> MemoryEngine:
     """Return the configured MemoryEngine implementation."""
     engine_name = (engine_override or os.getenv("MEMORY_ENGINE", "qdrant")).strip().lower()
+    
+    # Simple factory for flat vector engines
+    if engine_name == "qdrant":
+        flat_engine = QdrantMemoryEngine()
+    else:
+        # Extensible default: fallback to Qdrant if unknown
+        logger.warning(f"Unknown flat vector engine '{engine_name}', falling back to Qdrant.")
+        flat_engine = QdrantMemoryEngine()
+
     if engine_name in ("graph", "graphrag"):
         logger.info("Memory engine: using SQLiteGraphMemoryEngine (Local GraphRAG)")
-        return SQLiteGraphMemoryEngine()
-    logger.info("Memory engine: using QdrantMemoryEngine (Flat Vectors)")
-    return QdrantMemoryEngine()
+        return SQLiteGraphMemoryEngine(base_engine=QdrantMemoryEngine())
+    
+    logger.info(f"Memory engine: using {flat_engine.__class__.__name__}")
+    return flat_engine

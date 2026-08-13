@@ -23,18 +23,18 @@ export interface CanvasLiveTrace {
 
 /** Keyword → specialist persona, mirroring the routing table from Claude-Office (bilingual). */
 const SPECIALIST_RULES: Array<[RegExp, string]> = [
-  [/debug|crash|traceback|exception|ошибк|баг|исключен|падени/i, 'Debugger'],
-  [/review|pull request|\bpr\b|\bgit\b|commit|merge|ревью|коммит/i, 'Reviewer'],
-  [/\bui\b|\bcss\b|design|layout|render|интерфейс|дизайн|вёрстк|верстк/i, 'Frontend'],
-  [/\btest|coverage|\be2e\b|pytest|vitest|тест|покрыти/i, 'Tester'],
-  [/auth|security|token|secret|credential|безопасн|авториз|секрет/i, 'Security'],
-  [/deploy|docker|\bci\b|pipeline|container|деплой|контейнер|сборк/i, 'DevOps'],
-  [/perf|latency|cache|optimi|profil|производит|кэш|оптимиз/i, 'PerfEng'],
-  [/\bsql\b|database|sqlite|qdrant|\bdb\b|\bбд\b|база данных|запрос к базе/i, 'DBA'],
-  [/search|research|analy|index|scrape|изуч|поиск|анализ|исследов|индекс/i, 'Researcher'],
-  [/\bllm\b|prompt|embedding|inference|ollama|промпт|модел|инференс/i, 'AI Eng'],
-  [/\bapi\b|rest|webhook|endpoint|request|интеграц|запрос/i, 'Fullstack'],
-  [/architect|pattern|refactor|structure|архитектур|рефактор|структур/i, 'Architect'],
+  [/debug|crash|traceback|exception/i, 'Debugger'],
+  [/review|pull request|\bpr\b|\bgit\b|commit|merge/i, 'Reviewer'],
+  [/\bui\b|\bcss\b|design|layout|render/i, 'Frontend'],
+  [/\btest|coverage|\be2e\b|pytest|vitest/i, 'Tester'],
+  [/auth|security|token|secret|credential/i, 'Security'],
+  [/deploy|docker|\bci\b|pipeline|container/i, 'DevOps'],
+  [/perf|latency|cache|optimi|profil/i, 'PerfEng'],
+  [/\bsql\b|database|sqlite|qdrant|\bdb\b/i, 'DBA'],
+  [/search|research|analy|index|scrape/i, 'Researcher'],
+  [/\bllm\b|prompt|embedding|inference|ollama/i, 'AI Eng'],
+  [/\bapi\b|rest|webhook|endpoint|request/i, 'Fullstack'],
+  [/architect|pattern|refactor|structure/i, 'Architect'],
 ];
 
 export function inferSpecialist(...parts: Array<string | undefined | null>): string | null {
@@ -387,7 +387,7 @@ export class CanvasOfficeEngine {
   }
 
   private isReading(character: CanvasCharacter) {
-    return /read|search|research|analyse|analyze|index|review|изуч|поиск|анализ/i.test(`${character.agent.current_task || ''} ${character.agent.last_action || ''}`);
+    return /read|search|research|analyse|analyze|index|review/i.test(`${character.agent.current_task || ''} ${character.agent.last_action || ''}`);
   }
 
   private randomWalkable(character: CanvasCharacter) {

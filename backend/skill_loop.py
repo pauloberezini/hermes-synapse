@@ -34,7 +34,7 @@ class SkillDistiller:
     ):
         self.api_base = api_base or os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        self.model = model or os.getenv("LLM_MODEL", "google/gemini-2.5-flash")
+        self.model = model or os.getenv("LLM_MODEL", "ollama/llama3")
 
     def distill_log_entry(self, log_entry: Dict[str, Any]) -> Dict[str, Any]:
         """Distills a single successful decision log entry into a structured skill.

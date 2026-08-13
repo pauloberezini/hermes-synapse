@@ -14,13 +14,13 @@ graph TD
     Stage2 --> Stage3["Stage 3: Tools & Actions (Function Calling, Scheduler)"]
     Stage3 --> Stage4["Stage 4: Agentic Orchestration (DAG Planner, Sub-agents)"]
     Stage4 --> Stage5["Stage 5: Voice & Speech (Whisper STT, TTS)"]
-    Stage5 --> Stage6["Stage 6: Integrations & Utilities (Spotify, Search, Markets, RSS)"]
+    Stage5 --> Stage6["Stage 6: Integrations & Utilities (MPRIS, SearXNG, Markets, RSS)"]
     Stage6 --> Stage7["Stage 7: Public Release & Promo (Packaging, Docs, HN/Reddit)"]
     Stage7 --> Stage8["Stage 8: Visual Operations (Pixel Office & Telemetry)"]
     Stage8 --> Stage9["Stage 9: Self-Improving Skill Loop (Markdown Distillation)"]
     Stage9 --> Stage10["Stage 10: Pluggable Memory & Enterprise DB (GraphRAG, Postgres, WAL)"]
     Stage10 --> Stage11["Stage 11: Developer SDK & Fine-Tuning Exporters (hermes_sdk, ShareGPT/OpenAI)"]
-    Stage11 --> Stage12["Stage 12: BCM Engine (cTrader / FIX Protocol & Compliance Auditing)"]
+    Stage11 --> Stage12["Stage 12: BCM Engine (CCXT Crypto & Compliance Auditing)"]
     Stage12 --> Stage13["Stage 13: Enterprise SSO & RBAC (OIDC/OAuth2, Audit Logs)"]
     Stage13 --> Stage14["Stage 14: Community Skills Marketplace (hermes_sdk Registry)"]
     Stage14 --> Stage15["Stage 15: Autonomous Agent Mesh (P2P Inter-Agent Protocol)"]
@@ -44,7 +44,7 @@ graph TD
 
 ### 🟢 Completed Milestones (Core System & Advanced Modules)
 1. **Stage 1: Heart & Voice (LLM + Telegram + Web UI)**
-   * OpenRouter model integration (`google/gemini-2.5-flash` by default).
+   * Local LLM integration (`ollama/llama3` by default) with standard OpenAI-compatible endpoints.
    * Async FastAPI backend and Telegram bot handlers.
    * Web Dashboard UI (React + Vite + Vanilla CSS) on port `9119`: Chat, prompt/model settings, decision logs telemetry.
 2. **Stage 2: Memory Mark I (SQLite + Qdrant RAG)**
@@ -58,11 +58,11 @@ graph TD
    * Migrated to hierarchical task planning using a Directed Acyclic Graph (DAG) model.
    * Parent orchestrators dynamically coordinate execution and delegate steps to sub-agents.
 5. **Stage 5: Voice & Speech (STT / TTS)**
-   * Whisper API integration for Speech-to-Text and Silero/Coqui voice models for TTS replies.
+   * Local `whisper.cpp` / `faster-whisper` integration for Speech-to-Text and Silero/Coqui voice models for TTS replies.
 6. **Stage 6: Integrations & Utilities**
-   * Spotify playback commands (playlists, play/pause controls).
+   * Local media playback commands via OS-level abstractions (MPRIS / MPD).
    * Crypto and stock price alerts (Bitcoin, TON monitoring and thresholds).
-   * Google custom search tool via Serper API and daily RSS news digests.
+   * Self-hosted web search via SearXNG and daily RSS news digests.
 7. **Stage 7: Public Release & Promo**
    * Codebase cleaned and licensed under MIT on GitHub (`hermes-synapse`).
    * Marketing campaigns and posts launched on LinkedIn, Facebook, Medium, Reddit, X (Twitter), and Telegram.
@@ -78,11 +78,11 @@ graph TD
 11. **Stage 11: Developer SDK & Fine-Tuning Exporters (`hermes_sdk`)**
     * Multi-format fine-tuning dataset exporters (ShareGPT, OpenAI, Alpaca formats) via `/api/exporters`.
     * Programmatic Python package (`hermes_sdk`) for embedding and executing Hermes agent networks inside external python applications.
-12. **Stage 12: BCM Engine (cTrader / FIX Protocol & Compliance Auditing)**
+12. **Stage 12: BCM Engine (Abstracted Broker & Compliance Auditing)**
     * Autonomous financial trading engine (`backend/bcm/autonomous_trader.py`).
-    * cTrader OpenAPI & Pepperstone FIX protocol client (`backend/bcm/fix_client.py`).
+    * Universal Exchange Standard integration via CCXT for 100+ crypto exchanges, ensuring open-source extensibility (`backend/bcm/mock_exchange.py`).
     * Compliance Officer auditing & hard-limit risk protection (`backend/bcm/compliance_officer.py`).
-13. **Stage 13: Enterprise SSO & Multi-Tenant Security (OIDC / OAuth2 & RBAC)**
+13. **Stage 13: Open-Source SSO & Multi-Tenant Security (OIDC / OAuth2 & RBAC)**
     * OpenID Connect / OAuth2 integration (`backend/auth.py`), JWT claims validation (`decode_jwt_payload`), and Role-Based Access Control (`check_rbac_permission`).
 14. **Stage 14: Community Skills Marketplace & Plugin Registry**
     * Centralized open registry endpoints (`/api/marketplace/skills`, `/api/marketplace/register`) for discovering and dynamically registering `hermes_sdk` skill packages.
@@ -102,9 +102,10 @@ graph TD
 17. **Stage 17: Production Multi-Cluster Agent Mesh**
     * Cross-cloud distributed agent deployment across multi-node Kubernetes and Docker Swarm clusters.
 18. **Stage 18: Real-Time WebRTC Voice & Multimodal Gateway**
-    * Low-latency bidirectional WebRTC voice streaming and real-time vision feed via Gemini Live API.
+    * Low-latency bidirectional WebRTC voice streaming.
+    * Local vision and multimodal inference via open-source models (LLaVA, Qwen-VL) running on Ollama, with optional cloud plugins.
 19. **Stage 19: Skills Marketplace Monetization & Billing Engine**
-    * Automated Stripe / OpenNode Lightning payment gateway for monetization of third-party subagent skills.
+    * Multi-phase architecture (Phase 1: Persistent DB Registry -> Phase 2: Lifecycle Manager -> Phase 3: Telemetry Metering -> Phase 4: P2P Registry Sync -> Phase 5: Pluggable Billing Engine defaulting to NoOp free mode). Monetization is strictly the final phase.
 
 ## 🏛️ Technical Architecture Specification
 
@@ -159,7 +160,7 @@ CREATE TABLE IF NOT EXISTS subagents (
 
 | Skill ID | Display Name | Allowed Functions (API Tools) |
 | :--- | :--- | :--- |
-| **`web_search`** | Web Search | `web_search`, `get_current_time_israel`, `get_weather`, `get_rss_digest` |
+| **`web_search`** | Web Search | `searxng_search`, `get_current_time_israel`, `get_weather`, `get_rss_digest` |
 | **`market_monitor`** | Market Monitor | `get_market_prices`, `add_price_alert` |
 | **`obsidian_rag`** | Obsidian Vault | `search_obsidian`, `read_obsidian_note`, `create_obsidian_note`, `sync_obsidian_vault` |
 | **`todoist_sync`** | Todoist Sync | `get_todoist_tasks`, `add_todoist_task`, `delete_todoist_task` |
@@ -167,7 +168,7 @@ CREATE TABLE IF NOT EXISTS subagents (
 | **`timers_alarms`** | Timers & Alarms | `set_timer`, `set_alarm`, `cancel_timer_or_alarm` |
 | **`shell_execution`**| Shell Execution | `get_system_stats`, `execute_command` |
 | **`python_sandbox`** | Python Sandbox | `execute_command` |
-| **`bcm`** | BCM Trading | `bcm tools (Pepperstone FIX, cTrader OpenAPI, trading risk checks)` |
+| **`bcm`** | BCM Trading | `bcm tools (CCXT Unified API, trading risk checks)` |
 | **`mcp_all`** | MCP Servers | `All connected Model Context Protocol server tools` |
 | **`distilled_skill`**| Distilled Skills | `Dynamic procedures distilled into .agents/skills/ from successful traces` |
 
@@ -242,17 +243,15 @@ Hermes is positioned at the intersection of visual ETL pipelines and multi-agent
 
 Due to its hierarchical DAG design, Hermes coordinates a digital workforce rather than serving as a basic conversational assistant.
 
-### 1. Monetization Models
+### 1. Monetization Models (Open-Core Strategy)
 
 * **Hermes Cloud (SaaS)**:
   * Managed cloud hosting for builders and startups. Removes the need to set up SQLite and Qdrant locally.
   * Subscription model ($29 – $99/month) + metered LLM token consumption.
-* **Enterprise Edition**:
-  * Self-hosted instance with production database support (PostgreSQL/ClickHouse), Single Sign-On (SSO) authentication, audit logs of agent actions, and secure containerized environments for shell execution.
-  * Enterprise license starting at $500/month or custom annual contracts.
-* **Skills Marketplace**:
-  * Paid premium connectors (SAP, Salesforce, 1C, HubSpot).
-  * Transaction fees on sales of third-party custom skills.
+* **Skills Marketplace (MCP & Plugin Ecosystem)**:
+  * The core framework and all connector interfaces remain 100% open-source and extensible by the community.
+  * We offer **Premium Officially-Supported Connectors** (SAP, Salesforce, 1C, HubSpot) packaged as standalone, drop-in plugins or MCP servers.
+  * Transaction fees on sales of third-party custom skills via the decentralized registry.
 
 ### 2. Go-To-Market Strategy (2026)
 * **Phase 1: Community Adoption (Months 1–3)**

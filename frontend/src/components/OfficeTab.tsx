@@ -86,8 +86,8 @@ const PROJECT_COLORS = ['#55e8c1', '#7b9cff', '#b77cff', '#ff72be', '#ffb85c', '
 
 const COPY = {
   ru: {
-    officeTitle: 'Пиксельный офис',
-    subtitle: 'Живое состояние агентов в реальном времени', search: 'Поиск агента…', allProjects: 'Все проекты', allStatuses: 'Все статусы',
+    officeTitle: 'Pixel office',
+    subtitle: 'Живое состояние агентов в реальном времени', search: 'Search agent...', allProjects: 'Все проекты', allStatuses: 'Все статусы',
     total: 'Всего', working: 'Работают', waiting: 'Ожидают', errors: 'Ошибки', paused: 'На паузе', offline: 'Неактивны',
     online: 'Онлайн', reconnecting: 'Переподключение', stale: 'Данные устарели', office: '2D-план', iso: 'Живой офис', command: 'Command Center', list: 'Список',
     zones: 'Зоны офиса', projects: 'Проекты', fit: 'Вписать в экран', filters: 'Фильтры', noResults: 'По заданным фильтрам ничего не найдено',
@@ -181,16 +181,17 @@ function statusIcon(status: StatusKind, size = 14) {
 }
 
 function formatRelative(value: string, language: 'en' | 'ru') {
+  void language;
   if (!value) return '—';
   const timestamp = Date.parse(value.includes('T') ? value : value.replace(' ', 'T'));
   if (Number.isNaN(timestamp)) return value;
   const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return language === 'ru' ? 'только что' : 'just now';
+  if (seconds < 60) return 'just now';
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return language === 'ru' ? `${minutes} мин назад` : `${minutes}m ago`;
+  if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return language === 'ru' ? `${hours} ч назад` : `${hours}h ago`;
-  return new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US', { day: '2-digit', month: 'short' }).format(timestamp);
+  if (hours < 24) return `${hours}h ago`;
+  return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short' }).format(timestamp);
 }
 
 function eventTime(value: string) {
@@ -227,11 +228,13 @@ const InspectorPortrait = memo(function InspectorPortrait({ agent }: { agent: Of
 });
 
 function PixelOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language, liveTrace, theme, onTheme }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru'; liveTrace?: OfficeLiveTrace | null; theme: OfficeThemeKey; onTheme: (theme: OfficeThemeKey) => void }) {
+  void language;
   const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
   return <PixelOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={onTheme} />;
 }
 
 function IsoOfficeView({ agents, selectedAgentId, onSelect, zoom, onZoom, language, liveTrace, theme, onTheme }: { agents: OfficeAgent[]; selectedAgentId: string; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; zoom: number; onZoom: (zoom: number) => void; language: 'en' | 'ru'; liveTrace?: OfficeLiveTrace | null; theme: OfficeThemeKey; onTheme: (theme: OfficeThemeKey) => void }) {
+  void language;
   const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
   return <IsoOfficeCanvas agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={(id, trigger) => { const agent = agentsById.get(id); if (agent) onSelect(agent, trigger); }} zoom={zoom} onZoom={onZoom} language={language} liveTrace={liveTrace} theme={theme} onTheme={onTheme} />;
 }
@@ -311,6 +314,7 @@ function CommandCenterView({ projects, focusedProject, onFocus, onSelectAgent, c
 }
 
 const CompactAgentRow = memo(function CompactAgentRow({ agent, onSelect, copy, language }: { agent: OfficeAgent; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru' }) {
+  void language;
   return (
     <article className="compact-agent-row" role="listitem">
       <PixelAvatar agent={agent} size="sm" />
@@ -325,6 +329,7 @@ const CompactAgentRow = memo(function CompactAgentRow({ agent, onSelect, copy, l
 });
 
 function CompactListView({ agents, onSelect, copy, language, groupMode, setGroupMode, sortMode, setSortMode }: { agents: OfficeAgent[]; onSelect: (agent: OfficeAgent, trigger: HTMLElement) => void; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru'; groupMode: GroupMode; setGroupMode: (value: GroupMode) => void; sortMode: SortMode; setSortMode: (value: SortMode) => void }) {
+  void language;
   const groups = useMemo(() => {
     const sorted = [...agents].sort((a, b) => sortMode === 'name' ? a.name.localeCompare(b.name) : sortMode === 'status' ? STATUS_ORDER.indexOf(a.statusKind) - STATUS_ORDER.indexOf(b.statusKind) : (b.activityAt || '').localeCompare(a.activityAt || ''));
     const map = new Map<string, OfficeAgent[]>();
@@ -347,6 +352,7 @@ function CompactListView({ agents, onSelect, copy, language, groupMode, setGroup
 }
 
 function AgentInspector({ agent, copy, language, onClose, onChat, panelRef }: { agent: OfficeAgent; copy: typeof COPY.ru | typeof COPY.en; language: 'en' | 'ru'; onClose: () => void; onChat?: (id: string) => void; panelRef: React.RefObject<HTMLElement | null> }) {
+  void language;
   const progress = Math.max(0, Math.min(100, agent.progress || 0));
   return (
     <aside className="agent-inspector" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="inspector-agent-name">
@@ -537,7 +543,7 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'en',
         <div className="office-counters" role="group" aria-label="Agent status filters">{statusCounters.map(counter => <button type="button" key={counter.key || 'total'} className={`is-${counter.key || 'total'}${statusFilter === counter.key ? ' is-active' : ''}`} onClick={() => setStatusFilter(current => current === counter.key ? '' : counter.key)} aria-pressed={statusFilter === counter.key} title={`${counter.label}: ${counter.value}`}><span>{counter.label}</span><strong>{counter.value}</strong><i />{statusFilter === counter.key && <Check size={12} />}</button>)}</div>
       </header>
 
-      {error && <div className="office-refresh-warning" role="status"><AlertTriangle size={16} /><span>{copy.retrying}</span>{lastUpdated && <small>{copy.refreshed}: {lastUpdated.toLocaleTimeString(language === 'ru' ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</small>}</div>}
+      {error && <div className="office-refresh-warning" role="status"><AlertTriangle size={16} /><span>{copy.retrying}</span>{lastUpdated && <small>{copy.refreshed}: {lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</small>}</div>}
       {loading ? <div className="office-loading" aria-label="Loading"><span /><span /><span /></div> : rawAgents.length === 0 ? <div className="office-empty"><Bot size={32} /><h2>{copy.noAgents}</h2></div> : (
         <div className="office-workspace">
           <aside className="office-context-sidebar">

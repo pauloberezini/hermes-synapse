@@ -14,7 +14,7 @@ services:
       - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-pro}
+      - LLM_MODEL=${LLM_MODEL:-ollama/llama3}
       - QDRANT_HOST=qdrant
       - OBSIDIAN_HOST=host.docker.internal
       - GRAPHRAG_API_URL=${GRAPHRAG_API_URL:-http://host.docker.internal:8088/api/v1/analytics/ask}
@@ -23,6 +23,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app/backend
+      - ./hermes_sdk:/app/hermes_sdk
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
       - sandbox_data:/app/backend/data/sandbox

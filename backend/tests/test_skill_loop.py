@@ -25,7 +25,7 @@ def sample_decision_log():
     log_entry = {
         "timestamp": "2026-07-21 12:00:00",
         "session_id": f"test_session_{tag}",
-        "model": "google/gemini-2.5-flash",
+        "model": "ollama/llama3",
         "latency_ms": 450,
         "success": True,
         "error": None,
@@ -121,7 +121,7 @@ def test_undistilled_logs_filtering():
     short_log = {
         "timestamp": "2026-07-21 12:05:00",
         "session_id": "test_session_2",
-        "model": "google/gemini-2.5-flash",
+        "model": "ollama/llama3",
         "latency_ms": 100,
         "success": True,
         "error": None,
