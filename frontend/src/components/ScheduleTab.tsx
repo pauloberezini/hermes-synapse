@@ -116,7 +116,7 @@ export function ScheduleTab({
       payload.cron_expr = taskCronExpr.trim();
     }
 
-    doFetch('http://localhost:8000/api/timers', {
+    doFetch('/api/timers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -178,7 +178,7 @@ export function ScheduleTab({
       payload.cron_expr = editCronExpr.trim();
     }
 
-    doFetch(`http://localhost:8000/api/timers/${editTimer.id}`, {
+    doFetch(`/api/timers/${editTimer.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -202,7 +202,7 @@ export function ScheduleTab({
 
   const handleRunNow = (timerId: string) => {
     setRunMessage(null);
-    doFetch(`http://localhost:8000/api/timers/${timerId}/run`, {
+    doFetch(`/api/timers/${timerId}/run`, {
       method: 'POST'
     })
       .then(res => res.json())
@@ -227,7 +227,7 @@ export function ScheduleTab({
   const handleTogglePause = (timer: TimerItem) => {
     const isPaused = timer.status === 'paused';
     const endpoint = isPaused ? 'resume' : 'pause';
-    doFetch(`http://localhost:8000/api/timers/${timer.id}/${endpoint}`, {
+    doFetch(`/api/timers/${timer.id}/${endpoint}`, {
       method: 'POST'
     })
       .then(res => res.json())
@@ -245,7 +245,7 @@ export function ScheduleTab({
   };
 
   const handleRestart = (timerId: string) => {
-    doFetch(`http://localhost:8000/api/timers/${timerId}/restart`, {
+    doFetch(`/api/timers/${timerId}/restart`, {
       method: 'POST'
     })
       .then(res => res.json())

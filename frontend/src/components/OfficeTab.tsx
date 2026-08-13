@@ -424,20 +424,10 @@ export function OfficeTab({ t, selectChat, isConnected = false, language = 'en',
       try {
         const token = localStorage.getItem('jarvis_auth_token');
         const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-        let response: Response;
-        try {
-          response = fetchWithAuth
-            ? await fetchWithAuth('/api/office/state', { signal: controller.signal })
-            : await fetch('/api/office/state', { headers, signal: controller.signal });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        } catch (firstErr) {
-          if (cancelled || (firstErr instanceof DOMException && firstErr.name === 'AbortError')) throw firstErr;
-          const fallbackUrl = 'http://localhost:8000/api/office/state';
-          response = fetchWithAuth
-            ? await fetchWithAuth(fallbackUrl, { signal: controller.signal })
-            : await fetch(fallbackUrl, { headers, signal: controller.signal });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`, { cause: firstErr });
-        }
+        const response = fetchWithAuth
+          ? await fetchWithAuth('/api/office/state', { signal: controller.signal })
+          : await fetch('/api/office/state', { headers, signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json() as { agents?: AgentModel[] };
         if (cancelled) return;
         const next = Array.isArray(data.agents) ? data.agents : [];

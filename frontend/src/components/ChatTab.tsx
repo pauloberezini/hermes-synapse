@@ -212,7 +212,7 @@ export function ChatTab({
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
     try {
-      const res = await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/rename`, {
+      const res = await fetchWithAuth(`/api/history/${sessionId}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle.trim() })
@@ -226,7 +226,7 @@ export function ChatTab({
   };
 
   const handleExportTrajectory = (sessionId: string, format: string = 'sharegpt', extension: string = 'jsonl') => {
-    const url = `http://localhost:8000/api/sessions/${sessionId}/export-trajectory?format=${format}&extension=${extension}&download=true`;
+    const url = `/api/sessions/${sessionId}/export-trajectory?format=${format}&extension=${extension}&download=true`;
     window.open(url, '_blank');
   };
 
@@ -612,7 +612,7 @@ export function ChatTab({
                             e.stopPropagation();
                             setActiveMenu(null);
                             try {
-                              const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}/fork`, {
+                              const res = await fetchWithAuth(`/api/history/${s}/fork`, {
                                 method: 'POST'
                               });
                               if (res.ok) {
@@ -635,7 +635,7 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
                                   try {
-                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/dashboard`, {
+                                    const res = await fetchWithAuth(`/api/history/dashboard`, {
                                       method: 'DELETE'
                                     });
                                     if (res.ok) {
@@ -677,7 +677,7 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Archive session "${label}"?`)) {
                                   try {
-                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}/archive`, {
+                                    const res = await fetchWithAuth(`/api/history/${s}/archive`, {
                                       method: 'POST'
                                     });
                                     if (res.ok) {
@@ -698,7 +698,7 @@ export function ChatTab({
                                 setActiveMenu(null);
                                 if (window.confirm(`Are you sure you want to delete session "${label}"?`)) {
                                   try {
-                                    const res = await fetchWithAuth(`http://localhost:8000/api/history/${s}`, {
+                                    const res = await fetchWithAuth(`/api/history/${s}`, {
                                       method: 'DELETE'
                                     });
                                     if (res.ok) {
@@ -801,7 +801,7 @@ export function ChatTab({
                     <button
                       onClick={async () => {
                         try {
-                          const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}/run`, { method: 'POST' });
+                          const res = await fetchWithAuth(`/api/timers/${jobId}/run`, { method: 'POST' });
                           if (res.ok) fetchChatSessions();
                         } catch(e) { console.error(e); }
                       }}
@@ -817,7 +817,7 @@ export function ChatTab({
                       <button
                         onClick={async () => {
                           try {
-                            const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}/pause`, { method: 'POST' });
+                            const res = await fetchWithAuth(`/api/timers/${jobId}/pause`, { method: 'POST' });
                             if (res.ok) fetchChatSessions();
                           } catch(e) { console.error(e); }
                         }}
@@ -832,7 +832,7 @@ export function ChatTab({
                       <button
                         onClick={async () => {
                           try {
-                            const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}/resume`, { method: 'POST' });
+                            const res = await fetchWithAuth(`/api/timers/${jobId}/resume`, { method: 'POST' });
                             if (res.ok) fetchChatSessions();
                           } catch(e) { console.error(e); }
                         }}
@@ -849,7 +849,7 @@ export function ChatTab({
                       onClick={async () => {
                         if (window.confirm("Cancel and delete this scheduled task?")) {
                           try {
-                            const res = await fetchWithAuth(`http://localhost:8000/api/timers/${jobId}`, { method: 'DELETE' });
+                            const res = await fetchWithAuth(`/api/timers/${jobId}`, { method: 'DELETE' });
                             if (res.ok) fetchChatSessions();
                           } catch(e) { console.error(e); }
                         }
@@ -985,7 +985,7 @@ export function ChatTab({
                           envKey={missingKey}
                           onSave={async (val) => {
                             try {
-                              const res = await fetchWithAuth('http://localhost:8000/api/settings/env', {
+                              const res = await fetchWithAuth('/api/settings/env', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ key: missingKey, value: val })

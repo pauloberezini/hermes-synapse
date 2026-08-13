@@ -16,7 +16,7 @@ const AUTH = (): Record<string, string> => {
   return token ? { 'Authorization': `Bearer ${token}` } : {};
 };
 
-const API = 'http://localhost:8000/api/mcp/servers';
+const API = '/api/mcp/servers';
 
 function EnvEditor({ value, onChange }: {
   value: Record<string, string>;

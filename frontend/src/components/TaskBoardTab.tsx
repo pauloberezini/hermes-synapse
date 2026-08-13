@@ -54,7 +54,7 @@ export function TaskBoardTab() {
     setLoading(true);
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch('http://localhost:8000/api/tasks', {
+      const res = await fetch('/api/tasks', {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const data = await res.json();
@@ -69,7 +69,7 @@ export function TaskBoardTab() {
   const fetchSubagents = async () => {
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch('http://localhost:8000/api/subagents', {
+      const res = await fetch('/api/subagents', {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
@@ -104,7 +104,7 @@ export function TaskBoardTab() {
     if (!newTitle.trim()) return;
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch('http://localhost:8000/api/tasks', {
+      const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -131,7 +131,7 @@ export function TaskBoardTab() {
   const handleUpdateAssignee = async (taskId: number, assigned_agent_id: string) => {
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/tasks/${taskId}`, {
+      const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -150,7 +150,7 @@ export function TaskBoardTab() {
   const handleUpdateStatus = async (taskId: number, status: Task['status']) => {
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/tasks/${taskId}`, {
+      const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -169,7 +169,7 @@ export function TaskBoardTab() {
   const handleDeleteTask = async (taskId: number) => {
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/tasks/${taskId}`, {
+      const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -184,7 +184,7 @@ export function TaskBoardTab() {
   const handlePulseTask = async (taskId: number) => {
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/tasks/${taskId}/pulse`, {
+      const res = await fetch(`/api/tasks/${taskId}/pulse`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });

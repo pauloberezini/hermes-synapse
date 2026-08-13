@@ -503,30 +503,18 @@ export default function App() {
       ...(token ? { 'Authorization': `Bearer ${token}` } : {})
     };
 
-    let relativeUrl = url;
-    if (url.startsWith('http://localhost:8000/api')) {
-      relativeUrl = url.replace('http://localhost:8000', '');
-    }
-
-    const doFetch = (targetUrl: string) => fetch(targetUrl, { ...options, headers }).then(res => {
+    return fetch(url, { ...options, headers }).then(res => {
       if (res.status === 401) {
         localStorage.removeItem('jarvis_auth_token');
         setIsAuthenticated(false);
       }
       return res;
     });
-
-    return doFetch(relativeUrl).catch((firstErr) => {
-      if (relativeUrl !== url) {
-        return doFetch(url);
-      }
-      throw firstErr;
-    });
   }, []);
 
   const fetchChatSessions = useCallback(() => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/history/sessions')
+    fetchWithAuth('/api/history/sessions')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data)) {
@@ -538,7 +526,7 @@ export default function App() {
 
   const fetchTimersData = useCallback(() => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/timers')
+    fetchWithAuth('/api/timers')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (Array.isArray(data)) setTimers(data); })
       .catch(err => console.log('Error fetching timers:', err));
@@ -554,7 +542,7 @@ export default function App() {
         res = await fetch('/api/auth/request-code', { method: 'POST' });
         if (!res.ok && res.status === 404) throw new Error('404');
       } catch (firstErr) {
-        res = await fetch('http://localhost:8000/api/auth/request-code', { method: 'POST' });
+        res = await fetch('/api/auth/request-code', { method: 'POST' });
       }
       const data = await res.json();
       if (data.status === 'success') {
@@ -583,7 +571,7 @@ export default function App() {
         });
         if (!res.ok && res.status === 404) throw new Error('404');
       } catch (firstErr) {
-        res = await fetch('http://localhost:8000/api/auth/verify-code', {
+        res = await fetch('/api/auth/verify-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code })
@@ -720,7 +708,7 @@ export default function App() {
             fetchChatSessions();
             fetchTimersData();
             if (data.session_id && data.session_id === currentChatIdRef.current) {
-              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+              fetchWithAuth(`/api/history/${data.session_id}`)
                 .then(res => res.ok ? res.json() : Promise.reject(res))
                 .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
                 .catch(err => console.error('Error refreshing session history on task exec:', err));
@@ -762,7 +750,7 @@ export default function App() {
             fetchChatSessions();
             fetchTimersData();
             if (data.session_id && data.session_id === currentChatIdRef.current) {
-              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+              fetchWithAuth(`/api/history/${data.session_id}`)
                 .then(res => res.ok ? res.json() : Promise.reject(res))
                 .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
                 .catch(err => console.error('Error refreshing session history on timer completed:', err));
@@ -782,7 +770,7 @@ export default function App() {
             fetchChatSessions();
             fetchTimersData();
             if (data.session_id && data.session_id === currentChatIdRef.current) {
-              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+              fetchWithAuth(`/api/history/${data.session_id}`)
                 .then(res => res.ok ? res.json() : Promise.reject(res))
                 .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
                 .catch(err => console.error('Error refreshing session history on alarm fired:', err));
@@ -805,7 +793,7 @@ export default function App() {
             fetchChatSessions();
             fetchTimersData();
             if (data.session_id && data.session_id === currentChatIdRef.current) {
-              fetchWithAuth(`http://localhost:8000/api/history/${data.session_id}`)
+              fetchWithAuth(`/api/history/${data.session_id}`)
                 .then(res => res.ok ? res.json() : Promise.reject(res))
                 .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
                 .catch(err => console.error('Error refreshing session history on reminder fired:', err));
@@ -849,7 +837,7 @@ export default function App() {
 
   const fetchDocuments = () => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/documents')
+    fetchWithAuth('/api/documents')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (Array.isArray(data)) setDocuments(data); })
       .catch(err => console.log('Error fetching documents:', err));
@@ -858,7 +846,7 @@ export default function App() {
   const fetchMetrics = () => {
     if (!isAuthenticated) return;
     setIsMetricsLoading(true);
-    fetchWithAuth('http://localhost:8000/api/metrics')
+    fetchWithAuth('/api/metrics')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         setMetrics(data);
@@ -878,7 +866,7 @@ export default function App() {
 
   const fetchUploads = () => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/uploads')
+    fetchWithAuth('/api/uploads')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (Array.isArray(data)) setUploads(data); })
       .catch(err => console.log('Error fetching uploads:', err));
@@ -916,7 +904,7 @@ export default function App() {
     }
     
     try {
-      await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/agent`, {
+      await fetchWithAuth(`/api/history/${sessionId}/agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: agentId })
@@ -927,7 +915,7 @@ export default function App() {
 
     if (trimmed) {
       try {
-        await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/rename`, {
+        await fetchWithAuth(`/api/history/${sessionId}/rename`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: trimmed })
@@ -949,7 +937,7 @@ export default function App() {
 
   const handleSetSessionAgent = async (sessionId: string, agentId: string) => {
     try {
-      const res = await fetchWithAuth(`http://localhost:8000/api/history/${sessionId}/agent`, {
+      const res = await fetchWithAuth(`/api/history/${sessionId}/agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: agentId })
@@ -966,7 +954,7 @@ export default function App() {
 
   const fetchSubagents = () => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/subagents')
+    fetchWithAuth('/api/subagents')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (Array.isArray(data)) setSubagents(data); })
       .catch(err => console.log('Error fetching subagents:', err));
@@ -976,7 +964,7 @@ export default function App() {
     const listToSearch = Array.isArray(currentSubagentsList) ? currentSubagentsList : (Array.isArray(subagents) ? subagents : []);
     setCurrentChatId(chatId);
     setMessages([]); // clear temporarily
-    fetchWithAuth(`http://localhost:8000/api/history/${chatId}`)
+    fetchWithAuth(`/api/history/${chatId}`)
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
@@ -1010,7 +998,7 @@ export default function App() {
     setIsCreatingAgent(true);
     try {
       const cleanId = newAgentId.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
-      const res = await fetchWithAuth('http://localhost:8000/api/subagents', {
+      const res = await fetchWithAuth('/api/subagents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1030,7 +1018,7 @@ export default function App() {
         setNewAgentTemperature(0.7);
         alert('Sub-agent successfully created.');
         
-        fetchWithAuth('http://localhost:8000/api/subagents')
+        fetchWithAuth('/api/subagents')
           .then(r => r.json())
           .then(data => {
             setSubagents(data);
@@ -1052,7 +1040,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetchWithAuth(`http://localhost:8000/api/subagents/${id}`, {
+      const res = await fetchWithAuth(`/api/subagents/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1078,7 +1066,7 @@ export default function App() {
     }
     setIsUpdatingAgent(true);
     try {
-      const res = await fetchWithAuth('http://localhost:8000/api/subagents', {
+      const res = await fetchWithAuth('/api/subagents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1092,7 +1080,7 @@ export default function App() {
       });
       if (res.ok) {
         alert('Sub-agent successfully updated.');
-        fetchWithAuth('http://localhost:8000/api/subagents')
+        fetchWithAuth('/api/subagents')
           .then(r => r.json())
           .then(data => {
             setSubagents(data);
@@ -1110,7 +1098,7 @@ export default function App() {
   };
 
   const handleCancelTimer = (id: string) => {
-    fetchWithAuth(`http://localhost:8000/api/timers/${id}`, {
+    fetchWithAuth(`/api/timers/${id}`, {
       method: 'DELETE',
     })
       .then(res => res.json())
@@ -1124,7 +1112,7 @@ export default function App() {
 
   const fetchMarketAlerts = () => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/market/alerts')
+    fetchWithAuth('/api/market/alerts')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (Array.isArray(data)) setPriceAlerts(data); })
       .catch(err => console.log('Error fetching market alerts:', err));
@@ -1132,7 +1120,7 @@ export default function App() {
 
   const handleClearActivityLogs = () => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/activity/logs', {
+    fetchWithAuth('/api/activity/logs', {
       method: 'DELETE'
     })
       .then(res => res.ok ? res.json() : Promise.reject(res))
@@ -1146,7 +1134,7 @@ export default function App() {
 
   const fetchModels = () => {
     if (!isAuthenticated) return;
-    fetchWithAuth('http://localhost:8000/api/models')
+    fetchWithAuth('/api/models')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data)) {
@@ -1160,7 +1148,7 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    fetchWithAuth('http://localhost:8000/api/config')
+    fetchWithAuth('/api/config')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (data && data.system_prompt !== undefined) {
@@ -1171,7 +1159,7 @@ export default function App() {
       })
       .catch(() => console.log('REST config fetch skipped/failed (using WS instead)'));
 
-    fetchWithAuth('http://localhost:8000/api/logs')
+    fetchWithAuth('/api/logs')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => {
         if (Array.isArray(data)) {
@@ -1188,7 +1176,7 @@ export default function App() {
     fetchChatSessions();
     fetchModels();
 
-    fetchWithAuth('http://localhost:8000/api/settings')
+    fetchWithAuth('/api/settings')
       .then(res => res.ok ? res.json() : Promise.reject(res))
       .then(data => { if (data?.language) setAppSettings({ language: data.language }); })
       .catch(() => {});
@@ -1208,7 +1196,7 @@ export default function App() {
     if (activeTab !== 'schedule') return;
 
     const fetchTimersData = () => {
-      fetchWithAuth('http://localhost:8000/api/timers')
+      fetchWithAuth('/api/timers')
         .then(res => res.ok ? res.json() : Promise.reject(res))
         .then(data => { if (Array.isArray(data)) setTimers(data); })
         .catch(err => console.log('Error fetching timers:', err));
@@ -1224,14 +1212,14 @@ export default function App() {
     if (!isAuthenticated || activeTab !== 'tools') return;
 
     const fetchStats = () => {
-      fetchWithAuth('http://localhost:8000/api/system/stats')
+      fetchWithAuth('/api/system/stats')
         .then(res => res.ok ? res.json() : Promise.reject(res))
         .then(data => setSystemStats(data))
         .catch(err => console.log('Error fetching system stats:', err));
     };
 
     const fetchTimersData = () => {
-      fetchWithAuth('http://localhost:8000/api/timers')
+      fetchWithAuth('/api/timers')
         .then(res => res.ok ? res.json() : Promise.reject(res))
         .then(data => { if (Array.isArray(data)) setTimers(data); })
         .catch(err => console.log('Error fetching timers:', err));
@@ -1282,7 +1270,7 @@ export default function App() {
     if (!noteTitle.trim() || !noteContent.trim()) return;
     setIsIndexing(true);
     try {
-      const res = await fetchWithAuth('http://localhost:8000/api/documents', {
+      const res = await fetchWithAuth('/api/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: noteTitle, content: noteContent })
@@ -1306,7 +1294,7 @@ export default function App() {
   const handleDeleteDocument = async (docId: string) => {
     if (!window.confirm('Delete document from long-term memory?')) return;
     try {
-      const res = await fetchWithAuth(`http://localhost:8000/api/documents/${docId}`, {
+      const res = await fetchWithAuth(`/api/documents/${docId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1326,7 +1314,7 @@ export default function App() {
     if (!memorySearchQuery.trim()) return;
     setIsSearchingMemory(true);
     try {
-      const res = await fetchWithAuth(`http://localhost:8000/api/documents/search?q=${encodeURIComponent(memorySearchQuery)}`);
+      const res = await fetchWithAuth(`/api/documents/search?q=${encodeURIComponent(memorySearchQuery)}`);
       if (res.ok) {
         const data = await res.json();
         setMemorySearchResults(data);
@@ -1380,7 +1368,7 @@ export default function App() {
       try {
         const form = new FormData();
         form.append('file', file);
-        const res = await fetchWithAuth('http://localhost:8000/api/parse-pdf', {
+        const res = await fetchWithAuth('/api/parse-pdf', {
           method: 'POST',
           body: form,
         });
@@ -1459,7 +1447,7 @@ export default function App() {
     
     setMessages([]);
     try {
-      const res = await fetchWithAuth(`http://localhost:8000/api/history/${currentChatId}`, {
+      const res = await fetchWithAuth(`/api/history/${currentChatId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1480,7 +1468,7 @@ export default function App() {
     e.preventDefault();
     setIsSavingConfig(true);
     try {
-      const response = await fetchWithAuth('http://localhost:8000/api/config', {
+      const response = await fetchWithAuth('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1861,7 +1849,7 @@ export default function App() {
             language={appSettings.language}
             onLanguageChange={(lang) => {
               setAppSettings({ language: lang });
-              fetchWithAuth('http://localhost:8000/api/settings', {
+              fetchWithAuth('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ language: lang }),
