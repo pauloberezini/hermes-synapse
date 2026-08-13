@@ -239,7 +239,7 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
     setActionLoading(true);
     if (skill.price_type !== 'free') {
       try {
-        const res = await fetch(`http://localhost:8000/api/marketplace/skills/${skill.id}/checkout?redirect_url=${encodeURIComponent(window.location.href)}`, {
+        const res = await fetch(`/api/marketplace/skills/${skill.id}/checkout?redirect_url=${encodeURIComponent(window.location.href)}`, {
           method: 'POST'
         });
         if (res.ok) {

@@ -26,7 +26,7 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
     setLoading(true);
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch('http://localhost:8000/api/governance/approvals', {
+      const res = await fetch('/api/governance/approvals', {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const data = await res.json();
@@ -47,7 +47,7 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
   const handleResolve = async (id: number, decision: 'APPROVED' | 'REJECTED') => {
     const token = localStorage.getItem('jarvis_auth_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/governance/approvals/${id}/resolve`, {
+      const res = await fetch(`/api/governance/approvals/${id}/resolve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
