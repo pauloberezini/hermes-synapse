@@ -39,14 +39,14 @@ def test_subagent_db_crud():
     assert len(database.get_all_subagents()) == 0
     
     # 2. Save a subagent
-    database.save_subagent("sports_betting", "Sports Analyser", "You analyze sports odds.", "google/gemini-2.5-flash")
+    database.save_subagent("sports_betting", "Sports Analyser", "You analyze sports odds.", "ollama/llama3")
     
     # 3. Retrieve and verify
     agent = database.get_subagent("sports_betting")
     assert agent is not None
     assert agent["name"] == "Sports Analyser"
     assert agent["system_prompt"] == "You analyze sports odds."
-    assert agent["model"] == "google/gemini-2.5-flash"
+    assert agent["model"] == "ollama/llama3"
     
     # 4. Verify all list
     all_agents = database.get_all_subagents()
@@ -71,7 +71,7 @@ def test_subagents_api_endpoints():
         "id": "french_tutor",
         "name": "French Teacher",
         "system_prompt": "Enseignez le français.",
-        "model": "google/gemini-2.5-pro"
+        "model": "ollama/llama3"
     }
     response = client.post("/api/subagents", json=payload)
     assert response.status_code == 200

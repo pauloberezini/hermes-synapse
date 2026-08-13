@@ -12,7 +12,7 @@ if BCM_DIR not in sys.path:
     sys.path.insert(0, BCM_DIR)
 
 # ─── Symbol Normalization ─────────────────────────────────────────────────────
-# FIX / cTrader Symbol IDs
+# FIX / Exchange Symbol IDs
 SYMBOL_MAP = {
     "EURUSD": 1,
     "GBPUSD": 2,
@@ -94,17 +94,17 @@ YF_SYMBOL_MAP = {
 _YF_SYMBOL_MAP = YF_SYMBOL_MAP
 
 def _normalize_yf_symbol(symbol: str) -> str:
-    """Convert a BCM/cTrader symbol name to its Yahoo Finance ticker equivalent."""
+    """Convert a BCM/Exchange symbol name to its Yahoo Finance ticker equivalent."""
     if not symbol:
         return symbol
     upper = symbol.upper().replace("/", "").replace("-SPOT", "")
     return _YF_SYMBOL_MAP.get(upper, symbol)
 
 
-# ─── cTrader Lot-Size Factors ─────────────────────────────────────────────────
-# Raw cTrader volumes are in units; divide by these to get standard lots.
+# ─── Exchange Lot-Size Factors ─────────────────────────────────────────────────
+# Raw Exchange volumes are in units; divide by these to get standard lots.
 FX_VOLUME_FACTOR = 100_000   # 1 standard FX lot = 100,000 units
-VOLUME_FACTOR = {            # Symbol-specific overrides (cTrader symbolId → factor)
+VOLUME_FACTOR = {            # Symbol-specific overrides (Exchange symbolId → factor)
     10028: 1,       # BTC (already in BTC)
     10053: 1_000,   # SpotBrent (1 lot = 1,000 barrels)
     41:    100,     # Gold XAU
@@ -164,31 +164,31 @@ def _run_async(coro):
 # Schemas
 BCM_TOOLS = [
     {
-        "name": "ctrader_get_balance",
-        "description": "Получить баланс и свободную маржу торгового счета cTrader (Pepperstone).",
+        "name": "exchange_get_balance",
+        "description": "Get the balance and free margin of the Exchange Broker trading account.",
         "inputSchema": {
             "type": "object",
             "properties": {}
         }
     },
     {
-        "name": "ctrader_get_positions",
-        "description": "Получить список всех открытых позиций на счете cTrader.",
+        "name": "exchange_get_positions",
+        "description": "Get a list of all open positions on the Exchange account.",
         "inputSchema": {
             "type": "object",
             "properties": {}
         }
     },
     {
-        "name": "ctrader_get_spot_prices",
-        "description": "Получить текущие bid/ask котировки с Pepperstone cTrader для одного или нескольких символов по их ID.",
+        "name": "exchange_get_spot_prices",
+        "description": "Get the current bid/ask quotes from Exchange for one or more symbols by their IDs.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "symbol_ids": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "Массив ID символов, например [10028, 10053] для BTC и SpotBrent"
+                    "description": "Array of symbol IDs, e.g. [10028, 10053] for BTC and SpotBrent"
                 }
             },
             "required": ["symbol_ids"]
@@ -196,54 +196,54 @@ BCM_TOOLS = [
     },
     {
         "name": "bcm_analytics_ask",
-        "description": "Запросить историческую аналитику, сетапы, трейды и лог сделок из базы знаний по названию тикера или паттерну.",
+        "description": "Ask for historical analytics, setups, trades, and trade logs from the knowledge base by ticker name or pattern.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Вопрос или поисковый запрос (например: 'Логика по SPY в апреле 2024')"},
-                "channel": {"type": "string", "description": "Фильтр канала: 'pride-premium' или 'trading-plan' (необязательно)"}
+                "query": {"type": "string", "description": "Question or search query (e.g., 'Logic for SPY in April 2024')"},
+                "channel": {"type": "string", "description": "Channel filter: 'pride-premium' or 'trading-plan' (optional)"}
             },
             "required": ["query"]
         }
     },
     {
-        "name": "ctrader_place_order",
-        "description": "Открыть новую рыночную сделку (BUY/SELL) с указанием объема, SL и TP. Side: 1=BUY, 2=SELL.",
+        "name": "exchange_place_order",
+        "description": "Open a new market order (BUY/SELL) specifying volume, SL, and TP. Side: 1=BUY, 2=SELL.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol_id": {"type": "integer", "description": "Идентификатор символа (например: 10028 для BTC, 2 для GBPUSD)"},
-                "side": {"type": "integer", "description": "Сторона сделки: 1 = BUY, 2 = SELL"},
-                "volume": {"type": "number", "description": "Объем сделки (например: 0.01 лота для BTC)"},
-                "stop_loss": {"type": "number", "description": "Уровень Stop Loss (необязательно)"},
-                "take_profit": {"type": "number", "description": "Уровень Take Profit (необязательно)"}
+                "symbol_id": {"type": "integer", "description": "Symbol identifier (e.g., 10028 for BTC, 2 for GBPUSD)"},
+                "side": {"type": "integer", "description": "Trade side: 1 = BUY, 2 = SELL"},
+                "volume": {"type": "number", "description": "Trade volume (e.g., 0.01 lots for BTC)"},
+                "stop_loss": {"type": "number", "description": "Stop Loss level (optional)"},
+                "take_profit": {"type": "number", "description": "Take Profit level (optional)"}
             },
             "required": ["symbol_id", "side", "volume"]
         }
     },
     {
-        "name": "ctrader_close_position",
-        "description": "Закрыть существующую открытую позицию по её ID. Side: 1=BUY (закрываемая позиция), 2=SELL.",
+        "name": "exchange_close_position",
+        "description": "Close an existing open position by its ID. Side: 1=BUY (position being closed), 2=SELL.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "position_id": {"type": "integer", "description": "Идентификатор открытой позиции"},
-                "symbol_id": {"type": "integer", "description": "Идентификатор символа"},
-                "side": {"type": "integer", "description": "Сторона сделки открытой позиции: 1 = BUY, 2 = SELL"},
-                "volume": {"type": "number", "description": "Объем закрываемой части (лоты)"}
+                "position_id": {"type": "integer", "description": "ID of the open position"},
+                "symbol_id": {"type": "integer", "description": "Symbol identifier"},
+                "side": {"type": "integer", "description": "Trade side of the open position: 1 = BUY, 2 = SELL"},
+                "volume": {"type": "number", "description": "Closing volume (lots)"}
             },
             "required": ["position_id", "symbol_id", "side", "volume"]
         }
     },
     {
-        "name": "ctrader_amend_sltp",
-        "description": "Изменить уровни Stop Loss и/или Take Profit для существующей открытой позиции.",
+        "name": "exchange_amend_sltp",
+        "description": "Modify the Stop Loss and/or Take Profit levels for an existing open position.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "position_id": {"type": "integer", "description": "Идентификатор позиции"},
-                "stop_loss": {"type": "number", "description": "Новый уровень Stop Loss (необязательно)"},
-                "take_profit": {"type": "number", "description": "Новый уровень Take Profit (необязательно)"}
+                "position_id": {"type": "integer", "description": "ID of the open position"},
+                "stop_loss": {"type": "number", "description": "New absolute price for Stop Loss (optional)"},
+                "take_profit": {"type": "number", "description": "New absolute price for Take Profit (optional)"}
             },
             "required": ["position_id"]
         }
@@ -254,7 +254,7 @@ BCM_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": {"type": "string", "description": "Yahoo Finance тикер символа, например: BTC-USD, GBPUSD=X"}
+                "symbol": {"type": "string", "description": "Yahoo Finance тикер символа, onпример: BTC-USD, GBPUSD=X"}
             },
             "required": ["symbol"]
         }
@@ -265,14 +265,14 @@ BCM_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": {"type": "string", "description": "Тикер символа Yahoo Finance (например: BTC-USD, BZ=F)"}
+                "symbol": {"type": "string", "description": "Тикер символа Yahoo Finance (onпример: BTC-USD, BZ=F)"}
             },
             "required": ["symbol"]
         }
     },
     {
         "name": "bcm_get_market_experience",
-        "description": "Найти похожие исторические рыночные условия и результаты сделок в локальной векторной базе знаний Qdrant.",
+        "description": "Найти похожие исторические рыночные условия и результаты сделок в локальной векторной базе зonний Qdrant.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -283,23 +283,23 @@ BCM_TOOLS = [
     },
     {
         "name": "bcm_run_autonomous_cycle",
-        "description": "Запустить полный цикл автоматического анализа и исполнения сделок по алгоритму BCM для указанного символа (Forex/Crypto через Pepperstone cTrader).",
+        "description": "Run the full cycle of automatic analysis and trade execution according to the BCM algorithm for the specified symbol (Forex/Crypto via Exchange).",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": {"type": "string", "description": "Код символа BCM (например: BTC, GBPUSD, US500, BRENT, XAGUSD)"}
+                "symbol": {"type": "string", "description": "Код символа BCM (onпример: BTC, GBPUSD, US500, BRENT, XAGUSD)"}
             },
             "required": ["symbol"]
         }
     },
     {
         "name": "bcm_run_bybit_options_cycle",
-        "description": "Запустить автономный цикл торговли опционами BCM на Bybit. Анализирует рынок, выбирает оптимальный спред (Put-спред, Call-спред, Iron Condor), проверяет через Compliance Officer и РЕАЛЬНО исполняет обе ноги спреда через Bybit API.",
+        "description": "Запустить автономный цикл торговли опциоonми BCM on Bybit. Аonлизирует рынок, выбирает оптимальный спред (Put-спред, Call-спред, Iron Condor), проверяет через Compliance Officer и РЕАЛЬНО исполняет обе ноги спреда через Bybit API.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "base_coin": {"type": "string", "description": "Базовая монета: BTC или ETH (по умолчанию BTC)"},
-                "exp_date": {"type": "string", "description": "Дата экспирации в формате Bybit (например 27DEC26). Если не указана — система выберет лучшую сама."}
+                "exp_date": {"type": "string", "description": "Дата экспирации в формате Bybit (onпример 27DEC26). Если не указаon — система выберет лучшую сама."}
             },
             "required": []
         }
@@ -317,13 +317,13 @@ BCM_TOOLS = [
     },
     {
         "name": "bybit_get_positions",
-        "description": "Получить открытые позиции на Bybit (фьючерсы linear/inverse или опционы option).",
+        "description": "Получить открытые позиции on Bybit (фьючерсы linear/inverse или опционы option).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "category": {"type": "string", "description": "Категория: linear, option, inverse"},
-                "symbol": {"type": "string", "description": "Тикер символа (например ETHUSDT)"},
-                "base_coin": {"type": "string", "description": "Базовая монета (например ETH)"}
+                "symbol": {"type": "string", "description": "Тикер символа (onпример ETHUSDT)"},
+                "base_coin": {"type": "string", "description": "Базовая монета (onпример ETH)"}
             }
         }
     },
@@ -334,47 +334,47 @@ BCM_TOOLS = [
             "type": "object",
             "properties": {
                 "base_coin": {"type": "string", "description": "Базовая монета: ETH или BTC (по умолчанию ETH)"},
-                "exp_date": {"type": "string", "description": "Дата экспирации (необязательно, например 27DEC26)"}
+                "exp_date": {"type": "string", "description": "Дата экспирации (необязательно, onпример 27DEC26)"}
             }
         }
     },
     {
         "name": "bybit_analyze_option_position",
-        "description": "Рассчитать риски, точку безубыточности (Breakeven), статус ITM/OTM и сценарии PnL для опционной позиции (например проданный Put ETH 1300).",
+        "description": "Рассчитать риски, точку безубыточности (Breakeven), статус ITM/OTM и сцеonрии PnL для опционной позиции (onпример проданный Put ETH 1300).",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": {"type": "string", "description": "Символ опциона"},
-                "strike": {"type": "number", "description": "Страйк опциона (например 1300)"},
+                "symbol": {"type": "string", "description": "Символ опциоon"},
+                "strike": {"type": "number", "description": "Страйк опциоon (onпример 1300)"},
                 "option_type": {"type": "string", "description": "Тип: Put или Call"},
-                "side": {"type": "string", "description": "Сторона: Sell (короткая) или Buy (длинная)"},
-                "premium": {"type": "number", "description": "Полученная или уплаченная премия ($)"},
+                "side": {"type": "string", "description": "Стороon: Sell (короткая) или Buy (длинonя)"},
+                "premium": {"type": "number", "description": "Полученonя или уплаченonя премия ($)"},
                 "exp_date": {"type": "string", "description": "Месяц/дата экспирации"},
-                "current_spot": {"type": "number", "description": "Текущая спотовая цена монеты (необязательно)"}
+                "current_spot": {"type": "number", "description": "Текущая спотовая цеon монеты (необязательно)"}
             }
         }
     },
     {
         "name": "bybit_place_order",
-        "description": "Выставить ордер на Bybit (Spot, Linear Futures, Options).",
+        "description": "Выставить ордер on Bybit (Spot, Linear Futures, Options).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "category": {"type": "string", "description": "Категория: spot, linear, option, inverse"},
-                "symbol": {"type": "string", "description": "Торговый символ (например ETHUSDT)"},
-                "side": {"type": "string", "description": "Сторона: Buy или Sell"},
+                "symbol": {"type": "string", "description": "Торговый символ (onпример ETHUSDT)"},
+                "side": {"type": "string", "description": "Стороon: Buy или Sell"},
                 "order_type": {"type": "string", "description": "Тип ордера: Market или Limit"},
                 "qty": {"type": "string", "description": "Количество"},
-                "price": {"type": "string", "description": "Цена (для Limit ордеров)"},
-                "stop_loss": {"type": "string", "description": "Stop Loss цена"},
-                "take_profit": {"type": "string", "description": "Take Profit цена"}
+                "price": {"type": "string", "description": "Цеon (для Limit ордеров)"},
+                "stop_loss": {"type": "string", "description": "Stop Loss цеon"},
+                "take_profit": {"type": "string", "description": "Take Profit цеon"}
             },
             "required": ["category", "symbol", "side", "qty"]
         }
     },
     {
         "name": "bybit_get_portfolio_greeks",
-        "description": "Рассчитать суммарные портфельные Греки (Delta, Gamma, Theta, Vega) по всем опционам и фьючерсам.",
+        "description": "Рассчитать суммарные портфельные Греки (Delta, Gamma, Theta, Vega) по всем опциоonм и фьючерсам.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -409,7 +409,7 @@ BCM_TOOLS = [
             "type": "object",
             "properties": {
                 "category": {"type": "string", "description": "Категория: linear (по умолчанию)"},
-                "min_annual_yield": {"type": "number", "description": "Минимальная годовая доходность % (по умолчанию 10%)"}
+                "min_annual_yield": {"type": "number", "description": "Минимальonя годовая доходность % (по умолчанию 10%)"}
             }
         }
     },
@@ -673,15 +673,15 @@ def handle_exchange_emergency_close_all(args: dict) -> dict:
 def bcm_execute_tool(name: str, arguments: dict) -> str:
     logger.info(f"BCM local tool router: {name} with {arguments}")
     
-    if name in ("ctrader_get_balance", "exchange_get_balance", "bybit_get_balance"):
+    if name in ("exchange_get_balance", "exchange_get_balance", "bybit_get_balance"):
         res = handle_exchange_get_balance(arguments)
-    elif name in ("ctrader_get_positions", "exchange_get_positions", "bybit_get_positions"):
+    elif name in ("exchange_get_positions", "exchange_get_positions", "bybit_get_positions"):
         res = handle_exchange_get_positions(arguments)
-    elif name in ("ctrader_get_spot_prices", "exchange_get_spot_prices"):
+    elif name in ("exchange_get_spot_prices", "exchange_get_spot_prices"):
         res = handle_exchange_get_spot_prices(arguments)
-    elif name in ("ctrader_place_order", "exchange_place_order", "bybit_place_order"):
+    elif name in ("exchange_place_order", "exchange_place_order", "bybit_place_order"):
         res = handle_exchange_place_order(arguments)
-    elif name in ("ctrader_close_position", "exchange_close_position", "bybit_close_position"):
+    elif name in ("exchange_close_position", "exchange_close_position", "bybit_close_position"):
         # We need a generic close_position handler if needed, but for now map it to emergency close or placeholder
         res = handle_exchange_emergency_close_all(arguments)
     elif name == "bcm_calculate_remizov_shift":
@@ -716,46 +716,21 @@ def bcm_execute_tool(name: str, arguments: dict) -> str:
     return json.dumps(res, ensure_ascii=False)
 
 
-# ─── Compatibility shims (legacy names used by autonomous_trader.py) ──────────
-# These were renamed to handle_exchange_* during refactoring.
-# Keep these aliases so autonomous_trader.py doesn't need a full rewrite.
-
-def handle_ctrader_get_balance(args: dict) -> dict:
-    """Compatibility alias → handle_exchange_get_balance."""
-    return handle_exchange_get_balance(args)
-
-def handle_ctrader_get_positions(args: dict) -> dict:
-    """Compatibility alias → handle_exchange_get_positions."""
-    return handle_exchange_get_positions(args)
-
-def handle_ctrader_get_spot_prices(args: dict) -> dict:
-    """Compatibility alias → handle_exchange_get_spot_prices."""
-    return handle_exchange_get_spot_prices(args)
-
-def handle_ctrader_place_order(args: dict) -> dict:
-    """Compatibility alias → handle_exchange_place_order."""
-    return handle_exchange_place_order(args)
-
-def handle_ctrader_close_position(args: dict) -> dict:
-    """Compatibility alias → handle_exchange_emergency_close_all."""
-    return handle_exchange_emergency_close_all(args)
-
-
 def format_live_positions_guardrail(pos_data: dict) -> str:
-    """Format live cTrader/exchange positions into a strict prompt guardrail string."""
+    """Format live Exchange/exchange positions into a strict prompt guardrail string."""
     if not pos_data or "error" in pos_data or not isinstance(pos_data, dict):
         return "\n[WARNING: Live account positions unavailable — proceed with caution]\n"
 
     positions = pos_data.get("positions", [])
     if not positions:
         return (
-            "\n--- REAL-TIME CTRADER ACCOUNT POSITIONS ---\n"
+            "\n--- REAL-TIME EXCHANGE ACCOUNT POSITIONS ---\n"
             "ACTIVE POSITIONS: NONE (0 open trades)\n"
             "CRITICAL MANDATE: No positions are currently open. Do NOT assume or hallucinate open trades.\n"
             "-------------------------------------------\n"
         )
 
-    lines = ["--- REAL-TIME CTRADER ACCOUNT POSITIONS ---"]
+    lines = ["--- REAL-TIME EXCHANGE ACCOUNT POSITIONS ---"]
     for p in positions:
         sym = p.get("symbol", "UNKNOWN")
         side = p.get("side", "BUY")

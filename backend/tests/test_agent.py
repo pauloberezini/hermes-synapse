@@ -32,7 +32,7 @@ def agent():
 def test_agent_initial_state(agent):
     import os
     assert agent.system_prompt == DEFAULT_SYSTEM_PROMPT
-    assert agent.model == os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
+    assert agent.model == os.getenv("LLM_MODEL", "ollama/llama3")
 
 def test_update_system_prompt(agent):
     new_prompt = "New prompt content"
@@ -87,7 +87,7 @@ async def test_respond_http_error(mock_post, agent):
     mock_post.return_value = mock_response
 
     response = await agent.respond("Привет", session_id="test_session")
-    assert "трудности при связи с сервером OpenRouter" in response
+    assert "Difficulties occurred" in response
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.post")
@@ -145,15 +145,15 @@ async def test_classify_complexity():
         # Test keyword matching fallback (on exception/failure)
         with patch("httpx.AsyncClient.post", side_effect=Exception("network error")):
             # Message has keyword matching 'orchestrate'
-            res = await classify_complexity("сравни Bitcoin и Ethereum", "api_key", "api_base")
+            res = await classify_complexity("compare Bitcoin and Ethereum", "api_key", "api_base")
             assert res == "orchestrate"
             
             # Message has keyword matching 'agent'
-            res = await classify_complexity("найди курс биткоина", "api_key", "api_base")
+            res = await classify_complexity("find bitcoin price", "api_key", "api_base")
             assert res == "agent"
             
             # Normal message (direct fallback)
-            res = await classify_complexity("Привет, как дела?", "api_key", "api_base")
+            res = await classify_complexity("Hello, how are you?", "api_key", "api_base")
             assert res == "direct"
 
 @pytest.mark.asyncio

@@ -73,7 +73,7 @@ def test_cross_rss_full_workflow(auth_client):
         id=agent_id,
         name="Tech Research Agent",
         system_prompt="You summarize tech news.",
-        model="google/gemini-2.5-flash"
+        model="ollama/llama3"
     )
     assert get_subagent(agent_id) is not None
 
@@ -204,7 +204,7 @@ def test_agent_rss_tool_schema_and_fallback_execution():
         id=agent_id,
         name="RSS Listener Agent",
         system_prompt="Listen to news.",
-        model="google/gemini-2.5-flash",
+        model="ollama/llama3",
         skills="read_rss_node_feed"
     )
 

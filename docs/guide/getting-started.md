@@ -20,7 +20,7 @@ cp .env.example .env
 Edit `.env` to include your OpenRouter or Gemini API keys:
 ```env
 OPENROUTER_API_KEY=your_key_here
-LLM_MODEL=google/gemini-2.5-flash
+LLM_MODEL=ollama/llama3
 ```
 
 ### 3. Launch via Docker Compose (Recommended)

@@ -158,9 +158,9 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
     # Fallback to defaults if no children connected to jarvis
     if not children and orch_id == "jarvis":
         children = [
-            {"id": "research", "name": "Search Agent", "system_prompt": "You are a research agent. Search for information on the internet.", "model": "google/gemini-2.5-flash", "agent_type": "agent", "skills": "web_search"},
-            {"id": "code", "name": "Code Engineer", "system_prompt": "You are a Code Engineer. Write and execute Python scripts.", "model": "google/gemini-2.5-flash", "agent_type": "agent", "skills": "python_sandbox"},
-            {"id": "analyst", "name": "Visualizer", "system_prompt": "You are an Analyst-Visualizer. Create charts.", "model": "google/gemini-2.5-flash", "agent_type": "agent", "skills": "python_sandbox"}
+            {"id": "research", "name": "Search Agent", "system_prompt": "You are a research agent. Search for information on the internet.", "model": "ollama/llama3", "agent_type": "agent", "skills": "web_search"},
+            {"id": "code", "name": "Code Engineer", "system_prompt": "You are a Code Engineer. Write and execute Python scripts.", "model": "ollama/llama3", "agent_type": "agent", "skills": "python_sandbox"},
+            {"id": "analyst", "name": "Visualizer", "system_prompt": "You are an Analyst-Visualizer. Create charts.", "model": "ollama/llama3", "agent_type": "agent", "skills": "python_sandbox"}
         ]
         
     if not children:

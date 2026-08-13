@@ -1,5 +1,5 @@
 #!/bin/bash
-# Helper to execute trade actions via cTrader OpenAPI
+# Helper to execute generic trade actions via Active Exchange
 
 # Script lives in backend/bcm/ — resolve paths relative to it
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,16 +21,16 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-# Use backend venv python with bcm/openapi_client.py
+# Use backend venv python with mock_exchange or CLI tool
 PYTHON="$BACKEND_DIR/.venv/bin/python3"
-CLIENT="$BCM_DIR/openapi_client.py"
+CLIENT="$BCM_DIR/mock_exchange.py"
 
 if [ ! -f "$PYTHON" ]; then
     echo "ERROR: Python venv not found at $PYTHON" >&2
     exit 2
 fi
 if [ ! -f "$CLIENT" ]; then
-    echo "ERROR: openapi_client.py not found at $CLIENT" >&2
+    echo "ERROR: Exchange client not found at $CLIENT" >&2
     exit 2
 fi
 

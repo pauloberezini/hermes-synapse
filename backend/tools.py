@@ -114,9 +114,9 @@ def get_weather(location: str, days_ahead: int = 0) -> str:
         return json.dumps({
             "location":    city,
             "temperature": temp,
-            "condition":   "переменная облачность (прогноз)",
+            "condition":   "partly cloudy (forecast)",
             "days_ahead":  days_ahead,
-            "source":      "mock — добавьте OPENWEATHERMAP_API_KEY в .env для реальных данных",
+            "source":      "mock - add OPENWEATHERMAP_API_KEY to .env for real data",
             "status":      "mock"
         }, ensure_ascii=False)
 
@@ -136,18 +136,18 @@ def get_weather(location: str, days_ahead: int = 0) -> str:
             logger.error(f"Weather fetch error: {e}")
 
         if not data:
-            return json.dumps({"error": f"Не удалось получить погоду для '{location}'."})
+            return json.dumps({"error": f"Failed to get weather for '{location}'."})
 
         main    = data.get("main", {})
         weather = data.get("weather", [{}])[0]
         wind    = data.get("wind", {})
         return json.dumps({
             "location":    data.get("name", location),
-            "temperature": f"{main.get('temp', '?'):.1f}°C" if main.get('temp') is not None else "нет данных",
-            "feels_like":  f"{main.get('feels_like', '?'):.1f}°C" if main.get('feels_like') is not None else "нет данных",
-            "condition":   weather.get("description", "неизвестно"),
-            "humidity":    f"{main.get('humidity', '?')}%" if main.get('humidity') is not None else "нет данных",
-            "wind_speed":  f"{wind.get('speed', '?')} м/с" if wind.get('speed') is not None else "нет данных",
+            "temperature": f"{main.get('temp', '?'):.1f}°C" if main.get('temp') is not None else "no data",
+            "feels_like":  f"{main.get('feels_like', '?'):.1f}°C" if main.get('feels_like') is not None else "no data",
+            "condition":   weather.get("description", "unknown"),
+            "humidity":    f"{main.get('humidity', '?')}%" if main.get('humidity') is not None else "no data",
+            "wind_speed":  f"{wind.get('speed', '?')} м/с" if wind.get('speed') is not None else "no data",
             "source":      "OpenWeatherMap",
             "status":      "real"
         }, ensure_ascii=False)
@@ -167,7 +167,7 @@ def get_weather(location: str, days_ahead: int = 0) -> str:
             logger.error(f"Weather forecast fetch error: {e}")
 
         if not data:
-            return json.dumps({"error": f"Не удалось получить прогноз погоды для '{location}'."})
+            return json.dumps({"error": f"Failed to get weather forecast for '{location}'."})
 
         import datetime
         target_date = (datetime.date.today() + datetime.timedelta(days=days_ahead)).strftime("%Y-%m-%d")
@@ -176,7 +176,7 @@ def get_weather(location: str, days_ahead: int = 0) -> str:
         day_forecasts = [item for item in forecast_list if item.get("dt_txt", "").startswith(target_date)]
         
         if not day_forecasts:
-            return json.dumps({"error": f"Прогноз для '{location}' на {target_date} не найден."})
+            return json.dumps({"error": f"Forecast for '{location}' on {target_date} не onйден."})
             
         midday = [item for item in day_forecasts if "12:00:00" in item.get("dt_txt", "") or "15:00:00" in item.get("dt_txt", "")]
         selected = midday[0] if midday else day_forecasts[len(day_forecasts) // 2]
@@ -189,11 +189,11 @@ def get_weather(location: str, days_ahead: int = 0) -> str:
             "location":    data.get("city", {}).get("name", location),
             "date":        target_date,
             "days_ahead":  days_ahead,
-            "temperature": f"{main.get('temp', '?'):.1f}°C" if main.get('temp') is not None else "нет данных",
-            "feels_like":  f"{main.get('feels_like', '?'):.1f}°C" if main.get('feels_like') is not None else "нет данных",
-            "condition":   weather.get("description", "неизвестно"),
-            "humidity":    f"{main.get('humidity', '?')}%" if main.get('humidity') is not None else "нет данных",
-            "wind_speed":  f"{wind.get('speed', '?')} м/с" if wind.get('speed') is not None else "нет данных",
+            "temperature": f"{main.get('temp', '?'):.1f}°C" if main.get('temp') is not None else "no data",
+            "feels_like":  f"{main.get('feels_like', '?'):.1f}°C" if main.get('feels_like') is not None else "no data",
+            "condition":   weather.get("description", "unknown"),
+            "humidity":    f"{main.get('humidity', '?')}%" if main.get('humidity') is not None else "no data",
+            "wind_speed":  f"{wind.get('speed', '?')} м/с" if wind.get('speed') is not None else "no data",
             "source":      "OpenWeatherMap Forecast",
             "status":      "real"
         }, ensure_ascii=False)
@@ -205,7 +205,7 @@ def get_current_time_israel() -> str:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-        day_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+        day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         day_of_week = day_names[now.weekday()]
         return json.dumps({
             "israel_time": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -228,7 +228,7 @@ def set_timer(label: str, duration_seconds: int, chat_id: str, agent_id: Optiona
     if duration_seconds > 3600:
         return json.dumps({
             "status": "failed",
-            "error": "Превышен максимальный лимит. Сэр, таймер нельзя установить более чем на 1 час (3600 секунд)."
+            "error": "Превышен максимальный лимит. Сэр, таймер нельзя установить более чем on 1 час (3600 seconds)."
         }, ensure_ascii=False)
     try:
         from backend.scheduler import add_timer
@@ -241,7 +241,7 @@ def set_timer(label: str, duration_seconds: int, chat_id: str, agent_id: Optiona
             "timer_id":         timer_id,
             "label":            label,
             "duration_seconds": duration_seconds,
-            "message":          f"Таймер '{label}' установлен на {duration_seconds} секунд."
+            "message":          f"Timer '{label}' установлен on {duration_seconds} seconds."
         }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error setting timer: {e}")
@@ -261,7 +261,7 @@ def set_alarm(time_str: str, label: str, chat_id: str, agent_id: Optional[str] =
             "alarm_id":    alarm_id,
             "label":       label,
             "time_str":    time_str,
-            "message":     f"Будильник '{label}' успешно установлен на {time_str}."
+            "message":     f"Alarm '{label}' успешно установлен on {time_str}."
         }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error setting alarm: {e}")
@@ -277,13 +277,13 @@ def cancel_timer_or_alarm(id: str) -> str:
             return json.dumps({
                 "status":  "cancelled",
                 "id":      id,
-                "message": f"Таймер или будильник с ID '{id}' успешно отменён."
+                "message": f"Timer or alarm with ID '{id}' successfully cancelled."
             }, ensure_ascii=False)
         else:
             return json.dumps({
                 "status":  "not_found",
                 "id":      id,
-                "message": f"Активный таймер или будильник с ID '{id}' не найден."
+                "message": f"Активный таймер or alarm with ID '{id}' не onйден."
             }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error cancelling timer/alarm: {e}")
@@ -307,7 +307,7 @@ def set_recurring_reminder(label: str, interval_hours: float, chat_id: str, agen
             "reminder_id":    reminder_id,
             "label":          label,
             "interval_hours": interval_hours,
-            "message":        f"Повторяющееся напоминание '{label}' каждые {interval_hours}ч установлено."
+            "message":        f"Повторяющееся onпомиonние '{label}' every {interval_hours}h set."
         }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error setting recurring reminder: {e}")
@@ -324,7 +324,7 @@ def _get_calendar_service():
     creds_path = os.getenv("GOOGLE_CLIENT_SECRET_PATH", os.path.join(os.path.dirname(__file__), "data", "google_credentials.json"))
 
     if not os.path.exists(creds_path):
-        return None, "google_credentials.json не найден. Запустите python backend/google_auth.py или задайте GOOGLE_CLIENT_SECRET_PATH"
+        return None, "google_credentials.json не onйден. Запустите python backend/google_auth.py или задайте GOOGLE_CLIENT_SECRET_PATH"
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
@@ -342,12 +342,12 @@ def _get_calendar_service():
                 with open(token_path, "w") as f:
                     f.write(creds.to_json())
             else:
-                return None, "Токен Google не найден. Запустите python backend/google_auth.py на вашем Mac."
+                return None, "Токен Google не onйден. Запустите python backend/google_auth.py on вашем Mac."
 
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
         return service, None
     except ImportError:
-        return None, "Установите google-auth-oauthlib и google-api-python-client"
+        return None, "Install google-auth-oauthlib and google-api-python-client"
     except Exception as e:
         return None, str(e)
 
@@ -364,7 +364,7 @@ def get_calendar_events(days_ahead: int = 7) -> str:
     """
     service, err = _get_calendar_service()
     if err:
-        return json.dumps({"error": err, "hint": "Запустите python backend/google_auth.py для авторизации"})
+        return json.dumps({"error": err, "hint": "Run python backend/google_auth.py for authorization"})
     try:
         from zoneinfo import ZoneInfo
         LOCAL_TZ = ZoneInfo("Asia/Jerusalem")
@@ -377,11 +377,11 @@ def get_calendar_events(days_ahead: int = 7) -> str:
             # Exactly today: [start of local today, start of local tomorrow)
             range_start = today_local
             range_end   = today_local + timedelta(days=1)
-            period_label = "сегодня"
+            period_label = "today"
         else:
             range_start = today_local
             range_end   = today_local + timedelta(days=days_ahead + 1)
-            period_label = f"ближайшие {days_ahead} дней"
+            period_label = f"next {days_ahead} days"
 
         # Convert to UTC for the Google Calendar API
         today_start = range_start.astimezone(timezone.utc)
@@ -397,7 +397,7 @@ def get_calendar_events(days_ahead: int = 7) -> str:
         ).execute()
         events = events_result.get("items", [])
         if not events:
-            return json.dumps({"events": [], "message": f"Нет событий на {period_label}."})
+            return json.dumps({"events": [], "message": f"Нет событий on {period_label}."})
 
         result = []
         for e in events:
@@ -405,7 +405,7 @@ def get_calendar_events(days_ahead: int = 7) -> str:
             start = start_info.get("dateTime", start_info.get("date", ""))
             is_all_day = "date" in start_info and "dateTime" not in start_info
             result.append({
-                "title":      e.get("summary", "(без названия)"),
+                "title":      e.get("summary", "(без onзвания)"),
                 "start":      start,
                 "all_day":    is_all_day,
                 "location":   e.get("location", ""),
@@ -516,7 +516,7 @@ def get_todoist_tasks(filter_str: str = "today | overdue") -> str:
     if not token:
         return json.dumps({
             "error": "TODOIST_API_TOKEN не задан в .env",
-            "hint":  "Возьмите токен на https://app.todoist.com/app/settings/integrations/developer"
+            "hint":  "Возьмите токен on https://app.todoist.com/app/settings/integrations/developer"
         })
     # Todoist v1 uses query param 'filter' for task filtering
     params = {"filter": filter_str} if filter_str else {}
@@ -545,7 +545,7 @@ def add_todoist_task(content: str, due_string: str = "", priority: int = 1) -> s
     if not token:
         return json.dumps({
             "error": "TODOIST_API_TOKEN не задан в .env",
-            "hint":  "Возьмите токен на https://app.todoist.com/app/settings/integrations/developer"
+            "hint":  "Возьмите токен on https://app.todoist.com/app/settings/integrations/developer"
         })
     payload: Dict[str, Any] = {"content": content, "priority": priority}
     if due_string:
@@ -585,7 +585,7 @@ def delete_todoist_task(task_id: str) -> str:
     if not token:
         return json.dumps({
             "error": "TODOIST_API_TOKEN не задан в .env",
-            "hint":  "Возьмите токен на https://app.todoist.com/app/settings/integrations/developer"
+            "hint":  "Возьмите токен on https://app.todoist.com/app/settings/integrations/developer"
         })
     success = _run_async(_todoist_delete(f"tasks/{task_id}", token))
     if not success:
@@ -613,12 +613,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_weather",
-            "description": "Возвращает текущую погоду или прогноз погоды на несколько дней для указанного города.",
+            "description": "Возвращает текущую погоду или прогноз погоды on несколько days для указанного города.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "location": {"type": "string", "description": "Название города, например: Москва, Ашкелон, Tokyo"},
-                    "days_ahead": {"type": "integer", "description": "Прогноз погоды вперед в днях: 0 для текущей погоды (по умолчанию), 1 для завтрашнего дня, 2 для послезавтра и т.д. (до 4 дней)"}
+                    "location": {"type": "string", "description": "Название города, onпример: Москва, Ашкелон, Tokyo"},
+                    "days_ahead": {"type": "integer", "description": "Прогноз погоды вперед в днях: 0 для текущей погоды (по умолчанию), 1 для завтрашнего дня, 2 для послезавтра и т.д. (до 4 days)"}
                 },
                 "required": ["location"]
             }
@@ -639,12 +639,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "set_timer",
-            "description": "Устанавливает таймер обратного отсчёта с Telegram-уведомлением по истечении. Обратите внимание: максимальная длительность таймера — 1 час (3600 секунд). Допускается параллельная установка нескольких таймеров.",
+            "description": "Устаonвливает таймер обратного отсчёта с Telegram-уведомлением по истечении. Обратите внимание: максимальonя длительность таймера — 1 час (3600 seconds). Допускается параллельonя установка нескольких таймеров.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "label":            {"type": "string",  "description": "Описание события, например: созвон, проверить духовку"},
-                    "duration_seconds": {"type": "integer", "description": "Интервал в секундах (не более 3600)"}
+                    "label":            {"type": "string",  "description": "Описание события, onпример: созвон, проверить духовку"},
+                    "duration_seconds": {"type": "integer", "description": "Интервал в secondsах (не более 3600)"}
                 },
                 "required": ["label", "duration_seconds"]
             }
@@ -654,12 +654,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "set_alarm",
-            "description": "Устанавливает будильник на определённое время (например: '08:30', '21:00' или '2026-05-30 07:00'). Если время прошло для сегодняшнего дня, будильник автоматически устанавливается на завтра.",
+            "description": "Устаonвливает будильник on определённое время (onпример: '08:30', '21:00' или '2026-05-30 07:00'). Если время прошло для todayшнего дня, будильник автоматически устаonвливается on завтра.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "time_str": {"type": "string", "description": "Время срабатывания в формате ЧЧ:ММ (24-часовой формат) или ГГГГ-ММ-ДД ЧЧ:ММ"},
-                    "label":    {"type": "string", "description": "Описание будильника (например: 'проснуться', 'встреча')"}
+                    "label":    {"type": "string", "description": "Описание будильника (onпример: 'проснуться', 'встреча')"}
                 },
                 "required": ["time_str", "label"]
             }
@@ -683,12 +683,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "set_recurring_reminder",
-            "description": "Создаёт повторяющееся напоминание, которое срабатывает каждые N часов через Telegram.",
+            "description": "Создаёт повторяющееся onпомиonние, которое срабатывает every N часов через Telegram.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "label":          {"type": "string", "description": "Текст напоминания"},
-                    "interval_hours": {"type": "number", "description": "Интервал повтора в часах, например: 24 для ежедневного"}
+                    "label":          {"type": "string", "description": "Текст onпомиonния"},
+                    "interval_hours": {"type": "number", "description": "Интервал повтора в часах, onпример: 24 для ежедневного"}
                 },
                 "required": ["label", "interval_hours"]
             }
@@ -698,11 +698,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_calendar_events",
-            "description": "Возвращает список предстоящих событий из Google Календаря. Для вопросов 'что сегодня', 'встречи на сегодня' — используй days_ahead=0. Для 'завтра' — days_ahead=1. По умолчанию 7 дней.",
+            "description": "Возвращает список предстоящих событий из Google Календаря. Для вопросов 'что today', 'встречи on today' — используй days_ahead=0. Для 'завтра' — days_ahead=1. По умолчанию 7 days.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days_ahead": {"type": "integer", "description": "Сколько дней вперёд смотреть: 0 = только сегодня (включая all-day события), 1 = завтра, 7 = неделя (по умолчанию)"}
+                    "days_ahead": {"type": "integer", "description": "Сколько days вперёд смотреть: 0 = только today (включая all-day события), 1 = завтра, 7 = неделя (по умолчанию)"}
                 }
             }
         }
@@ -718,9 +718,9 @@ TOOLS_SCHEMA = [
                     "title":            {"type": "string",  "description": "Название события"},
                     "date":             {"type": "string",  "description": "Дата в формате YYYY-MM-DD"},
                     "time":             {"type": "string",  "description": "Время в формате HH:MM (по умолчанию 10:00)"},
-                    "end_time":         {"type": "string",  "description": "Время окончания в формате HH:MM (опционально, если известно точное время окончания)"},
+                    "end_time":         {"type": "string",  "description": "Время окончания в формате HH:MM (опциоonльно, если известно точное время окончания)"},
                     "duration_minutes": {"type": "integer", "description": "Длительность в минутах (по умолчанию 60, игнорируется если передан end_time)"},
-                    "description":      {"type": "string",  "description": "Описание события (опционально)"}
+                    "description":      {"type": "string",  "description": "Описание события (опциоonльно)"}
                 },
                 "required": ["title", "date"]
             }
@@ -730,11 +730,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_todoist_tasks",
-            "description": "Возвращает список задач из Todoist. По умолчанию показывает задачи на сегодня и просроченные.",
+            "description": "Возвращает список задач из Todoist. По умолчанию показывает задачи on today и просроченные.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_str": {"type": "string", "description": "Фильтр Todoist, например: 'today', 'overdue', 'p1'"}
+                    "filter_str": {"type": "string", "description": "Фильтр Todoist, onпример: 'today', 'overdue', 'p1'"}
                 }
             }
         }
@@ -748,7 +748,7 @@ TOOLS_SCHEMA = [
                 "type": "object",
                 "properties": {
                     "content":    {"type": "string",  "description": "Текст задачи"},
-                    "due_string": {"type": "string",  "description": "Срок выполнения, например: сегодня, завтра, следующая пятница"},
+                    "due_string": {"type": "string",  "description": "Срок выполнения, onпример: today, завтра, следующая friday"},
                     "priority":   {"type": "integer", "description": "Приоритет: 1 (обычный) .. 4 (срочный)"}
                 },
                 "required": ["content"]
@@ -778,7 +778,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Поисковый запрос на русском или английском"}
+                    "query": {"type": "string", "description": "Поисковый запрос on русском или английском"}
                 },
                 "required": ["query"]
             }
@@ -788,12 +788,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "add_price_alert",
-            "description": "Устанавливает оповещение о достижении ценового порога криптовалюты (btc, eth, ton) или акции (AAPL, TSLA).",
+            "description": "Устаonвливает оповещение о достижении ценового порога криптовалюты (btc, eth, ton) или акции (AAPL, TSLA).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Символ актива, например: TON, BTC, AAPL, TSLA"},
-                    "target_price": {"type": "number", "description": "Целевая цена в USD, при пересечении которой сработает алерт"},
+                    "symbol": {"type": "string", "description": "Символ актива, onпример: TON, BTC, AAPL, TSLA"},
+                    "target_price": {"type": "number", "description": "Целевая цеon в USD, при пересечении которой сработает алерт"},
                     "condition": {"type": "string", "description": "Условие срабатывания: 'above' (выше целевой цены) или 'below' (ниже целевой цены)"}
                 },
                 "required": ["symbol", "target_price", "condition"]
@@ -804,11 +804,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_market_prices",
-            "description": "Возвращает текущие рыночные цены на активы (криптовалюту или акции) в реальном времени.",
+            "description": "Возвращает текущие рыночные цены on активы (криптовалюту или акции) в реальном времени.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbols": {"type": "string", "description": "Список активов через запятую, например: 'TON, BTC, TSLA'"}
+                    "symbols": {"type": "string", "description": "Список активов через запятую, onпример: 'TON, BTC, TSLA'"}
                 },
                 "required": ["symbols"]
             }
@@ -832,7 +832,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_rss_digest",
-            "description": "Получает последние новости из RSS-источников, например с Хабра, и выводит список последних публикаций.",
+            "description": "Получает последние новости из RSS-источников, onпример с Хабра, и выводит список последних публикаций.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -850,8 +850,8 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (опционально, например 'rss_node_123' или 'all')"},
-                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опционально)"}
+                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (опциоonльно, onпример 'rss_node_123' или 'all')"},
+                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опциоonльно)"}
                 },
                 "required": []
             }
@@ -861,12 +861,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "create_subagent",
-            "description": "Создаёт нового специализированного сабагента или обновляет существующего (например, эксперта по спортивным ставкам, репетитора языков и т.д.).",
+            "description": "Создаёт нового специализированного сабагента или обновляет существующего (onпример, эксперта по спортивным ставкам, репетитора языков и т.д.).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "subagent_id": {"type": "string", "description": "Уникальный латинский идентификатор (slug), например: 'sports_betting', 'french_tutor'"},
-                    "name": {"type": "string", "description": "Понятное имя агента, например: 'Аналитик Спортивных Ставок'"},
+                    "subagent_id": {"type": "string", "description": "Уникальный латинский идентификатор (slug), onпример: 'sports_betting', 'french_tutor'"},
+                    "name": {"type": "string", "description": "Понятное имя агента, onпример: 'Аonлитик Спортивных Ставок'"},
                     "system_prompt": {"type": "string", "description": "Детальные инструкции (системный промпт), определяющие характер, тон и правила работы сабагента."},
                     "model": {"type": "string", "description": "Модель ИИ для работы сабагента. По умолчанию используется deepseek/deepseek-v4-flash."}
                 },
@@ -882,7 +882,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "subagent_id": {"type": "string", "description": "Идентификатор сабагента (id), например: 'sports_betting'"},
+                    "subagent_id": {"type": "string", "description": "Идентификатор сабагента (id), onпример: 'sports_betting'"},
                     "query": {"type": "string", "description": "Запрос или задание для сабагента"}
                 },
                 "required": ["subagent_id", "query"]
@@ -901,12 +901,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "save_subagent_memory",
-            "description": "Сохраняет или обновляет факт (пару ключ-значение) в долгосрочной памяти текущего субагента. Информация будет записана в базу данных и проиндексирована в RAG (Qdrant).",
+            "description": "Сохраняет или обновляет факт (пару ключ-зonчение) в долгосрочной памяти текущего субагента. Информация будет записаon в базу данных и проиндексироваon в RAG (Qdrant).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "key": {"type": "string", "description": "Ключ (идентификатор факта), например: 'vocabulary', 'user_grammar_level', 'common_mistakes', 'lessons_progress'"},
-                    "value": {"type": "string", "description": "Содержимое факта, например: список выученных слов, описание ошибок или уровень пользователя."}
+                    "key": {"type": "string", "description": "Ключ (идентификатор факта), onпример: 'vocabulary', 'user_grammar_level', 'common_mistakes', 'lessons_progress'"},
+                    "value": {"type": "string", "description": "Содержимое факта, onпример: список выученных слов, описание ошибок или уровень пользователя."}
                 },
                 "required": ["key", "value"]
             }
@@ -933,7 +933,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "Команда для выполнения в терминале, например: 'curl -s https://api.linear.app/...' или 'python -c ...'"}
+                    "command": {"type": "string", "description": "Команда для выполнения в термиonле, onпример: 'curl -s https://api.linear.app/...' или 'python -c ...'"}
                 },
                 "required": ["command"]
             }
@@ -944,8 +944,8 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "search_obsidian",
             "description": (
-                "Семантический поиск по заметкам Obsidian через базу знаний (RAG). "
-                "Используйте когда Сэр спрашивает ‘найди в заметках’, ‘что я писал о...’ или ‘посмотри в Obsidian’."
+                "Семантический поиск по заметкам Obsidian через базу зonний (RAG). "
+                "Используйте когда Сэр спрашивает ‘onйди в заметках’, ‘что я писал о...’ или ‘посмотри в Obsidian’."
             ),
             "parameters": {
                 "type": "object",
@@ -964,7 +964,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "note_path": {"type": "string", "description": "Относительный путь заметки в хранилище, например: 'Daily/2026-06-23.md' или 'Идеи.md'"}
+                    "note_path": {"type": "string", "description": "Относительный путь заметки в хранилище, onпример: 'Daily/2026-06-23.md' или 'Идеи.md'"}
                 },
                 "required": ["note_path"]
             }
@@ -977,26 +977,26 @@ TOOLS_SCHEMA = [
             "description": (
                 "Создать новую заметку в Obsidian. Используйте когда Сэр говорит 'запиши в Obsidian', 'сохрани заметку', 'зафиксируй' и т.п.\n"
                 "ВАЖНО: Вы — архивариус. Самостоятельно определяйте папку по смыслу контента, используя следующую таксономию:\n"
-                "  Research/<Тема> — научные статьи, исследования, arxiv, анализ\n"
+                "  Research/<Тема> — onучные статьи, исследования, arxiv, аonлиз\n"
                 "  Ideas — идеи, концепции, brainstorm\n"
                 "  Projects/<Название> — конкретные проекты и задачи\n"
                 "  People/<Имя> — заметки о людях\n"
                 "  Daily/<YYYY-MM-DD> — дневниковые записи, события дня\n"
-                "  Finance — финансы, ставки, инвестиции, бюджет\n"
+                "  Finance — фиonнсы, ставки, инвестиции, бюджет\n"
                 "  Health — здоровье, тренировки, питание\n"
                 "  Tech — технологии, инструменты, туториалы, код\n"
                 "  Books — книги, конспекты, цитаты\n"
                 "  Meetings — встречи, звонки, договорённости\n"
                 "  Jarvis — служебные заметки от Jarvis без чёткой категории\n"
-                "Выбирайте папку автоматически — НЕ спрашивайте Сэра. Можно создавать подпапки, например Research/AI или Projects/Jarvis."
+                "Выбирайте папку автоматически — НЕ спрашивайте Сэра. Можно создавать подпапки, onпример Research/AI или Projects/Jarvis."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Краткое, информативное название заметки (имя файла без .md)"},
+                    "title": {"type": "string", "description": "Краткое, информативное onзвание заметки (имя файла без .md)"},
                     "content": {"type": "string", "description": "Содержимое заметки в Markdown-формате. Структурируйте через заголовки, списки, ссылки."},
                     "folder": {"type": "string", "description": "Папка внутри хранилища. Определяйте по таксономии из описания. Можно вложенные: 'Research/AI'"},
-                    "source": {"type": "string", "description": "Исходный файл или ссылка, откуда взят контент (например, имя загруженного файла). Оставьте пустым если не применимо."}
+                    "source": {"type": "string", "description": "Исходный файл или ссылка, откуда взят контент (onпример, имя загруженного файла). Оставьте пустым если не применимо."}
                 },
                 "required": ["title", "content", "folder"]
             }
@@ -1006,7 +1006,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "sync_obsidian_vault",
-            "description": "Полная синхронизация хранилища Obsidian в базу знаний (векторную БД). Используйте если Сэр добавил новые заметки и хочет обновить базу знаний.",
+            "description": "Полonя синхронизация хранилища Obsidian в базу зonний (векторную БД). Используйте если Сэр добавил новые заметки и хочет обновить базу зonний.",
             "parameters": {"type": "object", "properties": {}}
         }
     }
@@ -1057,68 +1057,41 @@ async def _scrape_ddg(query: str) -> str:
     return "Не удалось получить результаты поиска."
 
 
-async def _serper_search(query: str, api_key: str) -> str:
-    """Search via Serper.dev (Google Search API). Returns rich results including news, sports, knowledge graph."""
+async def _searxng_search(query: str, base_url: str) -> str:
+    """Search via SearXNG (Self-hosted metasearch API)."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.post(
-                "https://google.serper.dev/search",
-                headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
-                json={"q": query, "num": 6, "hl": "ru", "gl": "il"}
+            r = await client.get(
+                f"{base_url.rstrip('/')}/search",
+                params={"q": query, "format": "json"}
             )
             if r.status_code == 200:
                 data = r.json()
                 results = []
 
-                # Knowledge Graph (facts, entities)
-                kg = data.get("knowledgeGraph", {})
-                if kg:
-                    kg_text = f"\U0001f4cc **{kg.get('title', '')}** \u2014 {kg.get('description', '')}"
-                    attrs = kg.get("attributes", {})
-                    if attrs:
-                        kg_text += "\n  " + " | ".join(f"{k}: {v}" for k, v in list(attrs.items())[:4])
-                    results.append(kg_text)
-
-                # Answer box (direct answer)
-                answer_box = data.get("answerBox", {})
-                if answer_box:
-                    ab_answer = answer_box.get("answer") or answer_box.get("snippet", "")
-                    if ab_answer:
-                        results.append(f"\u2705 **Прямой ответ:** {ab_answer}")
-
-                # Sports results
-                sports = data.get("sports", [])
-                for s in sports[:3]:
-                    results.append(f"\u26bd **{s.get('title', '')}** \u2014 {s.get('snippet', '')}")
-
-                # News results
-                news = data.get("news", [])
-                for n in news[:3]:
-                    results.append(f"\U0001f4f0 **{n.get('title', '')}**\n  {n.get('snippet', '')}\n  \U0001f517 {n.get('link', '')}")
-
                 # Organic results
-                organic = data.get("organic", [])
-                for res in organic[:4]:
-                    snippet = res.get("snippet", "")
-                    results.append(f"\u2022 **{res.get('title', '')}**\n  {snippet}\n  \U0001f517 {res.get('link', '')}")
+                organic = data.get("results", [])
+                for res in organic[:6]:
+                    snippet = res.get("content", "")
+                    results.append(f"\u2022 **{res.get('title', '')}**\n  {snippet}\n  \U0001f517 {res.get('url', '')}")
 
                 if results:
                     return "\n\n".join(results)
     except Exception as e:
-        logger.warning(f"Serper search failed: {e}")
+        logger.warning(f"SearXNG search failed: {e}")
     return ""
 
 def web_search(query: str) -> str:
-    # 1. Try Serper.dev (Google Search — best for real-time sports/news)
-    serper_key = _env("SERPER_API_KEY")
-    if serper_key:
+    # 1. Try SearXNG (Open-source self-hosted metasearch)
+    searxng_url = _env("SEARXNG_URL")
+    if searxng_url:
         try:
-            res = _run_async(_serper_search(query, serper_key))
+            res = _run_async(_searxng_search(query, searxng_url))
             if res:
-                logger.info(f"web_search: Serper returned results for '{query}'")
+                logger.info(f"web_search: SearXNG returned results for '{query}'")
                 return res
         except Exception as e:
-            logger.warning(f"Serper search exception: {e}")
+            logger.warning(f"SearXNG search exception: {e}")
 
     # 2. Try Tavily as fallback
     tavily_key = _env("TAVILY_API_KEY")
@@ -1167,7 +1140,7 @@ def get_market_prices(symbols: str) -> str:
         results = {}
         for s in parts:
             p = _run_async(price_monitor.get_market_price(s))
-            results[s] = p if p is not None else "нет данных"
+            results[s] = p if p is not None else "no data"
         return json.dumps(results, ensure_ascii=False)
     except Exception as e:
         logger.error(f"get_market_prices tool error: {e}")
@@ -1299,7 +1272,7 @@ def read_rss_node_feed(node_id: Optional[str] = None, limit: Optional[int] = Non
                     all_outputs.append("\n\n".join(lines))
 
             if not all_outputs:
-                return "Активные RSS-ноды пока не накопили сохраненных записей."
+                return "Активные RSS-ноды пока не onкопили сохраненных записей."
 
             return "## Сводка активных RSS-нод:\n\n" + "\n\n---\n\n".join(all_outputs)
 
@@ -1333,7 +1306,7 @@ def create_subagent(subagent_id: str, name: str, system_prompt: str, model: Opti
     import re
     clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', subagent_id).lower()
     if not model:
-        model = os.getenv("LLM_MODEL", "google/gemini-2.5-pro")
+        model = os.getenv("LLM_MODEL", "ollama/llama3")
     save_subagent(clean_id, name, system_prompt, model)
     return json.dumps({
         "status": "success",
@@ -1349,7 +1322,7 @@ def call_subagent(subagent_id: str, query: str) -> str:
     clean_id = subagent_id.strip().lower()
     subagent = get_subagent(clean_id)
     if not subagent:
-        return json.dumps({"error": f"Субагент с id '{clean_id}' не найден."}, ensure_ascii=False)
+        return json.dumps({"error": f"Субагент с id '{clean_id}' не onйден."}, ensure_ascii=False)
         
     try:
         # Run the async agent respond call inside sync context
@@ -1400,7 +1373,7 @@ def save_subagent_memory(key: str, value: str, chat_id: Optional[str] = None) ->
     
     return json.dumps({
         "status": "success",
-        "message": f"Информация успешно сохранена в базу данных и проиндексирована в RAG (успех RAG: {success})."
+        "message": f"Информация успешно сохранеon в базу данных и проиндексироваon в RAG (успех RAG: {success})."
     }, ensure_ascii=False)
 
 def get_subagent_memory(key: Optional[str] = None, chat_id: Optional[str] = None) -> str:
@@ -1436,7 +1409,7 @@ def search_obsidian(query: str) -> str:
             for h in plugin_hits:
                 results.append(f"\U0001f4c4 **{h.get('filename', '')}**\n  {h.get('excerpt', '')}")
             return "\n\n".join(results)
-        return json.dumps({"results": [], "message": "Заметки по запросу '"+query+"' не найдены. Попробуйте sync_obsidian_vault."},
+        return json.dumps({"results": [], "message": "Заметки по запросу '"+query+"' не onйдены. Попробуйте sync_obsidian_vault."},
                 ensure_ascii=False)
     results = []
     for h in hits:
@@ -1455,7 +1428,7 @@ def read_obsidian_note(note_path: str) -> str:
         return await read_note(note_path)
     content = _run_async(_read())
     if content is None:
-        return json.dumps({"error": f"Заметка '{note_path}' не найдена. Проверьте путь и подключение Obsidian."},
+        return json.dumps({"error": f"Заметка '{note_path}' не onйдеon. Проверьте путь и подключение Obsidian."},
                 ensure_ascii=False)
     return json.dumps({"path": note_path, "content": content}, ensure_ascii=False)
 
@@ -1510,7 +1483,7 @@ def create_obsidian_note(title: str, content: str, folder: str = "Jarvis", sourc
     return json.dumps({
         "status": "created",
         "path": note_path,
-        "message": f"Заметка '{title}' создана в хранилище Obsidian: {note_path}"
+        "message": f"Note '{title}' created in Obsidian vault: {note_path}"
     }, ensure_ascii=False)
 
 
@@ -1547,7 +1520,7 @@ def execute_command(command: str) -> str:
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
     logger.info(f"Executing tool '{name}' with args: {arguments}")
 
-    if name.startswith("ctrader_") or name.startswith("bcm_") or name.startswith("bybit_"):
+    if name.startswith("bcm_") or name.startswith("bybit_"):
         try:
             from backend.bcm.tools import bcm_execute_tool
             return bcm_execute_tool(name, arguments)
@@ -1567,7 +1540,7 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         return get_current_time_israel()
 
     elif name == "set_timer":
-        label = arguments.get("label", "Таймер")
+        label = arguments.get("label", "Timer")
         duration = int(arguments.get("duration_seconds", 60))
         agent_id = arguments.get("agent_id")
         prompt = arguments.get("prompt")
@@ -1577,7 +1550,7 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
 
     elif name == "set_alarm":
         time_str = arguments.get("time_str", "")
-        label = arguments.get("label", "Будильник")
+        label = arguments.get("label", "Alarm")
         agent_id = arguments.get("agent_id")
         prompt = arguments.get("prompt")
         if agent_id or prompt:
@@ -1590,7 +1563,7 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         )
 
     elif name == "set_recurring_reminder":
-        label = arguments.get("label", "Напоминание")
+        label = arguments.get("label", "Напомиonние")
         interval_hours = float(arguments.get("interval_hours", 24))
         agent_id = arguments.get("agent_id")
         prompt = arguments.get("prompt")

@@ -151,6 +151,33 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start scheduler or skill distillation loop: {e}")
 
+    # Start Mesh Router heartbeat loop for Stage 17 distributed capability
+    import uuid
+    import socket
+    
+    async def _mesh_heartbeat_task():
+        from backend.mesh import get_mesh_router, MeshPeerManifest
+        router = get_mesh_router()
+        node_id = f"node-{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
+        endpoint_url = os.environ.get("HERMES_ENDPOINT_URL", f"http://{socket.gethostname()}:8000")
+        manifest = MeshPeerManifest(
+            node_id=node_id,
+            endpoint_url=endpoint_url,
+            display_name=f"Hermes Replica {socket.gethostname()}",
+            capabilities=["agent_runner", "sandbox"],
+            status="online",
+            reporting_role="Worker"
+        )
+        logger.info(f"Starting Mesh heartbeat for {node_id}")
+        while True:
+            try:
+                router.register_peer(manifest)
+            except Exception as e:
+                logger.error(f"Error in mesh heartbeat task: {e}")
+            await asyncio.sleep(60)
+            
+    asyncio.create_task(_mesh_heartbeat_task())
+
     yield
     # Shutdown: Stop APScheduler
     try:
@@ -858,7 +885,7 @@ async def checkout_task_api(task_id: int, body: TaskCheckoutRequest):
 async def pulse_task_api(task_id: int, max_steps: int = 1):
     from backend.orchestrator import run_orchestration_pulse
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
-    model = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
+    model = os.environ.get("LLM_MODEL", "ollama/llama3")
     res = await run_orchestration_pulse(task_id, api_key, model, max_steps_per_pulse=max_steps)
     if res.get("status") == "error":
         return JSONResponse(status_code=404, content=res)
@@ -934,12 +961,22 @@ async def get_distilled_skills_api(limit: int = 50):
 @app.get("/api/marketplace/skills")
 async def get_marketplace_skills_api():
     """
-    Returns all registered community skills authored using `hermes_sdk`.
+    Returns all registered community skills authored using `hermes_sdk` and database persistence.
     Includes manifests, tools, required environment variables, and tags.
     """
     from hermes_sdk.skill import get_registry
+    from backend.marketplace.lifecycle import LifecycleManager
+    
     registry = get_registry()
     manifests = [manifest.to_dict() for manifest in registry.values()]
+    db_skills = LifecycleManager.list_skills()
+    
+    # Merge DB skills if not in memory registry
+    memory_names = {m["name"] for m in manifests}
+    for s in db_skills:
+        if s["name"] not in memory_names:
+            manifests.append(s)
+
     return {
         "status": "success",
         "count": len(manifests),
@@ -953,13 +990,16 @@ class SkillRegistrationPayload(BaseModel):
     description: str
     tools: List[str] = []
     author: str = "community"
+    price_type: str = "free"
+    price_usd: float = 0.0
 
 
 @app.post("/api/marketplace/register")
 async def register_marketplace_skill_api(payload: SkillRegistrationPayload):
-    """Dynamically registers a community skill into the Hermes Marketplace registry."""
+    """Dynamically registers a community skill into the Hermes Marketplace registry and DB."""
     from hermes_sdk.types import SkillManifest, ToolSchema
     from hermes_sdk.skill import get_registry
+    from backend.marketplace.lifecycle import LifecycleManager, MarketplaceSkillManifest
     
     registry = get_registry()
     tools_schemas = [ToolSchema(name=t, description=f"Tool: {t}") for t in payload.tools]
@@ -971,6 +1011,19 @@ async def register_marketplace_skill_api(payload: SkillRegistrationPayload):
         tools=tools_schemas
     )
     registry[payload.name] = manifest
+
+    # Persist in DB
+    LifecycleManager.upsert_skill(MarketplaceSkillManifest(
+        id=payload.name,
+        name=payload.name,
+        display_name=payload.display_name,
+        description=payload.description,
+        author=payload.author,
+        tools=payload.tools,
+        price_type=payload.price_type,
+        price_usd=payload.price_usd
+    ))
+
     return {
         "status": "success",
         "message": f"Skill '{payload.name}' registered in Hermes Marketplace.",
@@ -978,19 +1031,88 @@ async def register_marketplace_skill_api(payload: SkillRegistrationPayload):
     }
 
 
+@app.post("/api/marketplace/skills/{skill_id}/install")
+async def install_marketplace_skill_api(skill_id: str):
+    """1-Click installation endpoint for a marketplace skill."""
+    from backend.marketplace.lifecycle import LifecycleManager
+    result = LifecycleManager.install_skill(skill_id)
+    return {"status": "success", "message": f"Skill '{skill_id}' installed.", "skill": result}
+
+
+@app.post("/api/marketplace/skills/{skill_id}/uninstall")
+async def uninstall_marketplace_skill_api(skill_id: str):
+    """Uninstalls a marketplace skill."""
+    from backend.marketplace.lifecycle import LifecycleManager
+    result = LifecycleManager.uninstall_skill(skill_id)
+    return {"status": "success", "message": f"Skill '{skill_id}' uninstalled.", "skill": result}
+
+
+@app.post("/api/marketplace/skills/{skill_id}/configure")
+async def configure_marketplace_skill_api(skill_id: str, config: Dict[str, Any]):
+    """Saves environment variable configuration for an installed skill."""
+    from backend.marketplace.lifecycle import LifecycleManager
+    result = LifecycleManager.save_skill_config(skill_id, config)
+    return result
+
+
+@app.get("/api/marketplace/skills/{skill_id}/telemetry")
+async def get_skill_telemetry_api(skill_id: str):
+    """Retrieves usage telemetry stats for a skill."""
+    from backend.marketplace.metering import MeteringEngine
+    stats = MeteringEngine.get_skill_stats(skill_id)
+    return {"status": "success", "telemetry": stats}
+
+
+@app.post("/api/marketplace/skills/{skill_id}/checkout")
+async def checkout_skill_billing_api(skill_id: str, redirect_url: str = "http://localhost:9119"):
+    """Generates payment checkout session via configured BillingAdapter (Phase 5)."""
+    from backend.marketplace.billing_adapter import get_billing_adapter
+    adapter = get_billing_adapter()
+    session = await adapter.create_checkout_session(user_id="default_user", skill_id=skill_id, redirect_url=redirect_url)
+    return session
+@app.post("/api/marketplace/skills/{skill_id}/verify")
+async def verify_skill_billing_api(skill_id: str, payload: Dict[str, Any]):
+    """Verifies a newly purchased license or JWT token."""
+    from backend.marketplace.billing_adapter import get_billing_adapter
+    adapter = get_billing_adapter()
+    is_entitled = await adapter.check_entitlement(user_id="default_user", skill_id=skill_id)
+    if is_entitled:
+        return {"status": "success", "entitled": True, "message": "License verified successfully"}
+    else:
+        return {"status": "error", "entitled": False, "message": "Invalid license or token"}
+
+
+@app.get("/api/marketplace/billing/provider")
+async def get_billing_provider_api():
+    """Returns active billing provider name (noop, stripe, or opennode)."""
+    from backend.marketplace.billing_adapter import get_billing_adapter
+    adapter = get_billing_adapter()
+    return {
+        "status": "success",
+        "provider": adapter.__class__.__name__,
+        "billing_enabled": os.getenv("BILLING_ENABLED", "false").lower() == "true"
+    }
+
+
+@app.get("/api/marketplace/developer/{developer_id}/earnings")
+async def get_developer_earnings_api(developer_id: str):
+    """Returns developer earnings breakdown (Phase 5)."""
+    from backend.marketplace.payouts import payout_engine
+    earnings = await payout_engine.get_developer_earnings(developer_id)
+    return {"status": "success", "data": earnings}
+
+
+@app.get("/api/marketplace/billing/usage")
+async def get_billing_usage_api(user_id: str = "default_user"):
+    """Returns user billing usage and total spent across skills (Phase 5)."""
+    from backend.marketplace.payouts import payout_engine
+    usage = await payout_engine.get_billing_usage(user_id)
+    return {"status": "success", "data": usage}
+
+
 @app.get("/api/marketplace/skills/{skill_name}/validate-env")
 async def validate_skill_env_api(skill_name: str):
-    """Check whether all required environment variables for a registered skill are configured.
-
-    Returns a JSON object with:
-      - ``ok`` (bool): True when every required env var is present.
-      - ``missing`` (list[str]): Required env vars that are absent or empty.
-      - ``optional_missing`` (list[str]): Optional vars that are absent.
-
-    The frontend uses this to display an inline configuration prompt when a
-    skill cannot run due to missing credentials — keeping secrets out of
-    source code and making it easy for contributors to self-configure.
-    """
+    """Check whether all required environment variables for a registered skill are configured."""
     from hermes_sdk.skill import get_registry, validate_skill_env
     registry = get_registry()
     manifest = registry.get(skill_name)
@@ -998,8 +1120,7 @@ async def validate_skill_env_api(skill_name: str):
         from fastapi import HTTPException
         raise HTTPException(
             status_code=404,
-            detail=f"Skill '{skill_name}' is not registered. "
-                   "Install and import it so @skill can add it to the registry."
+            detail=f"Skill '{skill_name}' is not registered."
         )
     result = validate_skill_env(manifest)
     return {
@@ -1154,8 +1275,8 @@ async def get_models_api():
                         result.append({"id": m_id, "name": m_name})
                     
                     rec_models = [
-                        "google/gemini-2.5-flash",
-                        "google/gemini-2.5-pro",
+                        "ollama/llama3",
+                        "ollama/llama3",
                         "anthropic/claude-sonnet-4-5",
                         "anthropic/claude-opus-4",
                         "openai/gpt-4o",
@@ -1186,8 +1307,8 @@ async def get_models_api():
 
     # Fallback list if request fails
     return [
-        {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash (default)"},
-        {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
+        {"id": "ollama/llama3", "name": "Google: Gemini 2.5 Flash (default)"},
+        {"id": "ollama/llama3", "name": "Google: Gemini 2.5 Pro"},
         {"id": "anthropic/claude-sonnet-4-5", "name": "Anthropic: Claude Sonnet 4.5"},
         {"id": "anthropic/claude-opus-4", "name": "Anthropic: Claude Opus 4"},
         {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},

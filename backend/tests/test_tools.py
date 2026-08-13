@@ -129,7 +129,7 @@ def test_obsidian_tools(mock_search_memory):
     
     # 3. create_obsidian_note
     res_create = tools.execute_tool("create_obsidian_note", {"title": "New", "content": "Body"})
-    assert "создана в хранилище" in res_create
+    assert "created in Obsidian vault" in res_create
 
 def test_execute_command():
     res = tools.execute_command("echo hello")

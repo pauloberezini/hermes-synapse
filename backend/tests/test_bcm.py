@@ -38,10 +38,10 @@ def test_yf_symbol_normalization():
     assert _normalize_yf_symbol("USOIL") == "CL=F"
     assert _normalize_yf_symbol("WTI") == "CL=F"
 
-def test_get_live_ctrader_positions_helper():
-    """Verify get_live_ctrader_positions function loads safely without crashing."""
-    from backend.bcm.autonomous_trader import get_live_ctrader_positions
-    positions, summary = get_live_ctrader_positions()
+def test_get_live_exchange_positions_helper():
+    """Verify get_live_exchange_positions function loads safely without crashing."""
+    from backend.bcm.autonomous_trader import get_live_exchange_positions
+    positions, summary = get_live_exchange_positions()
     assert isinstance(positions, list)
     assert isinstance(summary, str)
 
@@ -80,8 +80,8 @@ if __name__ == "__main__":
     print("  ✅ test_symbol_mappings: PASSED")
     test_yf_symbol_normalization()
     print("  ✅ test_yf_symbol_normalization: PASSED")
-    test_get_live_ctrader_positions_helper()
-    print("  ✅ test_get_live_ctrader_positions_helper: PASSED")
+    test_get_live_exchange_positions_helper()
+    print("  ✅ test_get_live_exchange_positions_helper: PASSED")
     test_bcm_technical_indicators_all_assets()
     print("  ✅ test_bcm_technical_indicators_all_assets: PASSED")
     test_bcm_remizov_shift_all_assets()

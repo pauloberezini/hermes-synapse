@@ -46,7 +46,7 @@ CRYPTO_MAP: dict[str, str] = {
     "eth": "ethereum", "ethereum": "ethereum",
     "эфир": "ethereum", "эфириум": "ethereum",
     "bnb": "binancecoin",
-    "sol": "solana", "solana": "solana", "солана": "solana",
+    "sol": "solana", "solana": "solana", "солаon": "solana",
     "xrp": "ripple", "ripple": "ripple", "рипл": "ripple",
     "ton": "the-open-network", "тон": "the-open-network",
 }

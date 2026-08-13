@@ -128,14 +128,16 @@ function directionRow(direction: CanvasDirection) {
 }
 
 function statusBubble(character: CanvasCharacter, language: 'en' | 'ru') {
-  if (character.agent.statusKind === 'waiting') return { text: '…', label: language === 'ru' ? 'Ожидает' : 'Waiting' };
-  if (character.agent.statusKind === 'error') return { text: '!', label: language === 'ru' ? 'Ошибка' : 'Error' };
-  if (character.agent.statusKind === 'paused') return { text: 'Ⅱ', label: language === 'ru' ? 'Пауза' : 'Paused' };
-  if (character.agent.statusKind === 'offline') return { text: 'Z', label: language === 'ru' ? 'Неактивен' : 'Offline' };
+  void language;
+  if (character.agent.statusKind === 'waiting') return { text: '…', label: 'Waiting' };
+  if (character.agent.statusKind === 'error') return { text: '!', label: 'Error' };
+  if (character.agent.statusKind === 'paused') return { text: 'Ⅱ', label: 'Paused' };
+  if (character.agent.statusKind === 'offline') return { text: 'Z', label: 'Offline' };
   return null;
 }
 
 export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom, onZoom, language, liveTrace, theme = 'hermes', onTheme }: PixelOfficeCanvasProps) {
+  void language;
   const initialLayout = useMemo(() => loadStoredLayout(), []);
   const engineRef = useRef(new CanvasOfficeEngine(initialLayout));
   const palette = OFFICE_THEMES[theme] ?? OFFICE_THEMES.hermes;
@@ -460,11 +462,11 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
   }, []);
 
   const editorTools: Array<{ id: EditorTool; title: string; icon: React.ReactNode }> = [
-    { id: 'select', title: language === 'ru' ? 'Выбрать объект' : 'Select object', icon: <MousePointer2 size={15} /> },
-    { id: 'floor', title: language === 'ru' ? 'Покрасить пол' : 'Paint floor', icon: <PaintBucket size={15} /> },
-    { id: 'wall', title: language === 'ru' ? 'Построить стену' : 'Build wall', icon: <BrickWall size={15} /> },
-    { id: 'furniture', title: language === 'ru' ? 'Расставить мебель' : 'Place furniture', icon: <Armchair size={15} /> },
-    { id: 'erase', title: language === 'ru' ? 'Стереть' : 'Erase', icon: <Eraser size={15} /> },
+    { id: 'select', title: 'Select object', icon: <MousePointer2 size={15} /> },
+    { id: 'floor', title: 'Paint floor', icon: <PaintBucket size={15} /> },
+    { id: 'wall', title: 'Build wall', icon: <BrickWall size={15} /> },
+    { id: 'furniture', title: 'Place furniture', icon: <Armchair size={15} /> },
+    { id: 'erase', title: 'Erase', icon: <Eraser size={15} /> },
   ];
 
   return (
@@ -473,7 +475,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
         ref={canvasRef}
         className="pixel-office-canvas"
         role="img"
-        aria-label={language === 'ru' ? 'Интерактивный пиксельный офис агентов' : 'Interactive pixel agent office'}
+        aria-label={'Interactive pixel agent office'}
         tabIndex={0}
         onWheel={event => { event.preventDefault(); onZoom(Math.max(.75, Math.min(1.5, zoom + (event.deltaY < 0 ? .1 : -.1)))); }}
         onPointerDown={event => {
@@ -501,10 +503,10 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
         onContextMenu={event => event.preventDefault()}
       />
 
-      <button type="button" className={`pixel-layout-toggle${editorOpen ? ' is-active' : ''}`} onClick={() => setEditorOpen(value => !value)} title={language === 'ru' ? 'Редактор офиса' : 'Office editor'} aria-pressed={editorOpen}><Armchair size={16} /></button>
+      <button type="button" className={`pixel-layout-toggle${editorOpen ? ' is-active' : ''}`} onClick={() => setEditorOpen(value => !value)} title={'Office editor'} aria-pressed={editorOpen}><Armchair size={16} /></button>
       {onTheme && (
         <div className="pixel-theme-switcher">
-          <button type="button" className={`pixel-theme-toggle${themeMenuOpen ? ' is-active' : ''}`} onClick={() => setThemeMenuOpen(value => !value)} title={language === 'ru' ? 'Тема офиса' : 'Office theme'} aria-haspopup="true" aria-expanded={themeMenuOpen} style={{ '--theme-accent': palette.accent } as React.CSSProperties}><Palette size={16} /></button>
+          <button type="button" className={`pixel-theme-toggle${themeMenuOpen ? ' is-active' : ''}`} onClick={() => setThemeMenuOpen(value => !value)} title={'Office theme'} aria-haspopup="true" aria-expanded={themeMenuOpen} style={{ '--theme-accent': palette.accent } as React.CSSProperties}><Palette size={16} /></button>
           {themeMenuOpen && (
             <div className="pixel-theme-menu" role="menu">
               {(Object.keys(OFFICE_THEMES) as OfficeThemeKey[]).map(key => (
@@ -516,7 +518,7 @@ export function PixelOfficeCanvas({ agents, selectedAgentId, onSelectAgent, zoom
           )}
         </div>
       )}
-      {editorOpen && <div className="pixel-editor-toolbar" role="toolbar" aria-label={language === 'ru' ? 'Редактор офиса' : 'Office editor'}>
+      {editorOpen && <div className="pixel-editor-toolbar" role="toolbar" aria-label={'Office editor'}>
         <div className="pixel-editor-tools">{editorTools.map(item => <button key={item.id} type="button" className={tool === item.id ? 'is-active' : ''} onClick={() => setTool(item.id)} title={item.title} aria-label={item.title} aria-pressed={tool === item.id}>{item.icon}</button>)}</div>
         {tool === 'floor' && <div className="pixel-floor-swatches">{FLOOR_ASSETS.map((src, index) => <button key={src} type="button" className={floor === index + 1 ? 'is-active' : ''} onClick={() => setFloor(index + 1)} title={`Floor ${index + 1}`} aria-label={`Floor ${index + 1}`}><img src={src} alt="" /></button>)}</div>}
         {tool === 'furniture' && <div className="pixel-furniture-palette">{FURNITURE_KINDS.map(kind => <button key={kind} type="button" className={furniture === kind ? 'is-active' : ''} onClick={() => setFurniture(kind)} title={FURNITURE_CATALOG[kind].label} aria-label={FURNITURE_CATALOG[kind].label}><img src={FURNITURE_CATALOG[kind].src} alt="" /></button>)}</div>}

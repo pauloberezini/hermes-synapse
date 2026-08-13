@@ -148,16 +148,16 @@ class PriceMonitor:
         log_activity(
             activity_type="idle",
             source="PriceMonitor",
-            message=f"🔔 Оповещение сработало! Цена {alert['display_name']} стала ${current_price:.2f} (цель: {cond_ru} ${alert['target_price']:.2f})"
+            message=f"🔔 Оповещение сработало! Цеon {alert['display_name']} стала ${current_price:.2f} (цель: {cond_ru} ${alert['target_price']:.2f})"
         )
         
         # Format text and send Telegram notification
         cond_str = "поднялась выше" if alert["condition"] == "above" else "опустилась ниже"
         msg = (
             f"📈 **ОПОВЕЩЕНИЕ О ЦЕНЕ, СЭР**\n\n"
-            f"Рыночная цена **{alert['display_name']}** {cond_str} целевого значения!\n"
-            f"• Целевая цена: **${alert['target_price']:,.2f}**\n"
-            f"• Текущая цена: **${current_price:,.2f}**\n"
+            f"Рыночonя цеon **{alert['display_name']}** {cond_str} целевого зonчения!\n"
+            f"• Целевая цеon: **${alert['target_price']:,.2f}**\n"
+            f"• Текущая цеon: **${current_price:,.2f}**\n"
             f"• Статус: 🔔 Сработало"
         )
         

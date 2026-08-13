@@ -15,7 +15,7 @@ from backend.subagents import ResearchAgent
 async def main():
     api_key = os.getenv("OPENROUTER_API_KEY")
     # Simulate a typical Gemini model
-    model = "google/gemini-2.5-pro"
+    model = "ollama/llama3"
     
     agent = ResearchAgent(api_key, model)
     instructions = "1. Найди расписание вечерних футбольных матчей на 21 июня 2026 года. 2. Для найденных матчей собери коэффициенты ставок от нескольких букмекерских контор. 3. Найди в сети аналитические материалы или прогнозы, определяющие 'валуйные ставки' (value bets) на эти матчи."

@@ -52,9 +52,9 @@ export interface IsoSceneAsset {
 
 export interface IsoRoomScene {
   id: IsoRoomId;
-  label: { ru: string; en: string };
-  shortLabel: { ru: string; en: string };
-  description: { ru: string; en: string };
+  label: string;
+  shortLabel: string;
+  description: string;
   background: 'day' | 'night';
   accent: string;
   tint: string;
@@ -112,9 +112,9 @@ const STUDIO_ASSETS: IsoSceneAsset[] = [
 export const ISO_ROOMS: IsoRoomScene[] = [
   {
     id: 'studio',
-    label: { ru: 'Инженерная студия', en: 'Engineering Studio' },
-    shortLabel: { ru: 'Студия', en: 'Studio' },
-    description: { ru: 'Разработка, тестирование и сборка', en: 'Build, test and delivery' },
+    label: 'Engineering Studio',
+    shortLabel: 'Studio',
+    description: 'Build, test and delivery',
     background: 'day',
     accent: '#60a5fa',
     tint: 'rgba(49, 94, 145, .04)',
@@ -123,9 +123,9 @@ export const ISO_ROOMS: IsoRoomScene[] = [
   },
   {
     id: 'research',
-    label: { ru: 'Исследовательская лаборатория', en: 'Research Lab' },
-    shortLabel: { ru: 'Лаборатория', en: 'Research' },
-    description: { ru: 'Поиск, индексация и работа с моделями', en: 'Search, indexing and model work' },
+    label: 'Research Lab',
+    shortLabel: 'Research',
+    description: 'Search, indexing and model work',
     background: 'night',
     accent: '#9f8cff',
     tint: 'rgba(91, 69, 164, .12)',
@@ -144,9 +144,9 @@ export const ISO_ROOMS: IsoRoomScene[] = [
   },
   {
     id: 'meeting',
-    label: { ru: 'Переговорная', en: 'Strategy Room' },
-    shortLabel: { ru: 'Переговорная', en: 'Strategy' },
-    description: { ru: 'Планы, ревью и решения команды', en: 'Planning, reviews and team decisions' },
+    label: 'Strategy Room',
+    shortLabel: 'Strategy',
+    description: 'Planning, reviews and team decisions',
     background: 'day',
     accent: '#f2b36b',
     tint: 'rgba(172, 107, 45, .05)',
@@ -163,9 +163,9 @@ export const ISO_ROOMS: IsoRoomScene[] = [
   },
   {
     id: 'lounge',
-    label: { ru: 'Комната отдыха', en: 'Lounge' },
-    shortLabel: { ru: 'Lounge', en: 'Lounge' },
-    description: { ru: 'Кофе, диваны и отдых команды', en: 'Coffee, sofas and team relaxation' },
+    label: 'Lounge',
+    shortLabel: 'Lounge',
+    description: 'Coffee, sofas and team relaxation',
     background: 'day',
     accent: '#56d6a7',
     tint: 'rgba(42, 127, 99, .06)',
@@ -181,9 +181,9 @@ export const ISO_ROOMS: IsoRoomScene[] = [
   },
   {
     id: 'control',
-    label: { ru: 'Центр управления', en: 'Control Room' },
-    shortLabel: { ru: 'Control', en: 'Control' },
-    description: { ru: 'Деплой, инциденты и проверка результатов', en: 'Deployments, incidents and validation' },
+    label: 'Control Room',
+    shortLabel: 'Control',
+    description: 'Deployments, incidents and validation',
     background: 'night',
     accent: '#ff6f87',
     tint: 'rgba(158, 42, 68, .1)',

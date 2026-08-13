@@ -338,7 +338,9 @@ export function ChatTab({
           <button
             id="tts-toggle-btn"
             onClick={() => {
-              if (isTTSEnabled) { window.speechSynthesis?.cancel(); setIsSpeaking(false); }
+              window.speechSynthesis?.cancel();
+              setIsSpeaking(false);
+              setPlayingMsgIndex?.(null);
               setIsTTSEnabled(v => !v);
             }}
             className="btn-primary"
