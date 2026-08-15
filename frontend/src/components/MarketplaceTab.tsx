@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Package, Star, Download, Trash2, RefreshCw, Filter, ChevronDown, User, Code2, Globe, ShieldCheck, BarChart2, Database, Terminal, Brain, BookOpen, Rss, Clock, AlertCircle, CheckCircle2, Cpu, ChevronLeft, ChevronRight, ShoppingCart } from 'lucide-react';
+import { Search, Package, Star, Download, Trash2, RefreshCw, Filter, ChevronDown, User, Code2, Globe, ShieldCheck, BarChart2, Database, Terminal, Brain, BookOpen, Rss, Clock, AlertCircle, CheckCircle2, Cpu, ChevronLeft, ChevronRight, ShoppingCart, LayoutGrid, List } from 'lucide-react';
 
 // ─── Built-in skill catalogue (always visible, drawn from the system's own tools) ────────
 const BUILTIN_SKILLS = [
@@ -230,7 +230,7 @@ const SORT_OPTIONS = [
 ];
 
 // ─── Individual Skill Card ───────────────────────────────────────────────────
-function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (id: string) => void; onUninstall: (id: string) => void }) {
+function SkillCard({ skill, onInstall, onUninstall, viewMode = 'grid' }: { skill: any; onInstall: (id: string) => void; onUninstall: (id: string) => void; viewMode?: 'grid' | 'list' }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const IconComponent = skill.icon || Package;
@@ -275,7 +275,8 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
         borderRadius: '14px',
         padding: '20px',
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: viewMode === 'list' ? 'row' : 'column',
+        alignItems: viewMode === 'list' ? 'center' : 'stretch',
         gap: '14px',
         backdropFilter: 'blur(12px)',
         transition: 'border-color 0.25s, box-shadow 0.25s, transform 0.2s',
@@ -305,7 +306,7 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
       }} />
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: viewMode === 'list' ? 'center' : 'flex-start', gap: '12px', flex: viewMode === 'list' ? '0 0 280px' : 'none' }}>
         <div style={{
           width: 44, height: 44, borderRadius: '10px', flexShrink: 0,
           background: `${skill.color}18`,
@@ -369,7 +370,8 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
         color: 'var(--text-muted, #94a3b8)',
         lineHeight: 1.55,
         display: '-webkit-box',
-        WebkitLineClamp: expanded ? 'unset' : 2,
+        WebkitLineClamp: viewMode === 'list' ? 1 : (expanded ? 'unset' : 2),
+        flex: viewMode === 'list' ? '1' : 'none',
         WebkitBoxOrient: 'vertical',
         overflow: 'hidden',
       }}>
@@ -389,7 +391,7 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
       )}
 
       {/* Tools chips */}
-      {skill.tools && skill.tools.length > 0 && (
+      {skill.tools && skill.tools.length > 0 && viewMode !== 'list' && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {skill.tools.slice(0, 4).map((t: string) => (
             <span key={t} style={{
@@ -414,13 +416,13 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
       )}
 
       {/* Footer: action button */}
-      <div style={{ marginTop: 'auto', paddingTop: '4px' }}>
+      <div style={{ marginTop: viewMode === 'list' ? '0' : 'auto', marginLeft: viewMode === 'list' ? 'auto' : '0', paddingTop: viewMode === 'list' ? '0' : '4px', flexShrink: 0 }}>
         {skill.is_installed ? (
           <button
             onClick={handleUninstall}
             disabled={actionLoading}
             style={{
-              width: '100%', padding: '9px', borderRadius: '8px',
+              width: viewMode === 'list' ? 'auto' : '100%', padding: '9px 16px', borderRadius: '8px',
               border: '1px solid rgba(239,68,68,0.3)',
               background: 'rgba(239,68,68,0.08)',
               color: actionLoading ? '#64748b' : '#ef4444',
@@ -444,7 +446,7 @@ function SkillCard({ skill, onInstall, onUninstall }: { skill: any; onInstall: (
             onClick={handleInstall}
             disabled={actionLoading}
             style={{
-              width: '100%', padding: '9px', borderRadius: '8px',
+              width: viewMode === 'list' ? 'auto' : '100%', padding: '9px 16px', borderRadius: '8px',
               border: `1px solid ${skill.color}40`,
               background: `${skill.color}12`,
               color: actionLoading ? '#64748b' : skill.color,
@@ -478,9 +480,10 @@ export const MarketplaceTab: React.FC = () => {
   const [sortBy, setSortBy] = useState('installed');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 6; // Feel free to adjust
+  const itemsPerPage = 8; // Always 8 per page
 
   useEffect(() => {
     setCurrentPage(1);
@@ -763,6 +766,34 @@ export const MarketplaceTab: React.FC = () => {
             </div>
           )}
         </div>
+        
+        {/* View Mode Toggle */}
+        <div style={{ display: 'flex', background: 'rgba(16,22,42,0.65)', border: '1px solid rgba(0,240,255,0.12)', borderRadius: '9px', overflow: 'hidden' }}>
+          <button
+            onClick={() => setViewMode('grid')}
+            style={{
+              padding: '9px 12px', border: 'none', cursor: 'pointer',
+              background: viewMode === 'grid' ? 'rgba(0,240,255,0.15)' : 'transparent',
+              color: viewMode === 'grid' ? 'var(--accent-cyan, #00f0ff)' : 'var(--text-muted, #94a3b8)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s'
+            }}
+            title="Grid View"
+          >
+            <LayoutGrid size={15} />
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            style={{
+              padding: '9px 12px', border: 'none', cursor: 'pointer',
+              background: viewMode === 'list' ? 'rgba(0,240,255,0.15)' : 'transparent',
+              color: viewMode === 'list' ? 'var(--accent-cyan, #00f0ff)' : 'var(--text-muted, #94a3b8)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s'
+            }}
+            title="List View"
+          >
+            <List size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Category tabs */}
@@ -808,7 +839,7 @@ export const MarketplaceTab: React.FC = () => {
       {/* Skills grid */}
       {loading ? (
         <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px',
+          display: 'grid', gridTemplateColumns: viewMode === 'list' ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px',
         }}>
           {[...Array(6)].map((_, i) => (
             <div key={i} style={{
@@ -848,7 +879,7 @@ export const MarketplaceTab: React.FC = () => {
         <>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+            gridTemplateColumns: viewMode === 'list' ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))',
             gap: '16px',
           }}>
             {paginatedSkills.map(skill => (
@@ -857,6 +888,7 @@ export const MarketplaceTab: React.FC = () => {
                 skill={skill}
                 onInstall={handleInstall}
                 onUninstall={handleUninstall}
+                viewMode={viewMode}
               />
             ))}
           </div>

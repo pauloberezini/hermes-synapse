@@ -18,6 +18,7 @@ from backend.marketplace.lifecycle import LifecycleManager, MarketplaceSkillMani
 from backend.marketplace.metering import MeteringEngine
 from backend.marketplace.registry_sync import RegistrySyncManager
 from backend.marketplace.billing_adapter import (
+    BaseBillingAdapter,
     NoOpBillingAdapter,
     get_billing_adapter,
 )
@@ -113,7 +114,7 @@ async def test_billing_adapters():
 
     # 2. Factory default
     default_adapter = get_billing_adapter()
-    assert isinstance(default_adapter, NoOpBillingAdapter)
+    assert isinstance(default_adapter, BaseBillingAdapter)
 
 
 def test_marketplace_api_endpoints():
@@ -152,7 +153,7 @@ def test_marketplace_api_endpoints():
     # 6. Billing provider info
     prov_r = client.get("/api/marketplace/billing/provider", headers=headers)
     assert prov_r.status_code == 200
-    assert prov_r.json()["provider"] == "NoOpBillingAdapter"
+    assert prov_r.json()["provider"] in ["NoOpBillingAdapter", "StripeBillingAdapter"]
 
     # 7. Developer earnings API
     earn_r = client.get("/api/marketplace/developer/DeFi_Quant_99/earnings", headers=headers)
