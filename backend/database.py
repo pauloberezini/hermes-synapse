@@ -274,6 +274,20 @@ def _rowcount(sql: str, params: tuple = ()) -> int:
         conn.commit()
         return cur.rowcount
 
+def log_trade_trace(trace_id: str, session_id: str, symbol: str,
+                    layer_01: str, layer_02: str, layer_03: str, audit_status: str):
+    """Log full-cycle traceability for a trade cycle."""
+    import datetime
+    ts = datetime.datetime.utcnow().isoformat() + "Z"
+    sql = """
+        INSERT INTO trade_traces (trace_id, session_id, symbol, timestamp, layer_01_perception, layer_02_reasoning, layer_03_action, audit_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    try:
+        _execute(sql, (trace_id, session_id, symbol, ts, layer_01, layer_02, layer_03, audit_status))
+    except Exception as e:
+        logger.error(f"Failed to log trade trace: {e}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +673,30 @@ def _init_sqlite_schema():
             reporting_role TEXT,
             escalation_peer_id TEXT,
             last_seen REAL
+        )
+    """)
+
+    # Stage 18: VANGA AI Traceability & Self-Learning
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trade_traces (
+            trace_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            symbol TEXT,
+            timestamp TEXT NOT NULL,
+            layer_01_perception TEXT,
+            layer_02_reasoning TEXT,
+            layer_03_action TEXT,
+            audit_status TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS self_learning_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trace_id TEXT NOT NULL,
+            predicted_rr TEXT,
+            actual_rr TEXT,
+            delta REAL,
+            timestamp TEXT NOT NULL
         )
     """)
 
@@ -1099,6 +1137,30 @@ def _init_postgres_schema():
                 reporting_role TEXT,
                 escalation_peer_id TEXT,
                 last_seen REAL
+            )
+        """)
+
+        # Stage 18: VANGA AI Traceability & Self-Learning
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trade_traces (
+                trace_id TEXT PRIMARY KEY,
+                session_id TEXT,
+                symbol TEXT,
+                timestamp TEXT NOT NULL,
+                layer_01_perception TEXT,
+                layer_02_reasoning TEXT,
+                layer_03_action TEXT,
+                audit_status TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS self_learning_metrics (
+                id SERIAL PRIMARY KEY,
+                trace_id TEXT NOT NULL,
+                predicted_rr TEXT,
+                actual_rr TEXT,
+                delta REAL,
+                timestamp TEXT NOT NULL
             )
         """)
 

@@ -166,8 +166,8 @@ def get_technical_analysis(ticker):
         
         
         
-        # Changed to 15m interval for better volume profile resolution
-        df = _fetch_yahoo_direct(ticker, period="5d", interval="15m")
+        # Changed to 1h interval over 60 days for a strong swing-trading macro structure
+        df = _fetch_yahoo_direct(ticker, period="60d", interval="1h")
         if df.empty:
             raise ValueError(f"No data for {ticker}")
         
@@ -230,11 +230,11 @@ def get_technical_analysis(ticker):
                 
             # Volume Profile
             try:
-                # Limit to last 2 days for speed in calculation
+                # Limit to last 14 days for swing-trading volume profile resolution
                 last_time = df_ind.index[-1]
-                df_vp = df_ind[df_ind.index >= last_time - pd.Timedelta(days=2)].copy()
+                df_vp = df_ind[df_ind.index >= last_time - pd.Timedelta(days=14)].copy()
                 
-                vp = VolumeProfile(df_vp, None, row_height, pd.Timedelta(days=1), DistributionData.OHLC_No_Avg, with_plotly_columns=False)
+                vp = VolumeProfile(df_vp, None, row_height, pd.Timedelta(days=14), DistributionData.OHLC_No_Avg, with_plotly_columns=False)
                 # VP outputs list of intervals, list of profiles
                 _, df_profiles = vp.normal() 
                 if len(df_profiles) > 0:
@@ -626,25 +626,27 @@ ROLE_MODELS = {
 ROLE_SYSTEM_PROMPTS = {
     "Quant Analyst": (
         "You are the Lead Quantitative & Technical Analyst at Berezini Capital Management (BCM). "
-        "Your mandate is to perform rigorous technical analysis, price action evaluation, and momentum assessment. "
-        "Analyze technical indicators (RSI, ATR, Keltner Channels), structural price shifts, and historical setup patterns from analytics database. "
-        "Provide a data-driven report with clear support/resistance zones, trend bias, and momentum signals."
+        "Your mandate is to perform rigorous swing-trading technical analysis and momentum assessment. "
+        "Focus exclusively on multi-day to multi-week structures. Ignore intraday noise. "
+        "Analyze daily/weekly indicators (RSI, ATR), macro liquidity pools, structural price shifts, and historical setup patterns. "
+        "Provide a data-driven report with major swing support/resistance zones, macro trend bias, and swing momentum signals."
     ),
     "Macro Analyst": (
         "You are the Senior Macro & Geopolitical Strategist at Berezini Capital Management (BCM). "
         "Your mandate is to evaluate global macroeconomic drivers, central bank interest rate policies, energy market trends, "
         "and live news sentiment from Berezini Macro Terminal. "
-        "Provide a clear macro risk assessment (Bullish / Bearish / Neutral) and highlight tail-risk events."
+        "Provide a clear macro risk assessment (Bullish / Bearish / Neutral) suitable for a swing trader, highlighting tail-risk events."
     ),
     "Risk Manager": (
         "You are the Chief Risk Officer (CRO) at Berezini Capital Management (BCM). "
-        "Your sole mandate is capital preservation, strict risk containment, and drawdown prevention. "
-        "You MUST verify ATR volatility safety margins, check for a minimum 1:1.5 Risk-to-Reward ratio for proposed SL/TP, "
-        "review active Exchange open positions to prevent duplicate exposure, and veto any high-risk setup."
+        "Your sole mandate is capital preservation and drawdown prevention for a Swing Trading portfolio. "
+        "You MUST verify that SL/TP levels are wide enough to withstand normal daily volatility (using Daily ATR), "
+        "check for a minimum 1:1.5 Risk-to-Reward ratio, review active open positions to prevent duplicate exposure, and veto any short-term or high-risk setup."
     ),
     "Managing Director": (
         "You are the Managing Director & Chief Investment Officer (CIO) at Berezini Capital Management (BCM). "
-        "Your mandate is executive portfolio leadership, multi-agent synthesis, and continuous learning from trade execution outcomes. "
+        "Your mandate is executive portfolio leadership for a pure Swing Trading fund (holding positions for days to weeks). "
+        "You synthesize multi-agent inputs and continuous learning from trade execution outcomes. "
         "You MUST produce a comprehensive, detailed, in-depth analytical breakdown covering: "
         "1. ACCOUNT & PORTFOLIO HEALTH: Detailed audit of Balance, Equity, Margin Usage, Free Margin, and Floating PnL. "
         "2. ACTIVE POSITIONS & ORDERS AUDIT: Thorough evaluation of every open trade, volume, entry vs current price, SL/TP safety. "
@@ -889,7 +891,7 @@ def ask_ai_decision(ticker, analysis_data):
     market_session = get_market_session()
     analyst_prompt = f"""Analyze these indicators and Remizov shift for {ticker}. 
     Focus on momentum, structural shifts, and institutional levels. 
-    CRITICAL: Pay special attention to 'volume_profile.poc' (Point of Control) as a high-probability liquidity level, and 'vwap.daily' for intraday mean reversion and institutional positioning.
+    CRITICAL: Pay special attention to 'volume_profile.poc' (Point of Control) as a high-probability liquidity level, and 'vwap.daily' for swing positioning and institutional bias.
     CRITICAL VOLATILITY ADJUSTMENT: The current market session is '{market_session}'. You MUST weigh the importance of breakouts vs mean-reversions depending on this session's expected volatility. 
     Check 'past_experience' for historical similarities: {analysis_data}
     {analytics_block}
@@ -1439,7 +1441,7 @@ def run_autonomous_cycle(symbol_key):
         print(f"[GATE] {icon} {name}: {reason}")
         execution_gates.append({"name": name, "status": status, "reason": reason})
 
-    def emit_report_and_return(decision_obj=None):
+    def emit_report_and_return(decision_obj=None, trace_data=None):
         if decision_obj is None:
             decision_obj = {
                 "decision": "wait",
@@ -1449,6 +1451,36 @@ def run_autonomous_cycle(symbol_key):
                 "recommended_tp": None,
             }
         report = format_md_decision_summary(decision_obj, symbol=symbol_key, execution_gates=execution_gates)
+        
+        # [NEW] Log full-cycle trace if available
+        if trace_data:
+            try:
+                from backend.database import log_trade_trace
+                trace_id = trace_data.get("trace_id", "fallback_id")
+                layer_02 = json.dumps(trace_data)
+                
+                # Determine layer_03 action based on gates
+                blocked = [g for g in execution_gates if g["status"] == "block"]
+                if blocked:
+                    layer_03 = f"BLOCKED: {blocked[0]['reason']}"
+                    audit_status = "REJECTED"
+                else:
+                    action_enum = trace_data.get("decision", "wait")
+                    layer_03 = f"EXECUTED or SKIPPED: {action_enum}"
+                    audit_status = "PASSED" if action_enum != "wait" else "SKIPPED"
+                    
+                log_trade_trace(
+                    trace_id=trace_id,
+                    session_id="BCM-AUTO",
+                    symbol=symbol_key,
+                    layer_01=json.dumps({"tech": "Fetched from BCM Indicators", "gates": execution_gates}),
+                    layer_02=layer_02,
+                    layer_03=layer_03,
+                    audit_status=audit_status
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to log trace: {e}")
+        
         blocked = [g for g in execution_gates if g["status"] == "block"]
         warned  = [g for g in execution_gates if g["status"] == "warn"]
         if blocked:
@@ -1578,7 +1610,7 @@ def run_autonomous_cycle(symbol_key):
         gate("Confluence Engine", "pass", f"SELL Signal. Score: {conf_score:.2f}")
 
     if action == "wait":
-        return emit_report_and_return()
+        return emit_report_and_return(trace_data=conf_res)
 
     # Step 5: Risk & SL/TP
     atr = vol_state.get("atr", current_close * 0.01)
@@ -1614,7 +1646,7 @@ def run_autonomous_cycle(symbol_key):
     
     if not cco_passed:
         gate("Compliance Officer", "block", f"Rejected: {cco_reason}")
-        return emit_report_and_return()
+        return emit_report_and_return(trace_data=conf_res)
         
     gate("Compliance Officer", "pass", "Approved by Risk Engine")
 
@@ -1640,6 +1672,10 @@ def run_autonomous_cycle(symbol_key):
             "recommended_tp": tp
         }
         report = format_md_decision_summary(decision_obj, symbol=symbol_key, execution_gates=execution_gates)
+        
+        # Log successful trace
+        emit_report_and_return(decision_obj=decision_obj, trace_data=conf_res)
+        
         return report
 
     except Exception as e:
@@ -1647,7 +1683,7 @@ def run_autonomous_cycle(symbol_key):
         if isinstance(e, subprocess.CalledProcessError) and e.output:
             error_detail += "\n" + e.output.decode('utf-8', errors='replace')
         gate("Exchange Execution", "block", f"subprocess failed: {error_detail[:300]}")
-        return emit_report_and_return()
+        return emit_report_and_return(trace_data=conf_res)
 
 
 

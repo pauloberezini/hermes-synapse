@@ -497,12 +497,12 @@ export function ScheduleTab({
                     badgeColor = '#f97316';
                     badgeBorder = 'rgba(249, 115, 22, 0.35)';
                     badgeBg = 'rgba(249, 115, 22, 0.1)';
-                  } else if (timer.type === 'recurring') {
+                  } else if (timer.type === 'recurring' || timer.type === 'cron') {
                     statusText = 'RUNNING';
                     statusClass = 'running';
-                    badgeColor = '#10b981';
-                    badgeBorder = 'rgba(16, 185, 129, 0.35)';
-                    badgeBg = 'rgba(16, 185, 129, 0.1)';
+                    badgeColor = timer.type === 'cron' ? '#c084fc' : '#10b981';
+                    badgeBorder = timer.type === 'cron' ? 'rgba(168, 85, 247, 0.35)' : 'rgba(16, 185, 129, 0.35)';
+                    badgeBg = timer.type === 'cron' ? 'rgba(168, 85, 247, 0.1)' : 'rgba(16, 185, 129, 0.1)';
                   } else {
                     statusText = 'COUNTDOWN';
                     statusClass = 'countdown';
@@ -515,13 +515,13 @@ export function ScheduleTab({
                 const cardBorderColor = isPaused
                   ? 'rgba(234, 179, 8, 0.3)'
                   : (isRunning 
-                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(0, 240, 255, 0.25)')) 
+                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.25)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.25)' : (timer.type === 'cron' ? 'rgba(168, 85, 247, 0.25)' : 'rgba(0, 240, 255, 0.25)'))) 
                       : 'rgba(255, 255, 255, 0.08)');
 
                 const cardBgColor = isPaused
                   ? 'rgba(234, 179, 8, 0.03)'
                   : (isRunning 
-                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.02)' : 'rgba(0, 240, 255, 0.02)')) 
+                      ? (timer.type === 'alarm' ? 'rgba(249, 115, 22, 0.02)' : (timer.type === 'recurring' ? 'rgba(16, 185, 129, 0.02)' : (timer.type === 'cron' ? 'rgba(168, 85, 247, 0.02)' : 'rgba(0, 240, 255, 0.02)'))) 
                       : 'rgba(255, 255, 255, 0.01)');
 
                 return (
@@ -565,7 +565,7 @@ export function ScheduleTab({
                             {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
                           </span>
                           <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
-                            {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'next' : 'left')}
+                            {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' || timer.type === 'cron' ? 'next' : 'left')}
                           </span>
                         </div>
 

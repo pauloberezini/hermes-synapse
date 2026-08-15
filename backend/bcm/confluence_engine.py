@@ -13,6 +13,9 @@ Combines 8 weighted signals across BCM indicators:
 """
 
 from typing import Dict, Any, Optional, Tuple
+import uuid
+
+from backend.bcm.contrarian_agent import ContrarianAgent
 
 
 class ConfluenceDecision:
@@ -25,8 +28,12 @@ class ConfluenceDecision:
 
 class ConfluenceEngine:
     """
-    Weighted Confluence Scoring Engine with Structural Veto Power.
+    Weighted Confluence Scoring Engine with Structural Veto Power
+    and strict Contrarian Validation.
     """
+
+    def __init__(self):
+        self.contrarian = ContrarianAgent()
 
     WEIGHTS = {
         "wyckoff_structure": 1.5,
@@ -118,7 +125,25 @@ class ConfluenceEngine:
             recommended_rr = "1:3.0"
             risk_multiplier = 1.0
 
+        # 4. Contrarian Validation (Layer 02 Reasoning Check)
+        contrarian_evaluation = self.contrarian.evaluate_hypothesis(
+            component_scores=scores,
+            proposed_decision=decision,
+            raw_confluence=raw_confluence
+        )
+
+        if contrarian_evaluation.get("veto", False):
+            # Strict fallback-free veto overrides the signal
+            veto_reasons.extend(contrarian_evaluation.get("reasons", []))
+            decision = ConfluenceDecision.HOLD_SKIP
+            recommended_rr = "N/A"
+            risk_multiplier = 0.0
+
+        # Generate a unique trace ID for full-cycle traceability
+        trace_id = f"trc_{uuid.uuid4().hex[:12]}"
+
         return {
+            "trace_id": trace_id,
             "decision": decision,
             "confluence_score": round(confluence_score, 4),
             "raw_confluence": round(raw_confluence, 4),
@@ -127,4 +152,5 @@ class ConfluenceEngine:
             "veto_reasons": veto_reasons,
             "recommended_rr": recommended_rr,
             "risk_multiplier": risk_multiplier,
+            "contrarian_eval": contrarian_evaluation
         }

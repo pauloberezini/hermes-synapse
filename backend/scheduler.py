@@ -254,6 +254,29 @@ async def _job_cron(
     })
 
 
+async def _job_bcm_session_scheduler(**kwargs):
+    logger.debug("Running BCM session scheduler check...")
+    import sys
+    import subprocess
+    import asyncio
+    
+    # Need to run with the proper environment if using poetry or direct script.
+    # In docker, it's /app/backend/bcm/session_scheduler.py, but locally it might be different.
+    import os
+    # Find the backend/bcm directory relative to this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    scheduler_script = os.path.join(script_dir, "bcm", "session_scheduler.py")
+    
+    try:
+        await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, scheduler_script],
+            capture_output=True
+        )
+    except Exception as e:
+        logger.error(f"Error in BCM session scheduler task: {e}")
+
+
 def _register_scheduled_session(
     job_id: str,
     label: str,
@@ -1332,3 +1355,32 @@ def restore_state() -> None:
 async def _start_restored_tasks() -> None:
     """No-op: APScheduler auto-starts restored jobs."""
     pass
+
+
+def start_bcm_session_scheduler_loop():
+    """Register the BCM session scheduler system job."""
+    job_id = "bcm_session_scheduler"
+    label = "BCM Session Scheduler (System)"
+    created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+    cron_expr = "* * * * mon-fri"
+    
+    _timer_meta[job_id] = {
+        "type": "cron",
+        "created_at": created_at,
+        "cron_expr": cron_expr,
+        "status": "running",
+        "label": label,
+        "agent_id": "system",
+        "prompt": "Run BCM Session Scheduler",
+    }
+    
+    scheduler.add_job(
+        _job_bcm_session_scheduler,
+        trigger=CronTrigger.from_crontab(cron_expr, timezone=scheduler.timezone),
+        kwargs={
+            "job_id": job_id, "label": label, "cron_expr": cron_expr,
+            "task_type": "cron"
+        },
+        id=job_id, name=label, replace_existing=True,
+    )
+    logger.info("Started BCM Session Scheduler loop in APScheduler (runs every minute).")
