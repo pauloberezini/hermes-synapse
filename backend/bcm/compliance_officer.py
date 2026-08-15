@@ -22,28 +22,56 @@ BYBIT_OPTIONS_MAX_LOSS_PCT = 0.02  # Max 2% of equity per options trade
 BYBIT_OPTIONS_MAX_LEGS = 2  # Max legs in a single spread
 MAX_VOLUME_MULTIPLIER = 3  # Max allowed volume vs base volume
 
+try:
+    from backend.bcm.risk_engine import RiskEngine, DrawdownState
+    from backend.bcm.frozen_windows import get_frozen_windows_controller
+except ImportError:
+    from risk_engine import RiskEngine, DrawdownState
+    from frozen_windows import get_frozen_windows_controller
+
+
 class ComplianceOfficer:
-    def __init__(self):
+    def __init__(self, peak_equity: float = 10000.0):
         self.api_key = os.environ.get("OPENROUTER_API_KEY")
         self.model = "deepseek/deepseek-chat" # Fast and strict for compliance
+        self.risk_engine = RiskEngine(peak_equity=peak_equity)
+        self.frozen_controller = get_frozen_windows_controller()
         
-    def check_hard_limits(self, symbol, action, volume, base_volume, sl, tp, entry_price):
+    def check_hard_limits(self, symbol, action, volume, base_volume, sl, tp, entry_price, current_equity: float = None, instrument_spec: dict = None):
         """Rule-based compliance checks that cannot be overridden by AI."""
+        if current_equity is None:
+            current_equity = self.risk_engine.peak_equity
         if symbol not in ALLOWED_SYMBOLS:
             return False, f"HARD LIMIT: Symbol {symbol} is not on the approved list."
         if action not in ["buy", "sell", "wait"]:
             return False, f"HARD LIMIT: Invalid action {action}."
+            
         if action != "wait":
-            if not sl or not tp:
-                return False, "HARD LIMIT: All trades must have a Stop Loss and Take Profit."
+            # 1. Frozen Windows check
+            fw_res = self.frozen_controller.get_active_frozen_window(symbol)
+            if fw_res.get("is_frozen"):
+                return False, fw_res.get("reason", "HARD LIMIT: Trading is frozen due to high-impact macro event.")
+
+            # 2. Drawdown state check
+            dd_state, dd_info = self.risk_engine.evaluate_drawdown_state(current_equity)
+            if not dd_info.get("allow_new_trades", True):
+                return False, f"HARD LIMIT: {dd_info.get('action', 'Trading halted due to drawdown limits.')}"
+
+            # 3. Instrument and Order Spec Validation
+            valid_order, order_reason = self.risk_engine.validate_instrument_order(
+                symbol=symbol,
+                volume=float(volume),
+                entry_price=float(entry_price),
+                sl=float(sl) if sl else None,
+                tp=float(tp) if tp else None,
+                action=action,
+                instrument_spec=instrument_spec
+            )
+            if not valid_order:
+                return False, order_reason
+
             if float(volume) > base_volume * MAX_VOLUME_MULTIPLIER:
                 return False, f"HARD LIMIT: Volume {volume} exceeds max allowed multiplier."
-            
-            # Rough distance check
-            if action == "buy" and float(sl) >= entry_price:
-                return False, "HARD LIMIT: Buy order SL must be below entry price."
-            if action == "sell" and float(sl) <= entry_price:
-                return False, "HARD LIMIT: Sell order SL must be above entry price."
                 
         return True, "Hard limits passed."
 
