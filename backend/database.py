@@ -627,6 +627,15 @@ def _init_sqlite_schema():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS marketplace_developers (
+            developer_id TEXT PRIMARY KEY,
+            stripe_account_id TEXT DEFAULT '',
+            onboarding_complete INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS marketplace_ledger (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -1054,6 +1063,15 @@ def _init_postgres_schema():
                 execution_time_ms INTEGER DEFAULT 0,
                 tokens_used INTEGER DEFAULT 0,
                 status_code TEXT DEFAULT '200',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS marketplace_developers (
+                developer_id TEXT PRIMARY KEY,
+                stripe_account_id TEXT DEFAULT '',
+                onboarding_complete INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -2470,6 +2488,36 @@ def db_get_rss_items(node_id: str, limit: int = 50, date_filter_days: int = 0, k
     return items
 
 
+def db_get_developer_stripe_account(developer_id: str) -> Optional[str]:
+    rows = _execute("SELECT stripe_account_id, onboarding_complete FROM marketplace_developers WHERE developer_id = ?", (developer_id,))
+    if rows:
+        return rows[0][0]
+    return None
+
+def db_set_developer_stripe_account(developer_id: str, stripe_account_id: str, onboarding_complete: int = 0):
+    existing = db_get_developer_stripe_account(developer_id)
+    if existing is not None:
+        _execute("""
+            UPDATE marketplace_developers SET stripe_account_id = ?, onboarding_complete = ? WHERE developer_id = ?
+        """, (stripe_account_id, onboarding_complete, developer_id))
+    else:
+        _execute("""
+            INSERT INTO marketplace_developers (developer_id, stripe_account_id, onboarding_complete)
+            VALUES (?, ?, ?)
+        """, (developer_id, stripe_account_id, onboarding_complete))
+
+def db_get_skill_owner(skill_id: str) -> Optional[str]:
+    rows = _execute("SELECT author FROM marketplace_skills WHERE id = ?", (skill_id,))
+    if rows:
+        return rows[0][0]
+    return None
+
+
 # Auto-initialize database schema on import to prevent missing tables
 init_db()
+try:
+    db_set_developer_stripe_account("default_user", "acct_1U4U4nDoC6Gd5rl4", 1)
+    db_set_developer_stripe_account("community", "acct_1U4U4nDoC6Gd5rl4", 1)
+except Exception:
+    pass
 

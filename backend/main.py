@@ -1109,6 +1109,86 @@ async def get_billing_usage_api(user_id: str = "default_user"):
     usage = await payout_engine.get_billing_usage(user_id)
     return {"status": "success", "data": usage}
 
+@app.post("/api/marketplace/developer/onboard")
+async def developer_onboard_api(developer_id: str = "default_user", redirect_url: str = "http://localhost:9119"):
+    """Initiates Stripe Connect onboarding for a developer."""
+    import stripe
+    import os
+    from backend.database import db_get_developer_stripe_account, db_set_developer_stripe_account
+    
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+    if not stripe.api_key:
+        return {"status": "error", "message": "Stripe is not configured on this server."}
+        
+    account_id = db_get_developer_stripe_account(developer_id)
+    if not account_id:
+        account = stripe.Account.create(
+            type="express",
+            capabilities={
+                "card_payments": {"requested": True},
+                "transfers": {"requested": True},
+            }
+        )
+        account_id = account.id
+        db_set_developer_stripe_account(developer_id, account_id, 0)
+        
+    account_link = stripe.AccountLink.create(
+        account=account_id,
+        refresh_url=redirect_url + "?onboard=refresh",
+        return_url=redirect_url + "?onboard=success",
+        type="account_onboarding",
+    )
+    return {"status": "success", "onboarding_url": account_link.url}
+
+@app.post("/api/marketplace/stripe/webhook")
+async def stripe_webhook_api(request: Request):
+    """Handles Stripe Webhooks to update ledger and developer onboarding status."""
+    import stripe
+    import os
+    from fastapi import HTTPException
+    from backend.database import _execute
+    
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+    endpoint_secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+    
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    if not endpoint_secret:
+        return {"status": "ignored", "reason": "No webhook secret configured"}
+        
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        client_ref = session.get('client_reference_id')
+        if client_ref and "::" in client_ref:
+            user_id, skill_id = client_ref.split("::", 1)
+            amount_usd = session.get('amount_total', 0) / 100.0
+            
+            _execute("""
+                INSERT INTO marketplace_ledger (user_id, skill_id, amount_usd, transaction_type, provider, reference_id)
+                VALUES (?, ?, ?, 'purchase', 'stripe', ?)
+            """, (user_id, skill_id, amount_usd, session['id']))
+            
+            _execute("""
+                UPDATE marketplace_skills SET is_installed = 1 WHERE id = ?
+            """, (skill_id,))
+            
+    elif event['type'] == 'account.updated':
+        account = event['data']['object']
+        if account.get('charges_enabled'):
+            _execute("""
+                UPDATE marketplace_developers SET onboarding_complete = 1 WHERE stripe_account_id = ?
+            """, (account['id'],))
+            
+    return {"status": "success"}
+
 
 @app.get("/api/marketplace/skills/{skill_name}/validate-env")
 async def validate_skill_env_api(skill_name: str):

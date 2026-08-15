@@ -19,7 +19,8 @@ import {
   LogOut,
   Kanban,
   ShieldCheck,
-  Rss
+  Rss,
+  Store
 } from 'lucide-react';
 
 import type { ChatMessage, DecisionLog, ActivityLog, SystemConfig, AppSettings, ChatSession } from './types';
@@ -49,6 +50,7 @@ import { MetricsTab } from './components/MetricsTab';
 import { OfficeTab, type OfficeLiveTrace } from './components/OfficeTab';
 import { TaskBoardTab } from './components/TaskBoardTab';
 import { RSSTab } from './components/RSSTab';
+import { MarketplaceTab } from './components/MarketplaceTab';
 import { AgentSelect } from './components/AgentSelect';
 
 // Initialize global fetch interceptor
@@ -84,7 +86,7 @@ export default function App() {
     return saved !== null ? saved === 'true' : false;
   });
 
-  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'tasks' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'rss'>(() => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'office' | 'tasks' | 'schedule' | 'config' | 'logs' | 'metrics' | 'activity' | 'memory' | 'tools' | 'subagents' | 'obsidian' | 'network' | 'mcp' | 'rss' | 'marketplace'>(() => {
     const saved = getSafeStorageItem('jarvis_active_tab');
     const officeEnabled = getSafeStorageItem('jarvis_pixel_office_enabled') === 'true';
     if (saved === 'office' && !officeEnabled) return 'chat';
@@ -1686,6 +1688,15 @@ export default function App() {
             <span className="sidebar-label">Architecture</span>
           </button>
 
+          <button
+            className={`sidebar-nav-btn${activeTab === 'marketplace' ? ' active' : ''}`}
+            onClick={() => { setActiveTab('marketplace'); setSidebarOpen(false); setSidebarExpanded(false); }}
+            title="Skills Marketplace"
+          >
+            <Store size={18} className="sidebar-icon" />
+            <span className="sidebar-label">Skills Marketplace</span>
+          </button>
+
           {/* Settings group */}
           <button
             className={`sidebar-nav-btn${(['config','subagents','mcp','obsidian','logs','activity','memory','tools','rss','metrics'].includes(activeTab)) ? ' active' : ''}`}
@@ -1976,6 +1987,10 @@ export default function App() {
 
         {activeTab === 'network' && (
           <NetworkTab subagents={subagents} setSubagents={setSubagents} fetchSubagents={fetchSubagents} models={models} />
+        )}
+
+        {activeTab === 'marketplace' && (
+          <MarketplaceTab />
         )}
 
         {activeTab === 'mcp' && (
