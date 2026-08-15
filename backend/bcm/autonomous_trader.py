@@ -1430,18 +1430,16 @@ def run_autonomous_cycle(symbol_key):
     config = TICKER_MAP[symbol_key]
     analysis_ticker = config['analysis']
     trade_id = config['trade_id']
+    base_volume = config['volume']
 
-    # ── Gate tracker — every check appends here ────────────────────────────
     execution_gates = []
 
     def gate(name, status, reason):
-        """Register an execution gate result."""
         icon = {"pass": "✅", "block": "🚫", "warn": "⚠️", "skip": "⏭️"}.get(status, "❓")
         print(f"[GATE] {icon} {name}: {reason}")
         execution_gates.append({"name": name, "status": status, "reason": reason})
 
     def emit_report_and_return(decision_obj=None):
-        """Format and return the final report with all gate results, and send Telegram."""
         if decision_obj is None:
             decision_obj = {
                 "decision": "wait",
@@ -1451,216 +1449,157 @@ def run_autonomous_cycle(symbol_key):
                 "recommended_tp": None,
             }
         report = format_md_decision_summary(decision_obj, symbol=symbol_key, execution_gates=execution_gates)
-        # Send concise Telegram summary for blocked/warned gates
         blocked = [g for g in execution_gates if g["status"] == "block"]
         warned  = [g for g in execution_gates if g["status"] == "warn"]
         if blocked:
             tg_msg = f"🚫 *BCM Blocked* — {symbol_key}\n"
             for g in blocked:
                 tg_msg += f"  • *{g['name']}*: {g['reason']}\n"
-            notifier.send(tg_msg)
+            get_notifier().send(tg_msg)
         elif warned:
             tg_msg = f"⚠️ *BCM Warning* — {symbol_key}\n"
             for g in warned:
                 tg_msg += f"  • *{g['name']}*: {g['reason']}\n"
-            notifier.send(tg_msg)
+            get_notifier().send(tg_msg)
         return report
 
-    # ── Guard: skip if open position already exists ────────────────────────
+    try:
+        from backend.bcm.fast_market_cache import fast_market_cache
+        from backend.bcm.regime_detector import RegimeDetector
+        from backend.bcm.confluence_engine import ConfluenceEngine, ConfluenceDecision
+        from backend.bcm.frozen_windows import get_frozen_windows_controller
+        from backend.bcm.compliance_officer import ComplianceOfficer
+    except ImportError:
+        from fast_market_cache import fast_market_cache
+        from regime_detector import RegimeDetector
+        from confluence_engine import ConfluenceEngine, ConfluenceDecision
+        from frozen_windows import get_frozen_windows_controller
+        from compliance_officer import ComplianceOfficer
+
+    print(f"--- Starting QUANTUM cycle for {symbol_key} ---")
+
+    # Guard: skip if open position
     live_positions, pos_summary = get_live_exchange_positions()
     has_live_pos = any(p.get("symbol") == symbol_key for p in live_positions)
     if has_live_pos or memory.has_open_position(symbol_key):
-        gate("Open Position Guard", "skip",
-             f"Already have an active position for {symbol_key} in Exchange/memory — new cycle skipped")
-        print(f"⏸️ {symbol_key}: Open position active — skipping new cycle.")
+        gate("Open Position Guard", "skip", f"Active position for {symbol_key}")
         return emit_report_and_return()
 
-    print(f"--- Starting PROFESSIONAL cycle for {symbol_key} ---")
-    
-    # ── Step 1: Account Balance ────────────────────────────────────────────
-    print("Step 1: Checking Account Balance and Margin...")
+    # Step 0: Frozen Windows (Macro gating)
+    fw_ctrl = get_frozen_windows_controller()
+    fw_res = fw_ctrl.get_active_frozen_window(symbol_key)
+    if fw_res.get("is_frozen"):
+        gate("Frozen Windows", "block", fw_res.get("reason"))
+        return emit_report_and_return()
+    gate("Frozen Windows", "pass", "No active high-impact macro events")
+
+    # Step 1: Account Balance
     equity, free_margin = get_account_balance()
-    if not equity:
-        gate("Account Balance", "block", "Could not fetch account equity/margin from Exchange")
-        print("Error: Could not fetch account data.")
+    if not equity or equity <= 0:
+        gate("Account Balance", "block", "Could not fetch valid account equity/margin from Exchange")
         return emit_report_and_return()
-    gate("Account Balance", "pass", f"Equity: ${equity:,.2f} | Free Margin: ${free_margin:,.2f}")
-    print(f"Equity: ${equity:.2f} | Free Margin: ${free_margin:.2f}")
+    gate("Account Balance", "pass", f"Equity: ${equity:,.2f}")
 
-    # ── Step 1.5: Liquidity Layer 0 ───────────────────────────────────────
-    print("Step 1.5: [Layer 0] Liquidity & Market Structure check...")
-    liq_res = check_liquidity_layer_0(symbol_key)
-    if not liq_res.get("passed", True):
-        reason = liq_res.get('reason', 'Unknown liquidity issue')
-        gate("Liquidity Layer 0", "block", reason)
-        print(f"⏸️ [Layer 0 BLOCKED] {symbol_key}: {reason}. Skipping cycle.")
-        return emit_report_and_return()
-    gate("Liquidity Layer 0", "pass", liq_res.get("reason", "Market structure OK"))
-
-    # ── Step 2: Technical Analysis ────────────────────────────────────────
-    print(f"Step 2: Getting technical analysis for {analysis_ticker}...")
-    analysis_json = get_technical_analysis(analysis_ticker)
-    if not analysis_json or analysis_json == "None":
-        analysis_json = json.dumps({"rsi": {analysis_ticker: 50}, "warning": "Empty result from MCP"})
+    # Step 2: Retrieve Technicals & Staleness Guard via FastMarketCache
+    cache_key = f"{analysis_ticker}:technical"
+    cached_tech = fast_market_cache.get(cache_key)
+    if cached_tech["_meta"]["is_stale"]:
+        # Fallback: compute synchronously if stale
+        print(f"Cache stale for {cache_key}, computing technicals...")
+        tech_json_str = get_technical_analysis(analysis_ticker)
+        try:
+            tech_data = json.loads(tech_json_str) if tech_json_str else {}
+        except:
+            tech_data = {}
+        fast_market_cache.set(cache_key, tech_data, ttl_sec=900)
+    else:
+        tech_data = cached_tech["data"] or {}
     
-    # ── Step 3: Remizov Volatility Shift ──────────────────────────────────
-    print("Step 3: Calculating Remizov Volatility Shift...")
+    # Step 3: Remizov & Regime Detection
+    import yfinance as yf
     try:
-        import yfinance as yf
-        
-        
-        hist_df = _fetch_yahoo_direct(analysis_ticker, period="30d", interval="1d")
+        hist_df = _fetch_yahoo_direct(analysis_ticker, period="60d", interval="1d")
         if not hist_df.empty:
             if isinstance(hist_df.columns, pd.MultiIndex):
                 hist_df.columns = hist_df.columns.get_level_values(0)
-            remizov_val, resolvent = calculate_remizov_shift(hist_df)
-            print(f"📈 Remizov Shift: {remizov_val}")
+            remizov_val, _ = calculate_remizov_shift(hist_df)
+            
+            regime_detector = RegimeDetector()
+            regime_res = regime_detector.detect_regime(hist_df['Close'].tolist())
+            regime = regime_res['regime']
+            current_close = hist_df['Close'].iloc[-1]
+            vol_state = {"atr": current_close * 0.015} # basic fallback atr
         else:
-            print("Warning: Historical DataFrame is empty.")
-            remizov_val = 0
-    except Exception as he:
-        print(f"⚠️ Historical Data Error (yfinance): {he}")
-        remizov_val = 0
+            remizov_val, regime, vol_state, current_close = 0.0, "SIDEWAYS", {"garch_vol": 0, "atr": 0}, 0.0
+    except Exception as e:
+        print(f"Hist Data Error: {e}")
+        remizov_val, regime, vol_state, current_close = 0.0, "SIDEWAYS", {"garch_vol": 0, "atr": 0}, 0.0
 
-    # ── Step 4: ATR / Keltner ─────────────────────────────────────────────
-    print("Step 4: Fetching ATR/Keltner for pre-check and risk sizing...")
-    try:
-        extra_data = calculate_atr_keltner(analysis_ticker)
-    except:
-        extra_data = {}
-        
-    # ── Step 4.5: Algorithmic Pre-Check ───────────────────────────────────
-    print("Step 4.5: Performing algorithmic pre-check (RSI / MACD / ATR)...")
-    should_call_ai, reason = pre_check_indicators(analysis_json, symbol_key, atr_data=extra_data)
-    if not should_call_ai:
-        atr_val = extra_data.get("atr_d1", "N/A")
-        gate("Algo Pre-Check (RSI/MACD/ATR)", "block",
-             f"{reason} | Remizov: {remizov_val:.4f} | ATR: {atr_val}")
-        print(f"Action: SKIP AI. Reason: {reason}")
+    # Fallback to current_price_yahoo if needed
+    if current_close == 0.0:
+        current_close = tech_data.get('close', {}).get(analysis_ticker, 0)
+    
+    if current_close == 0:
+        gate("Data Integrity", "block", "Current price could not be determined")
         return emit_report_and_return()
-    gate("Algo Pre-Check (RSI/MACD/ATR)", "pass",
-         f"Indicators clear | Remizov: {remizov_val:.4f} | ATR: {extra_data.get('atr_d1', 'N/A')}")
 
-    try:
-        analysis_data = json.loads(analysis_json)
-    except:
-        analysis_data = {"warning": "Could not parse analysis_json"}
-    if isinstance(analysis_data, list) and len(analysis_data) > 0:
-        full_data = analysis_data[0]
+    # Extract indicators
+    rsi = list(tech_data.get('rsi', {}).values())[0] if tech_data.get('rsi') else 50.0
+    macd = list(tech_data.get('macd', {}).values())[0] if tech_data.get('macd') else 0.0
+    
+    # Simple normalizations for Confluence Engine [-1.0, 1.0]
+    momentum_score = 0.0
+    if rsi > 60 and macd > 0: momentum_score = 1.0
+    elif rsi < 40 and macd < 0: momentum_score = -1.0
+    elif rsi > 55: momentum_score = 0.5
+    elif rsi < 45: momentum_score = -0.5
+
+    # Step 4: Confluence Engine
+    confluence = ConfluenceEngine()
+    is_sideways = (regime == "SIDEWAYS")
+    conf_res = confluence.compute_confluence(
+        remizov_score=remizov_val,
+        momentum_score=momentum_score,
+        is_sideways_regime=is_sideways,
+        higher_tf_trend="BULL" if regime in ["BULL", "RECOVERY"] else "BEAR" if regime == "BEAR" else "SIDEWAYS"
+    )
+
+    decision_enum = conf_res["decision"]
+    conf_score = conf_res["confluence_score"]
+    
+    if decision_enum in [ConfluenceDecision.HOLD_SKIP]:
+        action = "wait"
+        gate("Confluence Engine", "skip", f"Veto applied. Score: {conf_score:.2f} (Regime: {regime})")
+    elif decision_enum in [ConfluenceDecision.STRONG_BUY, ConfluenceDecision.NORMAL_BUY]:
+        action = "buy"
+        gate("Confluence Engine", "pass", f"BUY Signal. Score: {conf_score:.2f}")
     else:
-        full_data = analysis_data
+        action = "sell"
+        gate("Confluence Engine", "pass", f"SELL Signal. Score: {conf_score:.2f}")
 
-    full_data.update(extra_data)
-    full_data['remizov_shift'] = remizov_val
+    if action == "wait":
+        return emit_report_and_return()
 
-    # ── Step 5: BCM Memory ────────────────────────────────────────────────
-    print("Step 5: Consulting BCM Memory for similar past situations...")
-    experience = memory.get_similar_experience(full_data)
-    warnings_list = []
-    if not extra_data:
-        warnings_list.append("⚠️ Missing Volatility/Keltner data (Analysis incomplete).")
-        gate("Keltner/ATR Data", "warn", "Keltner/ATR data unavailable — volatility analysis incomplete")
-    if remizov_val == 0:
-        warnings_list.append("⚠️ Remizov Shift failed to calculate (using 0).")
-        gate("Remizov Shift", "warn", "Failed to calculate Remizov Volatility Shift — defaulting to 0")
+    # Step 5: Risk & SL/TP
+    atr = vol_state.get("atr", current_close * 0.01)
+    if atr == 0: atr = current_close * 0.01
+    
+    sl_dist = atr * 1.5 if is_sideways else atr * 2.0
+    sl = current_close - sl_dist if action == "buy" else current_close + sl_dist
+    
+    # Calculate R:R based on recommended_rr from ConfluenceEngine
+    rr_str = conf_res["recommended_rr"]
+    rr_val = float(rr_str.split(":")[1]) if ":" in rr_str else 2.0
+    tp_dist = sl_dist * rr_val
+    tp = current_close + tp_dist if action == "buy" else current_close - tp_dist
+    
+    lot = calculate_lot_size(equity, conf_res["risk_multiplier"], sl_dist, symbol_key)
 
-    full_data['past_experience'] = experience
-    full_data['technical_warnings'] = warnings_list
-
-    # ── Step 6: Multi-Agent AI Decision ───────────────────────────────────
-    print(f"Step 6: Asking Team for decision (Context: 8D Market Vector + ATR + Memory)...")
-    decision_raw = ask_ai_decision(symbol_key, json.dumps(full_data))
-    try:
-        decision = json.loads(decision_raw)
-    except Exception as parse_err: 
-        print(f"Error parsing MD decision: {decision_raw}")
-        decision = {
-            "decision": "wait",
-            "reasoning": f"Executive Managing Director decision failed due to API response format or disconnect: {str(decision_raw)[:300]}",
-            "confidence": 0.0,
-            "account_summary": {
-                "equity_status": f"Equity preserved at ${equity:.2f}",
-                "open_positions_audit": "No position opened due to AI decision error",
-                "historical_learnings": "N/A"
-            },
-            "recommended_sl": None,
-            "recommended_tp": None
-        }
-        gate("MD Decision Parse", "block", f"Could not parse AI response as JSON: {str(parse_err)[:150]}")
-        return emit_report_and_return(decision)
-
-    # Apply Remizov Shift to confidence
-    final_confidence = decision['confidence'] + (remizov_val * 100)
-    final_confidence = max(min(final_confidence, 100), 0)
-
-    print(f"Verdict: {decision['decision'].upper()} (Confidence: {final_confidence:.1f}%)")
-    print(f"MD Reasoning: {decision.get('reasoning', '')[:500]}")
-
-    # ── Confidence Gate ────────────────────────────────────────────────────
-    action = decision['decision']
-    if action not in ['buy', 'sell']:
-        gate("Confidence Threshold", "skip",
-             f"MD verdict is WAIT — no execution needed (Confidence: {final_confidence:.1f}%)")
-        report = format_md_decision_summary(decision, symbol=symbol_key, execution_gates=execution_gates)
-        # Telegram WAIT message
-        rsi_data = full_data.get('rsi', {})
-        rsi_val = list(rsi_data.values())[0] if rsi_data else 'N/A'
-        if isinstance(rsi_val, float):
-            rsi_val = f"{rsi_val:.1f}"
-        atr_val = extra_data.get('atr_d1', 'N/A')
-        if os.environ.get("BCM_TELEGRAM_NOTIFY_WAIT", "false").lower() == "true":
-            msg = f"⏸️ *{symbol_key}* → WAIT\n"
-            if warnings_list:
-                msg += f"⚠️ {warnings_list[0]}\n"
-            msg += f"📊 RSI: {rsi_val} | ATR: {atr_val} | Remizov: {remizov_val:.3f}\n"
-            msg += f"💬 {decision.get('reasoning', '')[:600]}..."
-            notifier.send(msg)
-        return report
-
-    if final_confidence < 80:
-        gate("Confidence Threshold", "block",
-             f"MD said {action.upper()} but confidence {final_confidence:.1f}% < 80% execution threshold")
-        decision['decision'] = 'wait'  # Override for report display
-        return emit_report_and_return(decision)
-
-    gate("Confidence Threshold", "pass", f"{action.upper()} with {final_confidence:.1f}% confidence ≥ 80% threshold")
-
-    # ── Keltner SL/TP Gate ─────────────────────────────────────────────────
-    sl = extra_data.get('keltner_upper') if action == 'sell' else extra_data.get('keltner_lower')
-    tp = extra_data.get('keltner_lower') if action == 'sell' else extra_data.get('keltner_upper')
-
-    if not sl or not tp:
-        gate("Keltner SL/TP", "block",
-             f"Missing Keltner channel data — cannot compute SL/TP. "
-             f"keltner_lower={extra_data.get('keltner_lower')}, keltner_upper={extra_data.get('keltner_upper')}")
-        return emit_report_and_return(decision)
-    gate("Keltner SL/TP", "pass", f"SL={sl:.5f} | TP={tp:.5f} (from Keltner channels)")
-
-    # ── R:R Validation Gate ───────────────────────────────────────────────
-    entry_price = full_data.get('ema20', 0)
-    sl_dist = abs(entry_price - sl) if entry_price else 0
-    tp_dist = abs(entry_price - tp) if entry_price else 0
-    rr = (tp_dist / sl_dist) if sl_dist > 0 else 0
-    if rr < 1.5:
-        gate("Risk:Reward Ratio", "block",
-             f"R:R = {rr:.2f} < 1.5 minimum. Entry: {entry_price:.5f} | SL dist: {sl_dist:.5f} | TP dist: {tp_dist:.5f}")
-        print(f"⏸️ BCM Skip ({symbol_key}): R:R = {rr:.2f} < 1.5")
-        return emit_report_and_return(decision)
-    gate("Risk:Reward Ratio", "pass", f"R:R = {rr:.2f} ≥ 1.5 minimum")
-
-    # ── Lot Size Calculation ───────────────────────────────────────────────
-    current_price_yahoo = full_data.get('ema20', 0)
-    sl_dist = abs(current_price_yahoo - sl)
-    tp_dist = abs(current_price_yahoo - tp)
-    lot = calculate_lot_size(equity, 1.0, sl_dist, symbol_key)
-
-    # ── Compliance Gate ────────────────────────────────────────────────────
-    print(f"Step 7: Sending draft order to Compliance Officer for Audit...")
-    cco = ComplianceOfficer()
-    base_volume = TICKER_MAP[symbol_key]['volume']
-    risk_summary = (f"Equity: {equity}, Margin: {free_margin}. "
-                    f"Calculated lot: {lot}. SL Distance: {sl_dist:.4f}. Remizov Shift: {remizov_val:.4f}.")
-
+    # Step 6: Compliance Audit
+    cco = ComplianceOfficer(peak_equity=equity)
+    md_decision = f"Confluence Score: {conf_score:.2f}, Regime: {regime}, Reasons: {conf_res['veto_reasons']}"
+    risk_report = f"Equity: {equity}, Lot: {lot}, SL Dist: {sl_dist:.4f}"
+    
     cco_passed, cco_reason = cco.audit_trade(
         symbol=symbol_key,
         action=action,
@@ -1668,64 +1607,47 @@ def run_autonomous_cycle(symbol_key):
         base_volume=base_volume,
         sl=sl,
         tp=tp,
-        entry_price=current_price_yahoo,
-        md_decision=decision.get('reasoning', ''),
-        risk_report=risk_summary
+        entry_price=current_close,
+        md_decision=md_decision,
+        risk_report=risk_report
     )
-
+    
     if not cco_passed:
-        gate("Compliance Officer (CCO)", "block", f"Rejected: {cco_reason}")
-        print(f"🚫 BCM COMPLIANCE REJECTION — {symbol_key}: {cco_reason}")
-        return emit_report_and_return(decision)
-    gate("Compliance Officer (CCO)", "pass", f"Approved: {cco_reason}")
-    print(f"✅ Compliance Approved: {cco_reason}")
+        gate("Compliance Officer", "block", f"Rejected: {cco_reason}")
+        return emit_report_and_return()
+        
+    gate("Compliance Officer", "pass", "Approved by Risk Engine")
 
-    # ── Exchange Execution Gate ────────────────────────────────────────────
-    print(f"Step 8: Executing Exchange Order (Lot: {lot}) via OpenAPI...")
-    print(f"   Using Symbol ID: {trade_id} | Risk Offset: {sl_dist:.5f}")
-
+    # Step 7: Execution
+    print(f"Executing Exchange Order (Lot: {lot}) via OpenAPI...")
     side_cmd = "buy" if action == 'buy' else "sell"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     try:
         cmd_place = ["bash", os.path.join(script_dir, "trade.sh"),
                      side_cmd, str(trade_id), str(lot), str(sl), str(tp)]
         res_raw = subprocess.check_output(cmd_place, stderr=subprocess.STDOUT).decode('utf-8')
-        print(f"Exchange Response: {res_raw}")
+        
+        gate("Exchange Execution", "pass", f"Order dispatched: {action.upper()} {lot} @ SL={sl} TP={tp}")
+        
+        memory.log_decision(f"BCM-Q-{int(time.time())}", symbol_key, action, lot, current_close,
+                            md_decision + f"\n[CCO Audit: {cco_reason}]", tech_data)
 
-        gate("Exchange Execution", "pass",
-             f"Order dispatched: {action.upper()} {lot} lots of {symbol_key} "
-             f"@ SL={sl} TP={tp} | Symbol ID: {trade_id}")
-
-        # Log to BCM memory
-        tracking_id = f"BCM-{int(time.time())}"
-        memory.log_decision(tracking_id, symbol_key, action, lot, current_price_yahoo,
-                            decision['reasoning'] + f"\n[CCO Audit: {cco_reason}]", full_data)
-
-        # Build final formatted report
-        report = format_md_decision_summary(decision, symbol=symbol_key, execution_gates=execution_gates)
-
-        # Telegram execution success
-        msg = f"🏛️ *BCM EXECUTION*\n"
-        msg += f"Asset: `{symbol_key}` | Action: *{action.upper()}*\n"
-        msg += f"Volume: `{lot}` | Conf: `{final_confidence:.1f}%`\n"
-        msg += f"SL: `{sl}` | TP: `{tp}`\n\n"
-        msg += f"📋 *Gates:*\n"
-        msg += f"• *Quant:* ✅ Approved (Remizov {remizov_val:.4f})\n"
-        msg += f"• *CCO:* ✅ {cco_reason}\n"
-        msg += f"• *MD:* {decision['reasoning'][:200]}...\n\n"
-        msg += f"*(Executed via Exchange OpenAPI — Symbol ID: {trade_id})*"
-        notifier.send(msg)
+        decision_obj = {
+            "decision": action,
+            "confidence": abs(conf_score) * 100,
+            "reasoning": md_decision,
+            "recommended_sl": sl,
+            "recommended_tp": tp
+        }
+        report = format_md_decision_summary(decision_obj, symbol=symbol_key, execution_gates=execution_gates)
         return report
 
     except Exception as e:
         error_detail = str(e)
-        import subprocess
         if isinstance(e, subprocess.CalledProcessError) and e.output:
             error_detail += "\n" + e.output.decode('utf-8', errors='replace')
-        gate("Exchange Execution", "block",
-             f"subprocess failed: {error_detail[:300]}")
-        print(f"❌ Execution Failed for {symbol_key}: {error_detail}")
-        return emit_report_and_return(decision)
-
+        gate("Exchange Execution", "block", f"subprocess failed: {error_detail[:300]}")
+        return emit_report_and_return()
 
 
 
@@ -1780,7 +1702,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     if account_equity < 500:
         msg = f"⏸️ BCM Options: Insufficient equity (${account_equity:.2f}). Min $500 required."
         print(msg)
-        notifier.send(msg)
+        get_notifier().send(msg)
         return {"status": "skipped", "reason": msg}
 
     # ── Step 2: Option Chain ─────────────────────────────────────
@@ -1889,7 +1811,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
     except Exception as parse_err:
         err_msg = f"❌ BCM Options: Failed to parse Options Strategist JSON: {str(decision_raw)[:300]}"
         print(err_msg)
-        notifier.send(err_msg)
+        get_notifier().send(err_msg)
         return {"status": "error", "reason": "JSON parse error", "raw": decision_raw[:500]}
 
     strategy = decision.get("strategy", "wait")
@@ -1911,7 +1833,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
             f"💬 {reasoning[:500]}"
         )
         print(f"   Decision: WAIT — {reasoning[:200]}")
-        notifier.send(msg)
+        get_notifier().send(msg)
         return {"status": "wait", "strategy": strategy, "reasoning": reasoning}
 
     # ── Step 5: Compliance Audit ─────────────────────────────────
@@ -1937,7 +1859,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
             f"Reason: {cco_reason}"
         )
         print(f"   ❌ REJECTED: {cco_reason}")
-        notifier.send(msg)
+        get_notifier().send(msg)
         return {"status": "rejected", "reason": cco_reason}
 
     print(f"   ✅ Compliance Approved: {cco_reason}")
@@ -1970,7 +1892,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
                     f"Buy leg NOT placed (avoiding naked exposure)."
                 )
                 print(f"   ⚠️ Sell leg failed — aborting spread to avoid naked position")
-                notifier.send(abort_msg)
+                get_notifier().send(abort_msg)
                 return {"status": "partial_failure", "sell_leg": result, "buy_leg": None}
 
         except Exception as exec_err:
@@ -2022,7 +1944,7 @@ def run_options_cycle(base_coin: str = "BTC", exp_date: str = None) -> dict:
         f"✅ *CCO:* {cco_reason[:120]}\n\n"
         f"📝 {reasoning[:300]}..."
     )
-    notifier.send(msg)
+    get_notifier().send(msg)
     print(f"\n{'='*60}")
     print(f"  Options Cycle Complete: sell_ok={sell_ok}, buy_ok={buy_ok}")
     print(f"{'='*60}\n")
