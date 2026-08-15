@@ -96,7 +96,7 @@ class FrozenWindowsController:
 
             # Check if symbol is affected (USD affects US500, BTC, GOLD, GBPUSD, BRENT, etc.)
             affects_all = "USD" in ev["currencies"] or not ev["currencies"]
-            symbol_affected = affects_all or sym_upper in ev["symbols"] or any(curr in sym_upper for curr in ev["currencies"])
+            symbol_affected = affects_all or sym_upper in ev["symbols"] or any(sym_upper.endswith(curr) or sym_upper.startswith(curr) for curr in ev["currencies"])
 
             if not symbol_affected:
                 continue

@@ -37,8 +37,10 @@ class ComplianceOfficer:
         self.risk_engine = RiskEngine(peak_equity=peak_equity)
         self.frozen_controller = get_frozen_windows_controller()
         
-    def check_hard_limits(self, symbol, action, volume, base_volume, sl, tp, entry_price, current_equity: float = 10000.0, instrument_spec: dict = None):
+    def check_hard_limits(self, symbol, action, volume, base_volume, sl, tp, entry_price, current_equity: float = None, instrument_spec: dict = None):
         """Rule-based compliance checks that cannot be overridden by AI."""
+        if current_equity is None:
+            current_equity = self.risk_engine.peak_equity
         if symbol not in ALLOWED_SYMBOLS:
             return False, f"HARD LIMIT: Symbol {symbol} is not on the approved list."
         if action not in ["buy", "sell", "wait"]:

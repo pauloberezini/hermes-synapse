@@ -6,23 +6,23 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import BCM modules
-from bcm.autonomous_trader import run_autonomous_cycle
-from bcm.compliance_officer import ComplianceOfficer
-from bcm.fast_market_cache import FastMarketCache, fast_market_cache
+from backend.bcm.autonomous_trader import run_autonomous_cycle
+from backend.bcm.compliance_officer import ComplianceOfficer
+from backend.bcm.fast_market_cache import FastMarketCache
 
 @pytest.fixture(autouse=True)
 def setup_mock_environment():
     """Mock the external API and Exchange calls for all tests."""
-    with patch('bcm.autonomous_trader.TICKER_MAP', {"BTC": {"analysis": "BTC-USD", "trade_id": "1", "volume": 1.0}}), \
-         patch('bcm.autonomous_trader.get_live_exchange_positions', return_value=([], {})), \
-         patch('bcm.autonomous_trader.memory.has_open_position', return_value=False), \
-         patch('bcm.autonomous_trader.get_account_balance', return_value=(10000.0, 10000.0)), \
-         patch('backend.bcm.frozen_windows.get_frozen_windows_controller') as mock_fw_ctrl, \
-         patch('bcm.autonomous_trader.get_notifier'), \
-         patch('bcm.autonomous_trader.subprocess.check_output', return_value=b"SUCCESS"):
+    with patch('backend.bcm.autonomous_trader.TICKER_MAP', {"BTC": {"analysis": "BTC-USD", "trade_id": "1", "volume": 1.0}}), \
+         patch('backend.bcm.autonomous_trader.get_live_exchange_positions', return_value=([], {})), \
+         patch('backend.bcm.autonomous_trader.memory.has_open_position', return_value=False), \
+         patch('backend.bcm.autonomous_trader.get_account_balance', return_value=(10000.0, 10000.0)), \
+         patch('backend.bcm.autonomous_trader.get_frozen_windows_controller') as mock_fw_ctrl, \
+         patch('backend.bcm.autonomous_trader.get_notifier'), \
+         patch('backend.bcm.autonomous_trader.subprocess.check_output', return_value=b"SUCCESS"):
          
-        mock_fw_ctrl.return_value.get_active_frozen_window.return_value = {"is_frozen": False}
-        yield
+         mock_fw_ctrl.return_value.get_active_frozen_window.return_value = {"is_frozen": False}
+         yield
 
 def test_redis_outage_fallback():
     """Test that if Redis fails, the FastMarketCache gracefully falls back to memory."""
@@ -38,8 +38,8 @@ def test_redis_outage_fallback():
     assert val["_meta"]["is_stale"] is False
     assert val["_meta"]["source"] == "fast_cache"
 
-@patch('bcm.autonomous_trader._fetch_yahoo_direct')
-@patch('bcm.fast_market_cache.fast_market_cache.get')
+@patch('backend.bcm.autonomous_trader._fetch_yahoo_direct')
+@patch('backend.bcm.fast_market_cache.fast_market_cache.get')
 def test_autonomous_cycle_stale_data_fallback(mock_cache_get, mock_fetch):
     """Test that stale cache triggers synchronous fallback or block."""
     # Mock cache to return stale data
@@ -52,13 +52,13 @@ def test_autonomous_cycle_stale_data_fallback(mock_cache_get, mock_fetch):
     mock_fetch.side_effect = Exception("Yahoo Finance Down")
     
     # Mock technicals
-    with patch('bcm.autonomous_trader.get_technical_analysis', return_value="{}"):
+    with patch('backend.bcm.autonomous_trader.get_technical_analysis', return_value="{}"):
         report = run_autonomous_cycle("BTC")
         
     assert "wait" in report.lower()
 
-@patch('bcm.fast_market_cache.fast_market_cache.get')
-@patch('bcm.autonomous_trader._fetch_yahoo_direct')
+@patch('backend.bcm.fast_market_cache.fast_market_cache.get')
+@patch('backend.bcm.autonomous_trader._fetch_yahoo_direct')
 def test_compliance_officer_api_outage(mock_fetch, mock_cache_get):
     """Test that ComplianceOfficer gracefully handles LLM API failure."""
     import pandas as pd
@@ -75,7 +75,7 @@ def test_compliance_officer_api_outage(mock_fetch, mock_cache_get):
     cco = ComplianceOfficer()
     
     # Mock requests.post to raise an error
-    with patch('bcm.compliance_officer.requests.post') as mock_post:
+    with patch('backend.bcm.compliance_officer.requests.post') as mock_post:
         mock_post.side_effect = Exception("OpenRouter API Timeout")
         
         passed, reason = cco.audit_trade(
@@ -89,11 +89,11 @@ def test_compliance_officer_api_outage(mock_fetch, mock_cache_get):
 
 def test_frozen_windows_blocks_cycle():
     """Test that Frozen Windows blocks execution early."""
-    with patch('bcm.autonomous_trader.TICKER_MAP', {"BTC": {"analysis": "BTC-USD", "trade_id": "1", "volume": 1.0}}), \
-         patch('bcm.autonomous_trader.get_live_exchange_positions', return_value=([], {})), \
-         patch('bcm.autonomous_trader.memory.has_open_position', return_value=False), \
-         patch('bcm.autonomous_trader.get_account_balance', return_value=(10000.0, 10000.0)), \
-         patch('bcm.autonomous_trader.get_notifier') as mock_notifier_cls, \
+    with patch('backend.bcm.autonomous_trader.TICKER_MAP', {"BTC": {"analysis": "BTC-USD", "trade_id": "1", "volume": 1.0}}), \
+         patch('backend.bcm.autonomous_trader.get_live_exchange_positions', return_value=([], {})), \
+         patch('backend.bcm.autonomous_trader.memory.has_open_position', return_value=False), \
+         patch('backend.bcm.autonomous_trader.get_account_balance', return_value=(10000.0, 10000.0)), \
+         patch('backend.bcm.autonomous_trader.get_notifier') as mock_notifier_cls, \
          patch('backend.bcm.frozen_windows.get_frozen_windows_controller') as mock_fw_ctrl:
          
         mock_fw_ctrl.return_value.get_active_frozen_window.return_value = {"is_frozen": True, "reason": "FOMC Meeting"}

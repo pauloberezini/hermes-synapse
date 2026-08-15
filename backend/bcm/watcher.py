@@ -59,6 +59,16 @@ class ZeroCostWatcher:
             })
 
         # 2. Inspect Each Open Position
+        open_position_ids = {
+            str(pos.get("position_id", pos.get("id", pos.get("symbol", "unknown"))))
+            for pos in open_positions
+        }
+
+        # Prune P&L history for positions that are no longer open
+        for stored_pos_id in list(self._pnl_history.keys()):
+            if stored_pos_id not in open_position_ids:
+                del self._pnl_history[stored_pos_id]
+
         for pos in open_positions:
             pos_id = str(pos.get("position_id", pos.get("id", pos.get("symbol", "unknown"))))
             sym = str(pos.get("symbol", "")).upper()
