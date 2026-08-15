@@ -17,7 +17,7 @@ def setup_mock_environment():
          patch('backend.bcm.autonomous_trader.get_live_exchange_positions', return_value=([], {})), \
          patch('backend.bcm.autonomous_trader.memory.has_open_position', return_value=False), \
          patch('backend.bcm.autonomous_trader.get_account_balance', return_value=(10000.0, 10000.0)), \
-         patch('backend.bcm.autonomous_trader.get_frozen_windows_controller') as mock_fw_ctrl, \
+         patch('backend.bcm.frozen_windows.get_frozen_windows_controller') as mock_fw_ctrl, \
          patch('backend.bcm.autonomous_trader.get_notifier'), \
          patch('backend.bcm.autonomous_trader.subprocess.check_output', return_value=b"SUCCESS"):
          
