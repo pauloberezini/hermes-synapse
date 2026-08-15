@@ -103,3 +103,8 @@ backend/logs/
 *.db-shm
 scratch/
 scratch_test.py
+*.py_snippet
+patch_script.py
+test_script.py
+*patch*.py
+*test_script*.py
