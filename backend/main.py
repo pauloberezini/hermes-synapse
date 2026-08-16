@@ -122,8 +122,8 @@ async def lifespan(app: FastAPI):
     # Start background APScheduler & self-improving skill distillation loop
     try:
         from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, start_bcm_session_scheduler_loop
-        scheduler.start()
         restore_state()
+        scheduler.start()
         start_skill_distillation_loop(interval_seconds=900)
         start_rss_poller_loop(interval_seconds=300)
 

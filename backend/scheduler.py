@@ -649,11 +649,21 @@ def pause_timer(item_id: str) -> bool:
         if not rows or not rows[0][0]:
             return False
 
+    paused_time_left = None
     if job is not None:
+        next_run = getattr(job, "next_run_time", None)
+        if next_run:
+            from datetime import datetime
+            now_tz = datetime.now(scheduler.timezone)
+            paused_time_left = max(0, int((next_run - now_tz).total_seconds()))
         job.pause()
+        
     if clean_id not in _timer_meta:
         _timer_meta[clean_id] = {"type": _infer_type(job) if job else "scheduled", "created_at": ""}
     _timer_meta[clean_id]["status"] = "paused"
+    if paused_time_left is not None:
+        _timer_meta[clean_id]["paused_time_left"] = paused_time_left
+        
     try:
         from backend.database import _execute
         import json
@@ -663,6 +673,8 @@ def pause_timer(item_id: str) -> bool:
             info_val = rows[0][0]
             info = json.loads(info_val) if isinstance(info_val, str) else info_val
             info["status"] = "paused"
+            if paused_time_left is not None:
+                info["paused_time_left"] = paused_time_left
             _execute("UPDATE session_metadata SET schedule_info = ? WHERE session_id = ? OR job_id = ?", (json.dumps(info), session_id, clean_id))
     except Exception as err:
         logger.error(f"Failed to update session_metadata for paused timer {item_id}: {err}")
@@ -680,11 +692,22 @@ def resume_timer(item_id: str) -> bool:
         if not rows or not rows[0][0]:
             return False
 
+    paused_time_left = _timer_meta.get(clean_id, {}).get("paused_time_left")
+    
     if job is not None:
         job.resume()
+        if paused_time_left is not None:
+            from datetime import datetime, timedelta
+            now_tz = datetime.now(scheduler.timezone)
+            new_next_run = now_tz + timedelta(seconds=paused_time_left)
+            job.modify(next_run_time=new_next_run)
+            
     if clean_id not in _timer_meta:
         _timer_meta[clean_id] = {"type": _infer_type(job) if job else "scheduled", "created_at": ""}
     _timer_meta[clean_id]["status"] = "running"
+    if "paused_time_left" in _timer_meta[clean_id]:
+        del _timer_meta[clean_id]["paused_time_left"]
+        
     try:
         from backend.database import _execute
         import json
@@ -694,6 +717,8 @@ def resume_timer(item_id: str) -> bool:
             info_val = rows[0][0]
             info = json.loads(info_val) if isinstance(info_val, str) else info_val
             info["status"] = "running"
+            if "paused_time_left" in info:
+                del info["paused_time_left"]
             _execute("UPDATE session_metadata SET schedule_info = ? WHERE session_id = ? OR job_id = ?", (json.dumps(info), session_id, clean_id))
     except Exception as err:
         logger.error(f"Failed to update session_metadata for resumed timer {item_id}: {err}")
@@ -867,6 +892,7 @@ def get_all_timers() -> List[Dict[str, Any]]:
                         "duration": info.get("duration"),
                         "target_time": info.get("target_time"),
                         "task_type": schedule_type or info.get("task_type"),
+                        "paused_time_left": info.get("paused_time_left"),
                     }
                 except Exception:
                     pass
@@ -891,9 +917,13 @@ def get_all_timers() -> List[Dict[str, Any]]:
 
         if status != "paused" and job_type in ("recurring", "cron") and (not next_run or next_run <= now_tz):
             if hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
-                next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
+                prev_time = next_run if next_run else getattr(job.trigger, "start_date", now_tz)
+                next_run = job.trigger.get_next_fire_time(prev_time, now_tz)
 
-        time_left = max(0, int((next_run - now_tz).total_seconds())) if (status != "paused" and next_run) else 0
+        if status == "paused":
+            time_left = meta.get("paused_time_left") or db_fallback.get("paused_time_left") or 0
+        else:
+            time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
 
         agent_id = kwargs.get("agent_id") or meta.get("agent_id") or db_fallback.get("agent_id") or "jarvis"
         prompt = kwargs.get("prompt") or meta.get("prompt") or db_fallback.get("prompt") or ""
@@ -944,7 +974,7 @@ def get_all_timers() -> List[Dict[str, Any]]:
             "id": j_id,
             "label": label,
             "status": status,
-            "time_left": 0,
+            "time_left": info.get("paused_time_left") or meta.get("paused_time_left") or 0 if status == "paused" else 0,
             "type": job_type,
             "created_at": created_at,
             "agent_id": agent_id,
@@ -1275,6 +1305,7 @@ def restore_state() -> None:
                 "duration": info.get("duration"),
                 "target_time": info.get("target_time"),
                 "status": status,
+                "paused_time_left": info.get("paused_time_left"),
             }
 
             if status == "completed":
@@ -1284,6 +1315,8 @@ def restore_state() -> None:
             if existing_job:
                 if status == "paused":
                     existing_job.pause()
+                elif status == "running" or status == "scheduled":
+                    existing_job.resume()
             else:
                 if task_type == "cron":
                     cron_expr = info.get("cron_expr") or "* * * * *"
