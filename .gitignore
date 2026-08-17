@@ -78,6 +78,7 @@ coverage.xml
 
 # Project specific
 backend/data/*.db
+backend/data/*.sqlite
 backend/data/*.db-wal
 backend/data/*.db-shm
 backend/*.db

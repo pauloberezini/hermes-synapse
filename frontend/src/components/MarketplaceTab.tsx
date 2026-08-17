@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Package, Star, Download, Trash2, RefreshCw, Filter, ChevronDown, User, Code2, Globe, ShieldCheck, BarChart2, Database, Terminal, Brain, BookOpen, Rss, Clock, AlertCircle, CheckCircle2, Cpu, ChevronLeft, ChevronRight, ShoppingCart, LayoutGrid, List } from 'lucide-react';
+import { Search, Package, Star, Download, Trash2, RefreshCw, Filter, ChevronDown, User, Code2, Globe, ShieldCheck, BarChart2, Terminal, Brain, BookOpen, Rss, Clock, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, ShoppingCart, LayoutGrid, List } from 'lucide-react';
 
 // ─── Built-in skill catalogue (always visible, drawn from the system's own tools) ────────
 const BUILTIN_SKILLS = [
