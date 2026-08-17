@@ -14,18 +14,11 @@ from backend.orchestrator import AgentState, run_orchestration_pulse
 class TestFeat6PulseEngine(unittest.TestCase):
 
     def setUp(self):
-        self.orig_db_path = db.DB_PATH
-        self.orig_db_dir = db.DB_DIR
         self.test_dir = tempfile.mkdtemp()
-        self.test_db_path = os.path.join(self.test_dir, "test_feat6.db")
-        db.DB_PATH = self.test_db_path
-        db.DB_DIR = self.test_dir
         db.init_db()
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
-        db.DB_PATH = self.orig_db_path
-        db.DB_DIR = self.orig_db_dir
         db.init_db()
 
     def test_agent_state_checkpoint_serialization(self):

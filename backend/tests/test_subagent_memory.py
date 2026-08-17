@@ -1,6 +1,5 @@
 import os
 import pytest
-import sqlite3
 from unittest.mock import MagicMock, patch
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -11,12 +10,7 @@ from backend.tools import execute_tool
 
 @pytest.fixture(autouse=True)
 def setup_test_environment(tmp_path):
-    # Overwrite SQLite path to temp DB
-    original_db_path = database.DB_PATH
-    original_db_dir = database.DB_DIR
-    test_db = tmp_path / "test_hermes.db"
-    database.DB_PATH = str(test_db)
-    database.DB_DIR = str(tmp_path)
+    # Overwrite DB path to temp
     database.init_db()
 
     # Spin up in-memory Qdrant client
@@ -40,11 +34,9 @@ def setup_test_environment(tmp_path):
         yield
 
     # Restore DB paths
-    database.DB_PATH = original_db_path
-    database.DB_DIR = original_db_dir
 
 
-def test_sqlite_subagent_memory_crud():
+def test_subagent_memory_crud():
     subagent_id = "test_tutor"
     
     # Initially empty
@@ -82,7 +74,7 @@ def test_subagent_memory_tools_execution():
     )
     assert "success" in save_result
     
-    # Retrieve via SQLite directly to verify
+    # Retrieve via DB directly to verify
     db_mem = database.db_get_subagent_memory(subagent_id)
     assert db_mem == {"lessons_progress": "numbers completed"}
     

@@ -480,7 +480,11 @@ class JarvisAgent:
         lang_directive = f"\n\n[LANGUAGE DIRECTIVE]: You MUST respond exclusively in {_lang_names.get(_lang, _lang)}. This overrides any other language instruction in this prompt."
         messages = [{"role": "system", "content": self.system_prompt + system_info + lang_directive}]
         for msg in history:
-            messages.append(msg)
+            # Strip out timestamp and other metadata to avoid JSON serialization errors
+            messages.append({
+                "role": msg["role"], 
+                "content": msg.get("content", "")
+            })
         messages.append({"role": "user", "content": user_content})
 
         headers = {

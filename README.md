@@ -34,7 +34,7 @@ Most multi-agent frameworks are either **too rigid** (n8n: hardwired workflows) 
 | **UI** | 🎨 SVG canvas + isolated agent chats | Node editor | Visual chain designer | CLI / API only |
 | **Hierarchy** | ✅ Strict DAG (cycle-safe) | ↪ Linear / conditional | Data-flow graphs | ⚠️ Free loops (cycle risk) |
 | **Security** | 🔐 Permission Intersection | Hardcoded auth | Sandbox container | Local exec by default |
-| **Self-hosted** | ✅ Docker, SQLite, local LLMs | ✅ | ✅ | ✅ |
+| **Self-hosted** | ✅ Docker, PostgreSQL, local LLMs | ✅ | ✅ | ✅ |
 
 ---
 
@@ -97,6 +97,18 @@ AllowedTools = ChildTools ∩ ParentTools  ← Permission Intersection (security
 
 ---
 
+## 🧩 Advanced Modules & Capabilities
+
+Hermes goes beyond simple chat agents. It is designed for complex, autonomous operations:
+- 🏢 **2.5D Pixel Office & Telemetry**: Visualize your agent workforce in real-time. Watch tasks route through intelligent office zones (Meeting Rooms, Desks, Lounge).
+- 🛡️ **Paperclip Governance (Control Plane)**: Enforce hard limits with **BudgetGuard** token/dollar spend tracking, and require **Human-in-the-loop** approvals for high-stakes tool executions. Tasks are managed on an atomic Kanban ticket board.
+- 🕸️ **Autonomous Agent Mesh**: P2P protocol for inter-agent capability matching, discovery, and task delegation.
+- 📈 **BCM Trading Engine**: Autonomous financial engine integrated with CCXT (100+ exchanges) and a built-in Compliance Officer.
+- 🗣️ **Voice & Speech**: Integrated local Whisper STT (Speech-to-Text) and TTS for seamless voice interactions.
+- 🏢 **Enterprise Ready**: Full OIDC / OAuth2 support, Role-Based Access Control (RBAC), and PostgreSQL database.
+
+---
+
 ## 🤖 Built-in Agents (seeded on first launch)
 
 | Agent | Skills | Required Keys |
@@ -145,7 +157,6 @@ AGENT_MODEL_ANALYST=openai/gpt-4o           # Visual for charts
 ### Database Backends
 
 ```bash
-# Default: SQLite (zero config, WAL mode enabled automatically)
 # DATABASE_URL=   ← leave empty
 
 # PostgreSQL (production / SaaS mode):
@@ -185,7 +196,7 @@ hermes-synapse/
 │   ├── main.py           # API routes
 │   ├── agent.py          # Core LLM orchestration loop
 │   ├── orchestrator.py   # DAG planner
-│   ├── database.py       # SQLite/PostgreSQL backend abstraction
+│   ├── database.py       # PostgreSQL backend
 │   ├── rag.py            # Qdrant vector memory
 │   ├── tools.py          # All skill tool implementations
 │   └── subagents.py      # Specialized agent classes
@@ -201,18 +212,21 @@ hermes-synapse/
 
 ## 🛣️ Roadmap
 
-- [x] Visual SVG canvas with drag-and-drop wiring
+- [x] Visual SVG canvas & 2.5D Pixel Office telemetry
 - [x] DAG hierarchical orchestration with planning loop
-- [x] SQLite + PostgreSQL pluggable backend
-- [x] Qdrant RAG memory with fastembed (local embeddings)
+- [x] PostgreSQL database backend
+- [x] Qdrant RAG & GraphRAG memory
 - [x] Python code sandbox with self-correction loop
 - [x] Telegram bot interface
-- [x] **Open-Core Skills Marketplace** — community-contributed plugins and MCP servers
-- [x] **Kubernetes & Swarm Ready** — production scaling
-- [x] **100% English OSS Localization** — global community adoption
-- [ ] **Plugin SDK** — `pip install hermes-sdk` → write your own skills
-- [ ] **Voice interface** — Whisper STT + TTS replies
-- [ ] **SaaS mode** — multi-tenant namespace isolation
+- [x] **Open-Core Skills Marketplace** & **MCP Server Support**
+- [x] **Plugin SDK** — `hermes_sdk` for custom skills & dataset exporters
+- [x] **Voice interface** — Whisper STT + TTS replies
+- [x] **Enterprise SSO & SaaS mode** — OIDC/OAuth2, RBAC, namespace isolation
+- [x] **Paperclip Governance** — BudgetGuard, Kanban board, Human-in-the-loop approvals
+- [x] **Autonomous P2P Agent Mesh** — Decentralized agent communication
+- [ ] **Production Multi-Cluster Agent Mesh** — Cross-cloud distributed execution
+- [ ] **Real-Time WebRTC Voice & Multimodal Gateway**
+- [ ] **Skills Marketplace Monetization & Billing Engine**
 
 See full [ROADMAP.md](ROADMAP.md) for the detailed specification.
 

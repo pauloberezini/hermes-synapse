@@ -5,23 +5,14 @@ from backend import database
 @pytest.fixture(autouse=True)
 def setup_test_db(tmp_path):
     # Override database path to use temporary test file
-    original_db_path = database.DB_PATH
-    original_db_dir = database.DB_DIR
     
-    test_db = tmp_path / "test_hermes.db"
-    database.DB_PATH = str(test_db)
-    database.DB_DIR = str(tmp_path)
     
     database.init_db()
     
     yield
     
     # Restore original paths
-    database.DB_PATH = original_db_path
-    database.DB_DIR = original_db_dir
 
-def test_database_init():
-    assert os.path.exists(database.DB_PATH)
 
 def test_save_and_retrieve_message():
     session_id = "user_test_123"

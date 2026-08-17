@@ -560,18 +560,16 @@ export function ScheduleTab({
 
                       {/* Right: Countdown, Status Badge, Toolbar */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
-                          <span style={{ fontSize: '1.1rem', fontWeight: 700, color: isPaused ? '#eab308' : (timer.type === 'cron' && timer.time_left <= 0 && timer.status === 'running' ? '#c084fc' : 'var(--accent-cyan)'), fontFamily: 'var(--font-mono)', textShadow: '0 0 8px rgba(0, 240, 255, 0.3)' }}>
-                            {timer.status === 'paused'
-                              ? formatTimeLeft(timer.time_left)
-                              : timer.status === 'running'
-                                ? (timer.type === 'cron' && timer.time_left <= 0 ? '--:--' : formatTimeLeft(timer.time_left))
-                                : '00:00'}
-                          </span>
-                          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
-                            {timer.status === 'paused' ? 'paused' : (timer.type === 'cron' && timer.time_left <= 0 && timer.status === 'running' ? 'sync' : (timer.type === 'recurring' || timer.type === 'cron' ? 'next' : 'left'))}
-                          </span>
-                        </div>
+                        {timer.type !== 'cron' && !timer.cron_expr && (
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: isPaused ? '#eab308' : 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', textShadow: '0 0 8px rgba(0, 240, 255, 0.3)' }}>
+                              {timer.status === 'paused' || timer.status === 'running' ? formatTimeLeft(timer.time_left) : '00:00'}
+                            </span>
+                            <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
+                              {timer.status === 'paused' ? 'paused' : (timer.type === 'recurring' ? 'next' : 'left')}
+                            </span>
+                          </div>
+                        )}
 
                         <span style={{
                           ...styles.timerStatusBadge,
@@ -725,7 +723,7 @@ export function ScheduleTab({
                 <div style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block' }}>SCHEDULE PARAMETER</span>
                   <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 600 }}>
-                    {infoTimer.type === 'recurring' ? `Every ${infoTimer.interval_hours} hrs` : (infoTimer.type === 'alarm' ? infoTimer.target_time : `${infoTimer.duration || 0}s`)}
+                    {infoTimer.type === 'cron' ? `Cron (${infoTimer.cron_expr})` : (infoTimer.type === 'recurring' ? `Every ${infoTimer.interval_hours} hrs` : (infoTimer.type === 'alarm' ? infoTimer.target_time : `${infoTimer.duration || 0}s`))}
                   </span>
                 </div>
               </div>

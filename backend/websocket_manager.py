@@ -19,12 +19,12 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.add(websocket)
-        logger.info(f"New dashboard connected. Total active connections: {len(self.active_connections)}")
+        logger.debug(f"New dashboard connected. Total active connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-            logger.info(f"Dashboard disconnected. Total active connections: {len(self.active_connections)}")
+            logger.debug(f"Dashboard disconnected. Total active connections: {len(self.active_connections)}")
 
     async def broadcast(self, message: Dict[str, Any]):
         """Broadcasts a JSON message to all active WebSocket clients (the frontend)."""

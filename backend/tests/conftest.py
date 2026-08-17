@@ -13,8 +13,22 @@ import backend.database as db_mod
 db_mod.DB_DIR = _temp_db_dir
 db_mod.DB_PATH = _temp_db_path
 db_mod._backend = db_mod.SQLiteBackend()
-db_mod.init_db()
-
+@pytest.fixture(scope="function", autouse=True)
+def clean_test_database():
+    import backend.database as db_mod
+    db_mod.init_db()
+    with db_mod._get_backend().connect() as conn:
+        cur = conn.cursor()
+        for table in ["trade_traces", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents"]:
+            try:
+                cur.execute(f"DELETE FROM {table}")
+            except Exception:
+                pass
+        # Re-insert default settings
+        try:
+            cur.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'en') ON CONFLICT(key) DO NOTHING")
+        except Exception:
+            pass
 @pytest.fixture(scope="session", autouse=True)
 def isolate_test_database():
     yield

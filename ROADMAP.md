@@ -10,7 +10,7 @@ The project has successfully completed the core system loop, vector memory RAG p
 
 ```mermaid
 graph TD
-    Stage1["Stage 1: Heart & Voice (LLM, Telegram, Web UI)"] --> Stage2["Stage 2: Memory Mark I (SQLite, Qdrant RAG)"]
+    Stage1["Stage 1: Heart & Voice (LLM, Telegram, Web UI)"] --> Stage2["Stage 2: Memory Mark I (PostgreSQL, Qdrant RAG)"]
     Stage2 --> Stage3["Stage 3: Tools & Actions (Function Calling, Scheduler)"]
     Stage3 --> Stage4["Stage 4: Agentic Orchestration (DAG Planner, Sub-agents)"]
     Stage4 --> Stage5["Stage 5: Voice & Speech (Whisper STT, TTS)"]
@@ -47,13 +47,13 @@ graph TD
    * Local LLM integration (`ollama/llama3` by default) with standard OpenAI-compatible endpoints.
    * Async FastAPI backend and Telegram bot handlers.
    * Web Dashboard UI (React + Vite + Vanilla CSS) on port `9119`: Chat, prompt/model settings, decision logs telemetry.
-2. **Stage 2: Memory Mark I (SQLite + Qdrant RAG)**
-   * SQLite database for message history and dynamic agent configurations.
+2. **Stage 2: Memory Mark I (PostgreSQL + Qdrant RAG)**
+   * PostgreSQL database for message history and dynamic agent configurations.
    * Qdrant vector database for document storage, splitting, indexing, and semantic lookup.
 3. **Stage 3: Tools & Actions (Function Calling & Automation Scheduler)**
    * Function calling parsing loop (API Tools).
    * Local command execution (weather, RSS parsing, system metrics).
-   * Persistent automation scheduler using `APScheduler` + `SQLiteJobStore` (`apscheduler_jobs` table in `hermes.db`), preserving recurring reminders, alarms, and timers across container restarts. Authenticated dashboard polling & dispatch via `ScheduleTab.tsx`.
+   * Persistent automation scheduler using `APScheduler` + `PostgreSQLJobStore` (`apscheduler_jobs` table in `hermes.db`), preserving recurring reminders, alarms, and timers across container restarts. Authenticated dashboard polling & dispatch via `ScheduleTab.tsx`.
 4. **Stage 4: Agentic Orchestration**
    * Migrated to hierarchical task planning using a Directed Acyclic Graph (DAG) model.
    * Parent orchestrators dynamically coordinate execution and delegate steps to sub-agents.
@@ -74,7 +74,7 @@ graph TD
    * Automated distillation of successful multi-step execution traces into reusable Markdown SKILL files for continuous self-learning.
 10. **Stage 10: Pluggable Memory Architecture & Enterprise Database Layer**
     * GraphRAG support (`backend/graphrag.py`) for knowledge graph indexing and entity extraction.
-    * Dual backend adapter (`backend/database.py`) supporting SQLite WAL mode and enterprise PostgreSQL.
+    * Dual backend adapter (`backend/database.py`) supporting enterprise PostgreSQL.
 11. **Stage 11: Developer SDK & Fine-Tuning Exporters (`hermes_sdk`)**
     * Multi-format fine-tuning dataset exporters (ShareGPT, OpenAI, Alpaca formats) via `/api/exporters`.
     * Programmatic Python package (`hermes_sdk`) for embedding and executing Hermes agent networks inside external python applications.
@@ -138,7 +138,7 @@ graph TD
 3. **Sub-agents (`Sub-agents`)**: Specialized executors running a dedicated system prompt. They execute tasks using configured skills.
 4. **Skills (`Skills`)**: Static sets of API functions that can be mapped to sub-agents or sub-orchestrators.
 
-### 2. Database Schema (SQLite)
+### 2. Database Schema (PostgreSQL)
 The node hierarchy, properties, and canvas coordinates are defined in the `subagents` table of `hermes.db`:
 
 ```sql
@@ -246,7 +246,7 @@ Due to its hierarchical DAG design, Hermes coordinates a digital workforce rathe
 ### 1. Monetization Models (Open-Core Strategy)
 
 * **Hermes Cloud (SaaS)**:
-  * Managed cloud hosting for builders and startups. Removes the need to set up SQLite and Qdrant locally.
+  * Managed cloud hosting for builders and startups. Removes the need to set up PostgreSQL and Qdrant locally.
   * Subscription model ($29 – $99/month) + metered LLM token consumption.
 * **Skills Marketplace (MCP & Plugin Ecosystem)**:
   * The core framework and all connector interfaces remain 100% open-source and extensible by the community.

@@ -523,7 +523,7 @@ export function getAgentIcon(agent: { id: string; name?: string; agent_type?: st
   if (idLower.includes('quant') || idLower.includes('chart') || nameLower.includes('quant')) return '📊';
   if (idLower.includes('macro') || idLower.includes('news') || nameLower.includes('news')) return '🌐';
   if (idLower.includes('risk') || idLower.includes('guard')) return '🛡️';
-  if (idLower.includes('trader') || idLower.includes('crypto') || idLower.includes('bcm')) return '📈';
+  if (idLower.includes('trader') || idLower.includes('crypto')) return '📈';
   if (idLower.includes('code') || idLower.includes('python')) return '💻';
   if (idLower.includes('research') || idLower.includes('search')) return '🔍';
   if (idLower.includes('football') || idLower.includes('soccer')) return '⚽';

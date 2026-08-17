@@ -1,5 +1,5 @@
 """
-backend/scheduler.py — APScheduler 3.x + SQLiteJobStore
+backend/scheduler.py — APScheduler 3.x + PostgreSQLJobStore
 
 All scheduled jobs are persisted automatically to backend/data/hermes.db
 and restored on every process startup — no manual save/restore needed.
@@ -29,18 +29,22 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from backend.database import DB_PATH
 
 logger = logging.getLogger("hermes.scheduler")
 
+from backend.database import DB_PATH
+
 # ─── Scheduler singleton ────────────────────────────────────────────────────────
-if "PYTEST_CURRENT_TEST" in os.environ:
+if "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("DATABASE_URL") == "":
     _DB_URL = "sqlite:///:memory:"
 else:
     _DB_URL = os.environ.get(
         "SCHEDULER_DB_URL",
-        f"sqlite:///{DB_PATH}",
+        os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
     )
+
+if _DB_URL.startswith("postgres://"):
+    _DB_URL = _DB_URL.replace("postgres://", "postgresql://", 1)
 
 _jobstore = SQLAlchemyJobStore(url=_DB_URL, tablename="apscheduler_jobs")
 scheduler = AsyncIOScheduler(
@@ -255,24 +259,70 @@ async def _job_cron(
 
 
 async def _job_bcm_session_scheduler(**kwargs):
-    logger.debug("Running BCM session scheduler check...")
+    job_id = kwargs.get("job_id", "bcm_session")
+    label = kwargs.get("label", "BCM Session")
+    session_name = kwargs.get("session_name", "Market")
+    
+    _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
+    count = _fire_counts[job_id]
+    logger.info(f"🎯 BCM Session triggered #{count}: '{label}' ({session_name})")
+    
+    from backend.activity_logger import log_activity
+    from backend.websocket_manager import manager
+    from backend.database import save_message
+    
+    task_session_id = f"task_{job_id}"
+    _register_scheduled_session(job_id, label, "cron", "system", f"Run BCM Session Scheduler for {session_name}", status="running", extra={"fire_count": count})
+    log_activity("active", "BCM Scheduler", f"🎯 BCM Session analysis started for {session_name} (#{count})")
+    
     import sys
     import subprocess
     import asyncio
-    
-    # Need to run with the proper environment if using poetry or direct script.
-    # In docker, it's /app/backend/bcm/session_scheduler.py, but locally it might be different.
     import os
-    # Find the backend/bcm directory relative to this script
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     scheduler_script = os.path.join(script_dir, "bcm", "session_scheduler.py")
     
+    cmd = [sys.executable, scheduler_script]
+    if session_name:
+        cmd.extend(["--session", session_name])
+        
     try:
-        await asyncio.to_thread(
+        proc = await asyncio.to_thread(
             subprocess.run,
-            [sys.executable, scheduler_script],
-            capture_output=True
+            cmd,
+            capture_output=True,
+            text=True
         )
+        output_str = proc.stdout if proc.stdout else (proc.stderr or "Completed without output.")
+        logger.info(f"BCM Session {session_name} output:\n{output_str}")
+        
+        summary_msg = f"📊 **BCM Session ({session_name}) Run #{count}**\n\n```\n{output_str[-1500:]}\n```"
+        save_message(task_session_id, "assistant", summary_msg)
+        
+        try:
+            await _send_telegram_alert(
+                "dashboard",
+                f"📊 **BCM SESSION ({session_name.upper()})** (#{count})\n\n{output_str[-800:]}"
+            )
+        except Exception:
+            pass
+            
+        await manager.broadcast({
+            "type": "chat_message",
+            "role": "assistant",
+            "content": summary_msg,
+            "chat_id": task_session_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        await _broadcast_ws({
+            "type": "reminder_fired",
+            "reminder": {
+                "id": job_id, "label": label, "cron_expr": kwargs.get("cron_expr"),
+                "fire_count": count, "status": "running", "type": "cron",
+            },
+            "session_id": task_session_id,
+        })
     except Exception as e:
         logger.error(f"Error in BCM session scheduler task: {e}")
 
@@ -524,28 +574,34 @@ def update_timer(
     cron_expr: Optional[str] = None,
 ) -> bool:
     job = scheduler.get_job(item_id)
-    if job is None:
+    if job is None and item_id not in _timer_meta:
         return False
 
-    chat_id = job.kwargs.get("chat_id", "dashboard")
-    created_at = _timer_meta.get(item_id, {}).get("created_at") or job.kwargs.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+    chat_id = (job.kwargs.get("chat_id", "dashboard") if job else "dashboard")
+    created_at = _timer_meta.get(item_id, {}).get("created_at") or (job.kwargs.get("created_at") if job else None) or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
 
-    job.remove()
-    _timer_meta.pop(item_id, None)
+    # Step 1: Prepare and validate new trigger BEFORE modifying or removing the existing job
+    trigger = None
+    target_func = _job_cron if task_type == "cron" else (_job_recurring if task_type == "recurring" else (_job_alarm if task_type == "alarm" else _job_one_shot))
+    target_kwargs = {
+        "job_id": item_id,
+        "label": label,
+        "chat_id": chat_id,
+        "agent_id": agent_id,
+        "prompt": prompt,
+        "created_at": created_at,
+        "task_type": task_type,
+    }
+    meta_update = {"type": task_type, "created_at": created_at, "status": "running", "agent_id": agent_id, "prompt": prompt, "label": label}
 
     if task_type == "one-shot":
         if duration_seconds is None:
             raise ValueError("duration_seconds is required for one-shot timer")
         run_at = datetime.now(scheduler.timezone) + timedelta(seconds=duration_seconds)
-        scheduler.add_job(
-            _job_one_shot,
-            trigger=DateTrigger(run_date=run_at),
-            kwargs={"job_id": item_id, "label": label, "duration": duration_seconds,
-                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
-                    "created_at": created_at, "task_type": "one-shot"},
-            id=item_id, name=label, replace_existing=True,
-        )
-        _timer_meta[item_id] = {"type": "one-shot", "created_at": created_at, "duration": duration_seconds, "status": "running"}
+        trigger = DateTrigger(run_date=run_at)
+        target_kwargs["duration"] = duration_seconds
+        meta_update["duration"] = duration_seconds
+
     elif task_type == "alarm":
         if not time_str:
             raise ValueError("time_str is required for alarm timer")
@@ -574,46 +630,66 @@ def update_timer(
             raise ValueError(f"Could not parse time format: '{time_str}'. Use HH:MM or YYYY-MM-DD HH:MM.")
 
         target_time_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
-        scheduler.add_job(
-            _job_alarm,
-            trigger=DateTrigger(run_date=target_dt),
-            kwargs={"job_id": item_id, "label": label, "chat_id": chat_id,
-                    "target_time_str": target_time_str, "agent_id": agent_id, "prompt": prompt,
-                    "created_at": created_at, "task_type": "alarm"},
-            id=item_id, name=label, replace_existing=True,
-        )
-        _timer_meta[item_id] = {"type": "alarm", "created_at": created_at, "target_time": target_time_str, "status": "running"}
+        trigger = DateTrigger(run_date=target_dt)
+        target_kwargs["target_time_str"] = target_time_str
+        meta_update["target_time"] = target_time_str
+
     elif task_type == "recurring":
         if interval_hours is None:
             raise ValueError("interval_hours is required for recurring timer")
-        scheduler.add_job(
-            _job_recurring,
-            trigger=IntervalTrigger(hours=interval_hours),
-            kwargs={"job_id": item_id, "label": label, "interval_hours": interval_hours,
-                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
-                    "created_at": created_at, "task_type": "recurring"},
-            id=item_id, name=label, replace_existing=True,
-        )
-        _timer_meta[item_id] = {"type": "recurring", "created_at": created_at, "interval_hours": interval_hours, "status": "running"}
+        trigger = IntervalTrigger(hours=interval_hours)
+        target_kwargs["interval_hours"] = interval_hours
+        meta_update["interval_hours"] = interval_hours
+
     elif task_type == "cron":
         if not cron_expr:
             raise ValueError("cron_expr is required for cron task")
         cron_expr_clean = cron_expr.strip()
+        
+        # Support optional trailing timezone (e.g. "0 9 * * mon-fri Europe/London")
+        parts = cron_expr_clean.split()
+        tz_override = scheduler.timezone
+        raw_cron = cron_expr_clean
+        if len(parts) == 6:
+            raw_cron = " ".join(parts[:5])
+            try:
+                import pytz
+                tz_override = pytz.timezone(parts[5])
+            except Exception:
+                tz_override = scheduler.timezone
+
         try:
-            trigger = CronTrigger.from_crontab(cron_expr_clean, timezone=scheduler.timezone)
+            trigger = CronTrigger.from_crontab(raw_cron, timezone=tz_override)
         except Exception as e:
             raise ValueError(f"Invalid cron expression '{cron_expr_clean}': {e}")
-        scheduler.add_job(
-            _job_cron,
-            trigger=trigger,
-            kwargs={"job_id": item_id, "label": label, "cron_expr": cron_expr_clean,
-                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
-                    "created_at": created_at, "task_type": "cron"},
-            id=item_id, name=label, replace_existing=True,
-        )
-        _timer_meta[item_id] = {"type": "cron", "created_at": created_at, "cron_expr": cron_expr_clean, "status": "running"}
+
+        # If it's a BCM session and no custom LLM agent is specified, keep the dedicated function
+        if item_id.startswith("bcm_session_") and (not agent_id or agent_id == "system"):
+            target_func = _job_bcm_session_scheduler
+            session_name = label.replace("BCM Session (", "").replace(")", "").strip()
+            target_kwargs["session_name"] = session_name
+
+        target_kwargs["cron_expr"] = cron_expr_clean
+        meta_update["cron_expr"] = cron_expr_clean
     else:
         raise ValueError(f"Invalid task type: '{task_type}'")
+
+    # Step 2: Now safely replace the job in APScheduler
+    if job is not None:
+        try:
+            job.remove()
+        except Exception:
+            pass
+
+    scheduler.add_job(
+        target_func,
+        trigger=trigger,
+        kwargs=target_kwargs,
+        id=item_id,
+        name=label,
+        replace_existing=True,
+    )
+    _timer_meta[item_id] = meta_update
 
     extra = {}
     if duration_seconds is not None:
@@ -629,7 +705,7 @@ def update_timer(
         job_id=item_id,
         label=label,
         task_type=task_type,
-        agent_id=agent_id,
+        agent_id=agent_id or "system",
         prompt=prompt,
         status=_timer_meta.get(item_id, {}).get("status", "running"),
         extra=extra,
@@ -1102,7 +1178,16 @@ async def _trigger_agent_task(
                         if norm_sym in TICKER_MAP and norm_sym not in requested_syms:
                             requested_syms.append(norm_sym)
 
-                symbols_to_run = requested_syms if requested_syms else list(TICKER_MAP.keys())
+                if requested_syms:
+                    symbols_to_run = requested_syms
+                else:
+                    # Deduplicate based on analysis ticker (e.g., avoid running both ETH and ETHUSD)
+                    seen_analysis = set()
+                    symbols_to_run = []
+                    for k, v in TICKER_MAP.items():
+                        if v["analysis"] not in seen_analysis:
+                            seen_analysis.add(v["analysis"])
+                            symbols_to_run.append(k)
                 reports = []
                 for target_sym in symbols_to_run:
                     await manager.broadcast({
@@ -1268,7 +1353,7 @@ def start_rss_poller_loop(interval_seconds: int = 300) -> Optional[asyncio.Task]
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def restore_state() -> None:
-    """Populate _timer_meta and restore scheduled jobs from SQLite session_metadata DB table."""
+    """Populate _timer_meta and restore scheduled jobs from PostgreSQL session_metadata DB table."""
     try:
         from backend.database import _execute
         rows = _execute("SELECT session_id, title, agent_id, job_id, schedule_type, schedule_info FROM session_metadata WHERE is_scheduled = 1")
@@ -1391,29 +1476,53 @@ async def _start_restored_tasks() -> None:
 
 
 def start_bcm_session_scheduler_loop():
-    """Register the BCM session scheduler system job."""
-    job_id = "bcm_session_scheduler"
-    label = "BCM Session Scheduler (System)"
-    created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
-    cron_expr = "* * * * mon-fri"
+    """Register the BCM session scheduler system jobs."""
+    try:
+        scheduler.remove_job("bcm_session_scheduler")
+    except Exception:
+        pass
+
+    import pytz
+    try:
+        from backend.bcm.session_scheduler import SESSIONS
+    except ImportError:
+        logger.info("BCM module not found. Skipping BCM Session Scheduler registration.")
+        return
     
-    _timer_meta[job_id] = {
-        "type": "cron",
-        "created_at": created_at,
-        "cron_expr": cron_expr,
-        "status": "running",
-        "label": label,
-        "agent_id": "system",
-        "prompt": "Run BCM Session Scheduler",
-    }
-    
-    scheduler.add_job(
-        _job_bcm_session_scheduler,
-        trigger=CronTrigger.from_crontab(cron_expr, timezone=scheduler.timezone),
-        kwargs={
-            "job_id": job_id, "label": label, "cron_expr": cron_expr,
-            "task_type": "cron"
-        },
-        id=job_id, name=label, replace_existing=True,
-    )
-    logger.info("Started BCM Session Scheduler loop in APScheduler (runs every minute).")
+    for session_name, cfg in SESSIONS.items():
+        job_id = f"bcm_session_{session_name.lower().replace('/', '_').replace(' ', '_')}"
+        label = f"BCM Session ({session_name})"
+        created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Fire 1 hour after open (e.g. 8 + 1 = 9)
+        target_hour = cfg["open"] + 1
+        cron_expr = f"0 {target_hour} * * mon-fri"
+        tz_str = cfg["tz"]
+        
+        _timer_meta[job_id] = {
+            "type": "cron",
+            "created_at": created_at,
+            "cron_expr": f"{cron_expr} {tz_str}",
+            "status": "running",
+            "label": label,
+            "agent_id": "system",
+            "prompt": f"Run BCM Session Scheduler for {session_name}",
+        }
+        
+        job_kwargs = {
+            "job_id": job_id, "label": label, "cron_expr": f"{cron_expr} {tz_str}",
+            "task_type": "cron", "session_name": session_name
+        }
+        
+        if scheduler.get_job(job_id):
+            # The job exists (e.g. restored from DB). Update its func and kwargs to ensure it runs the auto-trader,
+            # but leave its trigger/next_run_time intact to preserve misfire history.
+            scheduler.modify_job(job_id, func=_job_bcm_session_scheduler, kwargs=job_kwargs)
+        else:
+            scheduler.add_job(
+                _job_bcm_session_scheduler,
+                trigger=CronTrigger.from_crontab(cron_expr, timezone=pytz.timezone(tz_str)),
+                kwargs=job_kwargs,
+                id=job_id, name=label, replace_existing=False,
+            )
+    logger.info("Started BCM Session Scheduler loops in APScheduler for all sessions.")

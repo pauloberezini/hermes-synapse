@@ -12,26 +12,14 @@ active_sessions.add("test-token")
 
 @pytest.fixture(autouse=True)
 def setup_test_db(tmp_path):
-    original_db_path = database.DB_PATH
-    original_db_dir = database.DB_DIR
     
-    test_db = tmp_path / "test_hermes_subagents.db"
-    database.DB_PATH = str(test_db)
-    database.DB_DIR = str(tmp_path)
     
     database.init_db()
     
-    # Clear pre-seeded subagents for testing CRUD from a clean state
-    import sqlite3
-    conn = sqlite3.connect(database.DB_PATH)
-    conn.execute("DELETE FROM subagents")
-    conn.commit()
-    conn.close()
+    database._execute("DELETE FROM subagents")
     
     yield
     
-    database.DB_PATH = original_db_path
-    database.DB_DIR = original_db_dir
 
 
 def test_subagent_db_crud():

@@ -104,7 +104,7 @@ class QdrantMemoryEngine(MemoryEngine):
 # 2. SQLite/Postgres GraphRAG Memory Engine
 # ---------------------------------------------------------------------------
 
-class SQLiteGraphMemoryEngine(MemoryEngine):
+class PostgresGraphMemoryEngine(MemoryEngine):
     """Local GraphRAG implementation. Uses Qdrant flat vector indexing combined
 
     with entity-relationship extraction stored in the relational database.
@@ -300,8 +300,8 @@ def get_memory_engine(engine_override: Optional[str] = None) -> MemoryEngine:
         flat_engine = QdrantMemoryEngine()
 
     if engine_name in ("graph", "graphrag"):
-        logger.info("Memory engine: using SQLiteGraphMemoryEngine (Local GraphRAG)")
-        return SQLiteGraphMemoryEngine(base_engine=QdrantMemoryEngine())
+        logger.info("Memory engine: using PostgresGraphMemoryEngine (Local GraphRAG)")
+        return PostgresGraphMemoryEngine(base_engine=QdrantMemoryEngine())
     
     logger.info(f"Memory engine: using {flat_engine.__class__.__name__}")
     return flat_engine

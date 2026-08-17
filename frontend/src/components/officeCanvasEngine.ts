@@ -30,7 +30,7 @@ const SPECIALIST_RULES: Array<[RegExp, string]> = [
   [/auth|security|token|secret|credential/i, 'Security'],
   [/deploy|docker|\bci\b|pipeline|container/i, 'DevOps'],
   [/perf|latency|cache|optimi|profil/i, 'PerfEng'],
-  [/\bsql\b|database|sqlite|qdrant|\bdb\b/i, 'DBA'],
+  [/\bsql\b|database|postgres|qdrant|\bdb\b/i, 'DBA'],
   [/search|research|analy|index|scrape/i, 'Researcher'],
   [/\bllm\b|prompt|embedding|inference|ollama/i, 'AI Eng'],
   [/\bapi\b|rest|webhook|endpoint|request/i, 'Fullstack'],

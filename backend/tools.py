@@ -1358,7 +1358,7 @@ def save_subagent_memory(key: str, value: str, chat_id: Optional[str] = None) ->
     
     clean_subagent_id = chat_id.strip().lower()
     
-    # 1. Save in SQLite
+    # 1. Save in DB
     db_save_subagent_memory(clean_subagent_id, key, value)
     
     # 2. Index in Qdrant (RAG)

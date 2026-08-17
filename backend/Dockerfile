@@ -45,6 +45,7 @@ RUN pip install --no-cache-dir \
     service_identity>=24.0.0 \
     pyopenssl>=24.0.0 \
     pytest>=7.0.0 \
+    pytest-asyncio \
     yfinance>=0.2.54 \
     protobuf \
     grpcio-tools \

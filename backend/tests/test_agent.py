@@ -6,20 +6,13 @@ from backend import database
 @pytest.fixture(autouse=True)
 def setup_test_db(tmp_path):
     # Set up a temporary database file for the agent tests
-    original_db_path = database.DB_PATH
-    original_db_dir = database.DB_DIR
     
-    test_db = tmp_path / "test_hermes_agent.db"
-    database.DB_PATH = str(test_db)
-    database.DB_DIR = str(tmp_path)
     
     database.init_db()
     
     yield
     
     # Restore original paths
-    database.DB_PATH = original_db_path
-    database.DB_DIR = original_db_dir
 
 @pytest.fixture
 def agent():

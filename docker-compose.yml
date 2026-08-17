@@ -19,6 +19,8 @@ services:
       - OBSIDIAN_HOST=host.docker.internal
       - GRAPHRAG_API_URL=${GRAPHRAG_API_URL:-http://host.docker.internal:8088/api/v1/analytics/ask}
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/hermes}
+      - HF_TOKEN=${HF_TOKEN}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

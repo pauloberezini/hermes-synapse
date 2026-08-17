@@ -17,14 +17,11 @@ from backend.auth import active_sessions
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path):
     """Redirect DB to a temp file so tests don't touch production data."""
-    orig_path, orig_dir = database.DB_PATH, database.DB_DIR
-    database.DB_PATH = str(tmp_path / "test.db")
-    database.DB_DIR = str(tmp_path)
     database.init_db()
+    database._execute("DELETE FROM app_settings")
+    database._execute("INSERT INTO app_settings (key, value) VALUES ('language', 'en')")
     yield
-    database.DB_PATH = orig_path
-    database.DB_DIR = orig_dir
-    database.init_db()
+    database._execute("DELETE FROM app_settings")
 
 
 @pytest.fixture()

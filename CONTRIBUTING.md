@@ -98,7 +98,7 @@ backend/
 ├── main.py           # FastAPI routes (REST + WebSocket)
 ├── agent.py          # Core LLM loop (tool calling, streaming)
 ├── orchestrator.py   # DAG planner (multi-agent coordination)
-├── database.py       # DB abstraction (SQLite + PostgreSQL)
+├── database.py       # DB connection (PostgreSQL)
 ├── rag.py            # Vector memory (Qdrant + fastembed)
 ├── tools.py          # All skill implementations + schemas
 ├── subagents.py      # Specialized agent runners

@@ -62,11 +62,9 @@ logger = logging.getLogger("hermes.main")
 # Silence noisy third-party HTTP pollers (Telegram bot getUpdates, etc.)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-# Silence uvicorn access logs to remove polling noise (GET /api/status, GET /api/timers, etc.)
-uvicorn_access = logging.getLogger("uvicorn.access")
-uvicorn_access.setLevel(logging.WARNING)
-uvicorn_access.disabled = True
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("websockets.server").setLevel(logging.WARNING)
+logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
 
 class EndpointLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -75,18 +73,34 @@ class EndpointLogFilter(logging.Filter):
         except Exception:
             msg = str(record.msg)
         str_args = str(record.args) if record.args else ""
-        full_text = f"{msg} {str_args}"
+        full_text = f"{msg} {str_args}".lower()
+        if "websocket" in full_text and ("accepted" in full_text or "closed" in full_text or "connected" in full_text):
+            return False
+        if "connection open" in full_text or "connection closed" in full_text:
+            return False
         if "/api/" in full_text and ("status" in full_text or "timers" in full_text or "200" in full_text):
             return False
         return True
 
-uvicorn_access.addFilter(EndpointLogFilter())
+endpoint_filter = EndpointLogFilter()
+for uvi_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    uvi_logger = logging.getLogger(uvi_name)
+    uvi_logger.addFilter(endpoint_filter)
+
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.setLevel(logging.WARNING)
+uvicorn_access.disabled = True
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure uvicorn access logging remains disabled after server startup
+    # Ensure uvicorn access & websocket handshake logging remains clean after server startup
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("websockets.server").setLevel(logging.WARNING)
+    logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
+    for uvi_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(uvi_name).addFilter(endpoint_filter)
     
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
@@ -152,7 +166,7 @@ async def lifespan(app: FastAPI):
             status="online",
             reporting_role="Worker"
         )
-        logger.info(f"Starting Mesh heartbeat for {node_id}")
+        logger.debug(f"Starting Mesh heartbeat for {node_id}")
         while True:
             try:
                 router.register_peer(manifest)

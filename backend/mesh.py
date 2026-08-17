@@ -3,7 +3,7 @@ backend.mesh — Stage 17: Production Multi-Cluster Agent Mesh & Peer-to-Peer In
 
 Enables distributed Hermes instances and peer agents to discover each other,
 exchange capabilities, and delegate sub-workflows over an open peer-to-peer JSON RPC protocol.
-Uses PostgreSQL/SQLite database for stateless distributed node discovery across Kubernetes/Swarm.
+Uses PostgreSQL database for stateless distributed node discovery across Kubernetes/Swarm.
 """
 
 import time
@@ -72,7 +72,7 @@ class AgentMeshRouter:
                 peer.last_seen
             )
         )
-        logger.info(f"Registered distributed mesh peer node: {peer.node_id} ({peer.endpoint_url})")
+        logger.debug(f"Registered distributed mesh peer node: {peer.node_id} ({peer.endpoint_url})")
         return peer
 
     def list_peers(self, active_only: bool = True) -> List[MeshPeerManifest]:
