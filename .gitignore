@@ -108,3 +108,4 @@ patch_script.py
 test_script.py
 *patch*.py
 *test_script*.py
+backend/bcm/
