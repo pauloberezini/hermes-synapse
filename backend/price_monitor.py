@@ -180,12 +180,17 @@ class PriceMonitor:
 
     async def run_loop(self):
         logger.info("Price alert monitoring loop started.")
-        while True:
-            try:
-                await self.check_alerts_once()
-            except Exception as e:
-                logger.error(f"Error in price alert check loop: {e}")
-            await asyncio.sleep(60) # Tick every 60 seconds
+        try:
+            while True:
+                try:
+                    await self.check_alerts_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in price alert check loop: {e}")
+                await asyncio.sleep(60) # Tick every 60 seconds
+        except asyncio.CancelledError:
+            logger.info("Price alert monitoring loop cancelled.")
 
     def start(self):
         if not self.monitor_task or self.monitor_task.done():

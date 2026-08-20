@@ -324,7 +324,7 @@ export function ScheduleTab({
                   value={targetAgent}
                   onChange={(agentId) => setTargetAgent(agentId)}
                   agents={[
-                    { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                    { id: 'jarvis', name: 'SYNAPSE (Main)', agent_type: 'orchestrator' },
                     ...safeSubagents
                   ]}
                   variant="full"
@@ -845,7 +845,7 @@ export function ScheduleTab({
                     value={editTargetAgent}
                     onChange={(agentId) => setEditTargetAgent(agentId)}
                     agents={[
-                      { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                      { id: 'jarvis', name: 'SYNAPSE (Main)', agent_type: 'orchestrator' },
                       ...safeSubagents
                     ]}
                     variant="full"

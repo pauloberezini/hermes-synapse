@@ -107,7 +107,7 @@ export function NetworkTab({
 
   // Extract list of Orchestrators across the system
   const orchestrators = [
-    { id: 'jarvis', name: 'Master Jarvis' },
+    { id: 'jarvis', name: 'SYNAPSE' },
     ...subagents
       .filter(n => n.agent_type === 'orchestrator' || n.id.includes('orchestrator') || n.id.includes('trader'))
       .map(n => ({ id: n.id, name: n.name }))
@@ -115,9 +115,9 @@ export function NetworkTab({
 
   const activeOrchestratorNode = subagents.find(n => n.id === activeOrchestratorId) || {
     id: 'jarvis',
-    name: 'Master Jarvis',
+    name: 'SYNAPSE',
     model: 'google/gemini-2.5-flash',
-    system_prompt: 'You are Jarvis, the Master Orchestrator.'
+    system_prompt: 'You are SYNAPSE, the Master Orchestrator.'
   };
 
   // Filter nodes visible on current canvas:
@@ -271,7 +271,7 @@ export function NetworkTab({
   // Delete node
   const handleDeleteNode = async (nodeId: string) => {
     if (nodeId === 'jarvis') {
-      alert('Cannot delete Master Jarvis Orchestrator!');
+      alert('Cannot delete SYNAPSE Master Orchestrator!');
       return;
     }
     if (rssNodes.some(n => n.id === nodeId)) {

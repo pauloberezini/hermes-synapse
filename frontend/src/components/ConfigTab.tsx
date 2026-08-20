@@ -186,7 +186,7 @@ export function ConfigTab({
         <div style={styles.formGroup}>
           <label style={styles.formLabel}>
             <Shield size={16} style={{ color: '#00f0ff' }} />
-            <span>Assistant Personality (System Prompt)</span>
+            <span>SYNAPSE Personality (System Prompt)</span>
           </label>
           <textarea 
             value={editedPrompt}
@@ -195,7 +195,7 @@ export function ConfigTab({
             className="form-input"
             rows={10}
           />
-          <span style={styles.formHelp}>Hardcodes the character, tone of communication, response style of Jarvis, and user addressing rules.</span>
+          <span style={styles.formHelp}>Hardcodes the character, tone of communication, and response style of SYNAPSE root orchestrator.</span>
         </div>
 
         <button type="submit" className="btn-primary" disabled={isSavingConfig} style={{ alignSelf: 'flex-start' }}>

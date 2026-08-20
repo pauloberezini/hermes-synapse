@@ -31,7 +31,7 @@ interface AgentOption {
 }
 
 const DEFAULT_AGENTS: AgentOption[] = [
-  { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'agent' },
+  { id: 'jarvis', name: 'SYNAPSE (Main)', agent_type: 'agent' },
 
   { id: 'quant_analyst', name: 'Quant Analyst', agent_type: 'agent' },
   { id: 'macro_analyst', name: 'Macro Analyst', agent_type: 'agent' },

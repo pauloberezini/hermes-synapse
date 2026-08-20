@@ -254,7 +254,7 @@ export function ToolsTab({
                   <span style={styles.toolRegistryTag}>utility</span>
                 </div>
                 <p style={styles.toolRegistryDesc}>
-                  Requests current meteorological conditions in the specified city. Accompanied by Jarvis's signature weather report.
+                  Requests current meteorological conditions in the specified city. Accompanied by SYNAPSE's signature weather report.
                 </p>
               </div>
             </div>

@@ -42,7 +42,10 @@ def log_activity(activity_type: str, source: str, message: str, token_cost: floa
     except Exception as db_err:
         logger.error(f"Failed to save activity log to database: {db_err}")
         
-    logger.info(f"[{activity_type.upper()}] ({source}) {message} | Cost: ${token_cost:.6f}")
+    if token_cost > 0:
+        logger.info(f"[{activity_type.upper()}] ({source}) {message} | Cost: ${token_cost:.6f}")
+    else:
+        logger.info(f"[{activity_type.upper()}] ({source}) {message}")
     
     # Broadcast to WebSocket manager if loop is active
     try:

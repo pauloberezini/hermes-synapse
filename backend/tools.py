@@ -491,22 +491,52 @@ async def _todoist_post(endpoint: str, token: str, payload: Dict) -> Optional[Di
         logger.warning(f"Todoist POST {endpoint} error: {e}")
         return None
 
-def _run_async(coro):
-    """Run async coro from a sync context safely."""
+def _run_async(coro_or_factory):
+    """Run async coro or coroutine factory from a sync context safely."""
     try:
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        if loop.is_running():
+            loop = None
+
+        if loop and loop.is_running():
             import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result(timeout=15)
-        return loop.run_until_complete(coro)
+            def _runner():
+                coro = coro_or_factory() if callable(coro_or_factory) else coro_or_factory
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(coro)
+                finally:
+                    try:
+                        pending = asyncio.all_tasks(new_loop)
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            new_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                        new_loop.run_until_complete(new_loop.shutdown_asyncgens())
+                    except Exception:
+                        pass
+                    new_loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(_runner).result(timeout=15)
+
+        try:
+            cur_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            cur_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(cur_loop)
+
+        coro = coro_or_factory() if callable(coro_or_factory) else coro_or_factory
+        return cur_loop.run_until_complete(coro)
     except Exception as e:
         logger.error(f"_run_async error: {e}")
+        if hasattr(coro_or_factory, "close"):
+            try:
+                coro_or_factory.close()
+            except Exception:
+                pass
         return None
 
 
@@ -520,7 +550,7 @@ def get_todoist_tasks(filter_str: str = "today | overdue") -> str:
         })
     # Todoist v1 uses query param 'filter' for task filtering
     params = {"filter": filter_str} if filter_str else {}
-    data = _run_async(_todoist_get("tasks", token, params))
+    data = _run_async(lambda: _todoist_get("tasks", token, params))
     if data is None:
         return json.dumps({"error": "Не удалось получить задачи из Todoist"})
     tasks = [
@@ -552,7 +582,7 @@ def add_todoist_task(content: str, due_string: str = "", priority: int = 1) -> s
         payload["due_string"] = due_string
         payload["due_lang"]   = "ru"
 
-    result = _run_async(_todoist_post("tasks", token, payload))
+    result = _run_async(lambda: _todoist_post("tasks", token, payload))
     if result is None:
         return json.dumps({"error": "Не удалось создать задачу в Todoist"})
     return json.dumps({
@@ -587,7 +617,7 @@ def delete_todoist_task(task_id: str) -> str:
             "error": "TODOIST_API_TOKEN не задан в .env",
             "hint":  "Возьмите токен on https://app.todoist.com/app/settings/integrations/developer"
         })
-    success = _run_async(_todoist_delete(f"tasks/{task_id}", token))
+    success = _run_async(lambda: _todoist_delete(f"tasks/{task_id}", token))
     if not success:
         return json.dumps({"error": f"Не удалось удалить задачу с ID {task_id} в Todoist"})
     return json.dumps({

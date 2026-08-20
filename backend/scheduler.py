@@ -35,12 +35,12 @@ logger = logging.getLogger("hermes.scheduler")
 from backend.database import DB_PATH
 
 # ─── Scheduler singleton ────────────────────────────────────────────────────────
-if "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("DATABASE_URL") == "":
+if "PYTEST_CURRENT_TEST" in os.environ or not os.environ.get("DATABASE_URL"):
     _DB_URL = "sqlite:///:memory:"
 else:
     _DB_URL = os.environ.get(
         "SCHEDULER_DB_URL",
-        os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
+        os.environ.get("DATABASE_URL")
     )
 
 if _DB_URL.startswith("postgres://"):
@@ -85,35 +85,41 @@ async def _job_one_shot(
     task_type: Optional[str] = None,
     **kwargs,
 ) -> None:
-    logger.info(f"One-shot timer fired: '{label}' ({duration}s)")
-    from backend.activity_logger import log_activity
-    from backend.websocket_manager import manager
-    from backend.database import save_message
-    task_session_id = f"task_{job_id}"
-    _timer_meta[job_id]["status"] = "completed"
-    _register_scheduled_session(job_id, label, "one-shot", agent_id, prompt, status="completed", extra={"duration": duration})
+    try:
+        logger.info(f"One-shot timer fired: '{label}' ({duration}s)")
+        from backend.activity_logger import log_activity
+        from backend.websocket_manager import manager
+        from backend.database import save_message
+        task_session_id = f"task_{job_id}"
+        if job_id in _timer_meta:
+            _timer_meta[job_id]["status"] = "completed"
+        _register_scheduled_session(job_id, label, "one-shot", agent_id, prompt, status="completed", extra={"duration": duration})
 
-    completion_msg = f"⏰ Timer complete: '{label}' ({duration}s)"
-    is_agent = (agent_id and agent_id != "jarvis") or prompt
-    if is_agent:
-        task_prompt = prompt or f"Execute scheduled task: {label}"
-        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
-    else:
-        log_activity("idle", "Scheduler", f"✅ Timer complete: '{label}'")
-        save_message(task_session_id, "assistant", completion_msg)
-        await _send_telegram_alert(
-            chat_id,
-            f"🏛️ **ATTENTION, SIR**\n\nTimer complete:\n"
-            f"• Event: **{label}**\n• Duration: {duration} sec\n• Status: ✅ Completed",
-        )
-        await manager.broadcast({
-            "type": "chat_message",
-            "role": "assistant",
-            "content": completion_msg,
-            "chat_id": task_session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-    await _broadcast_ws({"type": "timer_completed", "timer": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
+        completion_msg = f"⏰ Timer complete: '{label}' ({duration}s)"
+        is_agent = (agent_id and agent_id != "jarvis") or prompt
+        if is_agent:
+            task_prompt = prompt or f"Execute scheduled task: {label}"
+            asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+        else:
+            log_activity("idle", "Scheduler", f"✅ Timer complete: '{label}'")
+            save_message(task_session_id, "assistant", completion_msg)
+            await _send_telegram_alert(
+                chat_id,
+                f"🏛️ **ATTENTION, SIR**\n\nTimer complete:\n"
+                f"• Event: **{label}**\n• Duration: {duration} sec\n• Status: ✅ Completed",
+            )
+            await manager.broadcast({
+                "type": "chat_message",
+                "role": "assistant",
+                "content": completion_msg,
+                "chat_id": task_session_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+        await _broadcast_ws({"type": "timer_completed", "timer": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
+    except asyncio.CancelledError:
+        logger.info(f"One-shot timer '{label}' ({job_id}) cancelled.")
+    except Exception as e:
+        logger.error(f"Error in one-shot timer '{label}' ({job_id}): {e}")
 
 
 async def _job_alarm(
@@ -128,36 +134,41 @@ async def _job_alarm(
     task_type: Optional[str] = None,
     **kwargs,
 ) -> None:
-    logger.info(f"Alarm fired: '{label}'")
-    from backend.activity_logger import log_activity
-    from backend.websocket_manager import manager
-    from backend.database import save_message
-    task_session_id = f"task_{job_id}"
-    _timer_meta[job_id]["status"] = "completed"
-    _register_scheduled_session(job_id, label, "alarm", agent_id, prompt, status="completed", extra={"target_time": target_time_str})
+    try:
+        logger.info(f"Alarm fired: '{label}'")
+        from backend.activity_logger import log_activity
+        from backend.websocket_manager import manager
+        from backend.database import save_message
+        task_session_id = f"task_{job_id}"
+        if job_id in _timer_meta:
+            _timer_meta[job_id]["status"] = "completed"
+        _register_scheduled_session(job_id, label, "alarm", agent_id, prompt, status="completed", extra={"target_time": target_time_str})
 
-    completion_msg = f"⏰ Alarm fired: '{label}' ({target_time_str})"
-    is_agent = (agent_id and agent_id != "jarvis") or prompt
-    if is_agent:
-        task_prompt = prompt or f"Execute scheduled task: {label}"
-        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
-    else:
-        log_activity("idle", "Scheduler", f"🔔 Alarm triggered: '{label}'")
-        save_message(task_session_id, "assistant", completion_msg)
-        await _send_telegram_alert(
-            chat_id,
-            f"⏰ **ALARM, SIR**\n\n"
-            f"• Event: **{label}**\n• Trigger time: {target_time_str}\n• Status: ✅ Completed",
-        )
-        await manager.broadcast({
-            "type": "chat_message",
-            "role": "assistant",
-            "content": completion_msg,
-            "chat_id": task_session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-    await _broadcast_ws({"type": "alarm_fired", "alarm": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
-
+        completion_msg = f"⏰ Alarm fired: '{label}' ({target_time_str})"
+        is_agent = (agent_id and agent_id != "jarvis") or prompt
+        if is_agent:
+            task_prompt = prompt or f"Execute scheduled task: {label}"
+            asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+        else:
+            log_activity("idle", "Scheduler", f"🔔 Alarm triggered: '{label}'")
+            save_message(task_session_id, "assistant", completion_msg)
+            await _send_telegram_alert(
+                chat_id,
+                f"⏰ **ALARM, SIR**\n\n"
+                f"• Event: **{label}**\n• Trigger time: {target_time_str}\n• Status: ✅ Completed",
+            )
+            await manager.broadcast({
+                "type": "chat_message",
+                "role": "assistant",
+                "content": completion_msg,
+                "chat_id": task_session_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+        await _broadcast_ws({"type": "alarm_fired", "alarm": {"id": job_id, "label": label, "status": "completed"}, "session_id": task_session_id})
+    except asyncio.CancelledError:
+        logger.info(f"Alarm '{label}' ({job_id}) cancelled.")
+    except Exception as e:
+        logger.error(f"Error in alarm '{label}' ({job_id}): {e}")
 
 
 async def _job_recurring(
@@ -172,43 +183,48 @@ async def _job_recurring(
     task_type: Optional[str] = None,
     **kwargs,
 ) -> None:
-    _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
-    count = _fire_counts[job_id]
-    logger.info(f"Recurring reminder fired #{count}: '{label}'")
-    from backend.activity_logger import log_activity
-    task_session_id = f"task_{job_id}"
-    _register_scheduled_session(job_id, label, "recurring", agent_id, prompt, status="running", extra={"interval_hours": interval_hours, "fire_count": count})
+    try:
+        _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
+        count = _fire_counts[job_id]
+        logger.info(f"Recurring reminder fired #{count}: '{label}'")
+        from backend.activity_logger import log_activity
+        task_session_id = f"task_{job_id}"
+        _register_scheduled_session(job_id, label, "recurring", agent_id, prompt, status="running", extra={"interval_hours": interval_hours, "fire_count": count})
 
-    is_agent = (agent_id and agent_id != "jarvis") or prompt
-    if is_agent:
-        task_prompt = prompt or f"Execute scheduled task: {label}"
-        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
-    else:
-        hours_str = (
-            f"{int(interval_hours)} h" if interval_hours >= 1
-            else f"{int(interval_hours * 60)} min"
-        )
-        log_activity("idle", "Scheduler", f"🔔 Recurring reminder #{count} triggered: '{label}'")
-        await _send_telegram_alert(
-            chat_id,
-            f"🔔 **REMINDER, SIR** (#{count})\n\n• {label}\n"
-            f"• Repeat every: {hours_str}\n\n_Next trigger in {hours_str}._",
-        )
-    job = scheduler.get_job(job_id)
-    next_run = getattr(job, "next_run_time", None) if job else None
-    now_tz = datetime.now(scheduler.timezone)
-    if not next_run or next_run <= now_tz:
-        if job and hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
-            next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
-    time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else int(interval_hours * 3600)
-    await _broadcast_ws({
-        "type": "reminder_fired",
-        "reminder": {
-            "id": job_id, "label": label, "interval_hours": interval_hours,
-            "fire_count": count, "status": "running", "time_left": time_left, "type": "recurring",
-        },
-        "session_id": task_session_id,
-    })
+        is_agent = (agent_id and agent_id != "jarvis") or prompt
+        if is_agent:
+            task_prompt = prompt or f"Execute scheduled task: {label}"
+            asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+        else:
+            hours_str = (
+                f"{int(interval_hours)} h" if interval_hours >= 1
+                else f"{int(interval_hours * 60)} min"
+            )
+            log_activity("idle", "Scheduler", f"🔔 Recurring reminder #{count} triggered: '{label}'")
+            await _send_telegram_alert(
+                chat_id,
+                f"🔔 **REMINDER, SIR** (#{count})\n\n• {label}\n"
+                f"• Repeat every: {hours_str}\n\n_Next trigger in {hours_str}._",
+            )
+        job = scheduler.get_job(job_id)
+        next_run = getattr(job, "next_run_time", None) if job else None
+        now_tz = datetime.now(scheduler.timezone)
+        if not next_run or next_run <= now_tz:
+            if job and hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
+                next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
+        time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else int(interval_hours * 3600)
+        await _broadcast_ws({
+            "type": "reminder_fired",
+            "reminder": {
+                "id": job_id, "label": label, "interval_hours": interval_hours,
+                "fire_count": count, "status": "running", "time_left": time_left, "type": "recurring",
+            },
+            "session_id": task_session_id,
+        })
+    except asyncio.CancelledError:
+        logger.info(f"Recurring reminder '{label}' ({job_id}) cancelled.")
+    except Exception as e:
+        logger.error(f"Error in recurring reminder '{label}' ({job_id}): {e}")
 
 
 async def _job_cron(
@@ -223,39 +239,67 @@ async def _job_cron(
     task_type: Optional[str] = None,
     **kwargs,
 ) -> None:
-    _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
-    count = _fire_counts[job_id]
-    logger.info(f"Cron task fired #{count}: '{label}' ({cron_expr})")
-    from backend.activity_logger import log_activity
-    task_session_id = f"task_{job_id}"
-    _register_scheduled_session(job_id, label, "cron", agent_id, prompt, status="running", extra={"cron_expr": cron_expr, "fire_count": count})
+    try:
+        # Ensure this cron trigger runs only once per minute across multiple workers
+        try:
+            from backend.database import _get_backend
+            db = _get_backend()
+            current_minute = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+            lock_key = f"cron_lock_{job_id}"
+            
+            # We need rowcount, so we connect manually
+            with db.connect() as conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute(db.translate_placeholder("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, '')"), (lock_key,))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()  # Clear aborted transaction state
+                cur.execute(db.translate_placeholder("UPDATE app_settings SET value = ? WHERE key = ? AND value != ?"), (current_minute, lock_key, current_minute))
+                conn.commit()
+                if cur.rowcount == 0:
+                    logger.info(f"Cron task '{label}' already triggered by another worker this minute. Skipping.")
+                    return
+        except Exception as e:
+            logger.error(f"Failed to acquire cron lock for '{label}': {e}")
 
-    is_agent = (agent_id and agent_id != "jarvis") or prompt
-    if is_agent:
-        task_prompt = prompt or f"Execute scheduled task: {label}"
-        asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
-    else:
-        log_activity("idle", "Scheduler", f"⚙️ Cron task #{count} triggered: '{label}' ({cron_expr})")
-        await _send_telegram_alert(
-            chat_id,
-            f"⚙️ **CRON TASK, SIR** (#{count})\n\n• {label}\n"
-            f"• Schedule: `{cron_expr}`",
-        )
-    job = scheduler.get_job(job_id)
-    next_run = getattr(job, "next_run_time", None) if job else None
-    now_tz = datetime.now(scheduler.timezone)
-    if not next_run or next_run <= now_tz:
-        if job and hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
-            next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
-    time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
-    await _broadcast_ws({
-        "type": "reminder_fired",
-        "reminder": {
-            "id": job_id, "label": label, "cron_expr": cron_expr,
-            "fire_count": count, "status": "running", "time_left": time_left, "type": "cron",
-        },
-        "session_id": task_session_id,
-    })
+        _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
+        count = _fire_counts[job_id]
+        logger.info(f"Cron task fired #{count}: '{label}' ({cron_expr})")
+        from backend.activity_logger import log_activity
+        task_session_id = f"task_{job_id}"
+        _register_scheduled_session(job_id, label, "cron", agent_id, prompt, status="running", extra={"cron_expr": cron_expr, "fire_count": count})
+
+        is_agent = (agent_id and agent_id != "jarvis") or prompt
+        if is_agent:
+            task_prompt = prompt or f"Execute scheduled task: {label}"
+            asyncio.create_task(_trigger_agent_task(agent_id or "jarvis", task_prompt, chat_id, task_session_id=task_session_id, job_id=job_id, label=label))
+        else:
+            log_activity("idle", "Scheduler", f"⚙️ Cron task #{count} triggered: '{label}' ({cron_expr})")
+            await _send_telegram_alert(
+                chat_id,
+                f"⚙️ **CRON TASK, SIR** (#{count})\n\n• {label}\n"
+                f"• Schedule: `{cron_expr}`",
+            )
+        job = scheduler.get_job(job_id)
+        next_run = getattr(job, "next_run_time", None) if job else None
+        now_tz = datetime.now(scheduler.timezone)
+        if not next_run or next_run <= now_tz:
+            if job and hasattr(job, "trigger") and hasattr(job.trigger, "get_next_fire_time"):
+                next_run = job.trigger.get_next_fire_time(now_tz, now_tz)
+        time_left = max(0, int((next_run - now_tz).total_seconds())) if next_run else 0
+        await _broadcast_ws({
+            "type": "reminder_fired",
+            "reminder": {
+                "id": job_id, "label": label, "cron_expr": cron_expr,
+                "fire_count": count, "status": "running", "time_left": time_left, "type": "cron",
+            },
+            "session_id": task_session_id,
+        })
+    except asyncio.CancelledError:
+        logger.info(f"Cron task '{label}' ({job_id}) cancelled.")
+    except Exception as e:
+        logger.error(f"Error in cron task '{label}' ({job_id}): {e}")
 
 
 async def _job_bcm_session_scheduler(**kwargs):
@@ -263,31 +307,78 @@ async def _job_bcm_session_scheduler(**kwargs):
     label = kwargs.get("label", "BCM Session")
     session_name = kwargs.get("session_name", "Market")
     
-    _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
-    count = _fire_counts[job_id]
-    logger.info(f"🎯 BCM Session triggered #{count}: '{label}' ({session_name})")
-    
-    from backend.activity_logger import log_activity
-    from backend.websocket_manager import manager
-    from backend.database import save_message
-    
-    task_session_id = f"task_{job_id}"
-    _register_scheduled_session(job_id, label, "cron", "system", f"Run BCM Session Scheduler for {session_name}", status="running", extra={"fire_count": count})
-    log_activity("active", "BCM Scheduler", f"🎯 BCM Session analysis started for {session_name} (#{count})")
-    
-    import sys
-    import subprocess
-    import asyncio
-    import os
-    
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    scheduler_script = os.path.join(script_dir, "bcm", "session_scheduler.py")
-    
-    cmd = [sys.executable, scheduler_script]
-    if session_name:
-        cmd.extend(["--session", session_name])
-        
     try:
+        # Ensure this cron trigger runs only once per minute across multiple workers
+        try:
+            from backend.database import _get_backend
+            db = _get_backend()
+            current_minute = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+            lock_key = f"cron_lock_{job_id}_{session_name}"
+            
+            # We need rowcount, so we connect manually
+            with db.connect() as conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute(db.translate_placeholder("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, '')"), (lock_key,))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()  # Clear aborted transaction state
+                cur.execute(db.translate_placeholder("UPDATE app_settings SET value = ? WHERE key = ? AND value != ?"), (current_minute, lock_key, current_minute))
+                conn.commit()
+                if cur.rowcount == 0:
+                    logger.info(f"Cron task '{label}' ({session_name}) already triggered by another worker this minute. Skipping.")
+                    return
+        except Exception as e:
+            logger.error(f"Failed to acquire cron lock for '{label}' ({session_name}): {e}")
+            
+        _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
+        count = _fire_counts[job_id]
+        logger.info(f"🎯 BCM Session triggered #{count}: '{label}' ({session_name})")
+        
+        from backend.activity_logger import log_activity
+        from backend.websocket_manager import manager
+        from backend.database import save_message
+        
+        task_session_id = f"task_{job_id}"
+        cron_expr = kwargs.get("cron_expr") or _timer_meta.get(job_id, {}).get("cron_expr")
+        if not cron_expr or cron_expr.strip() in ("* * * * *", "* * * * * *"):
+            if "swing_daily_close" in job_id:
+                cron_expr = "15 23 * * mon-fri UTC"
+            elif "swing_friday_gap" in job_id:
+                cron_expr = "0 20 * * fri UTC"
+            elif session_name:
+                try:
+                    from backend.bcm.session_scheduler import SESSIONS
+                except ImportError:
+                    logger.error("BCM module not found. Cannot run session scheduler.")
+                    return
+                if session_name in SESSIONS:
+                    cfg = SESSIONS[session_name]
+                    cron_expr = f"0 {cfg['open'] + 1} * * mon-fri {cfg['tz']}"
+                else:
+                    raise ValueError(f"BCM Session '{session_name}' not found in SESSIONS.")
+            else:
+                cron_expr = "0 * * * *"
+            if job_id in _timer_meta:
+                _timer_meta[job_id]["cron_expr"] = cron_expr
+
+        extra_info = {"fire_count": count}
+        if cron_expr:
+            extra_info["cron_expr"] = cron_expr
+        _register_scheduled_session(job_id, label, "cron", "system", f"Run BCM Session Scheduler for {session_name}", status="running", extra=extra_info)
+        log_activity("active", "BCM Scheduler", f"🎯 BCM Session analysis started for {session_name} (#{count})")
+        
+        import sys
+        import subprocess
+        import os
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        scheduler_script = os.path.join(script_dir, "bcm", "session_scheduler.py")
+        
+        cmd = [sys.executable, scheduler_script]
+        if session_name:
+            cmd.extend(["--session", session_name])
+            
         proc = await asyncio.to_thread(
             subprocess.run,
             cmd,
@@ -323,6 +414,8 @@ async def _job_bcm_session_scheduler(**kwargs):
             },
             "session_id": task_session_id,
         })
+    except asyncio.CancelledError:
+        logger.info(f"BCM Session task '{label}' ({session_name}) cancelled gracefully.")
     except Exception as e:
         logger.error(f"Error in BCM session scheduler task: {e}")
 
@@ -526,6 +619,9 @@ def add_cron_reminder(
     log_activity("idle", "Scheduler", f"⚙️ Cron task scheduled '{label}' ({cron_expr})")
     logger.info(f"Cron task scheduled: '{label}' ({cron_expr}) (id={reminder_id})")
     return reminder_id
+
+
+add_cron_task = add_cron_reminder
 
 
 def cancel_timer_or_alarm(item_id: str) -> bool:
@@ -1142,9 +1238,8 @@ async def _trigger_agent_task(
                 )
                 guardrail = format_live_positions_guardrail(pos_data)
 
-                # Also fetch live spot prices for the core watchlist
                 spot_data = await asyncio.get_event_loop().run_in_executor(
-                    None, handle_exchange_get_spot_prices, {"symbols": ["BTCUSD", "ETHUSD", "BRENT", "XAUUSD", "US500", "GBPUSD", "EURUSD"]}
+                    None, handle_exchange_get_spot_prices, {"symbols": ["BRENT", "XAUUSD", "US500", "GBPUSD", "EURUSD"]}
                 )
                 if isinstance(spot_data, dict) and spot_data.get("prices"):
                     price_lines = []
@@ -1172,9 +1267,9 @@ async def _trigger_agent_task(
             try:
                 from backend.bcm.autonomous_trader import ask_ai_decision, get_technical_analysis, format_md_decision_summary, TICKER_MAP
                 requested_syms = []
-                for sym_key in ["BTCUSD", "SpotBrent", "SpotCrude", "XAUUSD", "US500", "GBPUSD", "EURUSD", "BTC", "BRENT", "USOIL", "GOLD"]:
+                for sym_key in ["SpotBrent", "SpotCrude", "XAUUSD", "US500", "GBPUSD", "EURUSD", "BRENT", "USOIL", "GOLD"]:
                     if sym_key.lower() in prompt.lower():
-                        norm_sym = "BTC" if sym_key in ("BTC", "BTCUSD") else ("BRENT" if sym_key in ("BRENT", "SpotBrent") else ("USOIL" if sym_key in ("USOIL", "SpotCrude") else ("GOLD" if sym_key in ("GOLD", "XAUUSD") else sym_key)))
+                        norm_sym = "BRENT" if sym_key in ("BRENT", "SpotBrent") else ("USOIL" if sym_key in ("USOIL", "SpotCrude") else ("GOLD" if sym_key in ("GOLD", "XAUUSD") else sym_key))
                         if norm_sym in TICKER_MAP and norm_sym not in requested_syms:
                             requested_syms.append(norm_sym)
 
@@ -1267,6 +1362,8 @@ async def _trigger_agent_task(
             f"🤖 **SCHEDULED TASK RESULT**\n\n• **Agent**: `{agent_id}`\n"
             f"• **Task**: {prompt}\n\n📝 **Result**:\n{response_text}",
         )
+    except asyncio.CancelledError:
+        logger.info(f"Scheduled agent task '{job_id or label}' cancelled.")
     except Exception as exc:
         logger.error(f"Error executing scheduled agent task: {exc}")
 
@@ -1297,22 +1394,24 @@ async def _broadcast_ws(payload: Dict) -> None:
 
 async def _run_skill_distillation_loop(interval_seconds: int = 900) -> None:
     logger.info("Starting background skill distillation loop...")
-    # Initial sleep delay so FastAPI startup & Uvicorn HTTP server bind instantly without blocking
-    await asyncio.sleep(10)
-    while True:
-        try:
-            from backend.skill_loop import get_skill_distiller
-            distiller = get_skill_distiller()
-            distilled = await asyncio.to_thread(distiller.process_undistilled_logs, min_steps=3, limit=5)
-            if distilled:
-                logger.info(f"Skill distillation loop: created {len(distilled)} new skills.")
-                await _broadcast_ws({"type": "skills_distilled", "skills": distilled})
-        except asyncio.CancelledError:
-            logger.info("Skill distillation loop cancelled.")
-            break
-        except Exception as err:
-            logger.error(f"Skill distillation loop error: {err}")
-        await asyncio.sleep(interval_seconds)
+    try:
+        # Initial sleep delay so FastAPI startup & Uvicorn HTTP server bind instantly without blocking
+        await asyncio.sleep(10)
+        while True:
+            try:
+                from backend.skill_loop import get_skill_distiller
+                distiller = get_skill_distiller()
+                distilled = await asyncio.to_thread(distiller.process_undistilled_logs, min_steps=3, limit=5)
+                if distilled:
+                    logger.info(f"Skill distillation loop: created {len(distilled)} new skills.")
+                    await _broadcast_ws({"type": "skills_distilled", "skills": distilled})
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                logger.error(f"Skill distillation loop error: {err}")
+            await asyncio.sleep(interval_seconds)
+    except asyncio.CancelledError:
+        logger.info("Skill distillation loop cancelled.")
 
 
 def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[asyncio.Task]:
@@ -1327,16 +1426,18 @@ def start_skill_distillation_loop(interval_seconds: int = 900) -> Optional[async
 async def _run_rss_poller_loop(interval_seconds: int = 300) -> None:
     logger.info(f"Starting autonomous RSS poller loop with interval={interval_seconds}s...")
     from backend.rss_service import fetch_all_active_rss_nodes
-    while True:
-        try:
-            results = await asyncio.to_thread(fetch_all_active_rss_nodes)
-            logger.debug(f"RSS poller sync executed: {len(results)} nodes processed.")
-        except asyncio.CancelledError:
-            logger.info("RSS poller loop cancelled.")
-            break
-        except Exception as err:
-            logger.error(f"RSS poller loop error: {err}")
-        await asyncio.sleep(interval_seconds)
+    try:
+        while True:
+            try:
+                results = await asyncio.to_thread(fetch_all_active_rss_nodes)
+                logger.debug(f"RSS poller sync executed: {len(results)} nodes processed.")
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                logger.error(f"RSS poller loop error: {err}")
+            await asyncio.sleep(interval_seconds)
+    except asyncio.CancelledError:
+        logger.info("RSS poller loop cancelled.")
 
 
 def start_rss_poller_loop(interval_seconds: int = 300) -> Optional[asyncio.Task]:
@@ -1346,6 +1447,18 @@ def start_rss_poller_loop(interval_seconds: int = 300) -> Optional[asyncio.Task]
         _RUNNING_TASKS[key] = task
         return task
     return _RUNNING_TASKS[key]
+
+
+def shutdown_scheduler(wait: bool = False) -> None:
+    """Cleanly stop background loops and shutdown APScheduler."""
+    for key, task in list(_RUNNING_TASKS.items()):
+        if task and not task.done():
+            task.cancel()
+    if scheduler.running:
+        try:
+            scheduler.shutdown(wait=wait)
+        except Exception as e:
+            logger.warning(f"Error shutting down APScheduler: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1382,16 +1495,55 @@ def restore_state() -> None:
             chat_id = info.get("chat_id", "dashboard")
             created_at = info.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
 
+            cron_expr_raw = info.get("cron_expr")
+            cron_healed = False
+            if task_type == "cron":
+                if not cron_expr_raw or cron_expr_raw.strip() in ("* * * * *", "* * * * * *"):
+                    cron_healed = True
+                    if job_id == "bcm_session_swing_daily_close":
+                        cron_expr_raw = "15 23 * * mon-fri UTC"
+                    elif job_id == "bcm_session_swing_friday_gap":
+                        cron_expr_raw = "0 20 * * fri UTC"
+                    elif job_id.startswith("bcm_session_"):
+                        try:
+                            from backend.bcm.session_scheduler import SESSIONS
+                        except ImportError:
+                            logger.info(f"BCM module not found, skipping {job_id}")
+                            continue
+                        
+                        matched_cfg = None
+                        for sn, scfg in SESSIONS.items():
+                            if job_id == f"bcm_session_{sn.lower().replace('/', '_').replace(' ', '_')}":
+                                matched_cfg = scfg
+                                break
+                        if matched_cfg:
+                            target_hour = matched_cfg["open"] + 1
+                            cron_expr_raw = f"0 {target_hour} * * mon-fri {matched_cfg['tz']}"
+                        else:
+                            logger.warning(f"Skipping corrupted BCM session job: {job_id}")
+                            continue
+                    else:
+                        cron_expr_raw = "0 * * * *"  # Default to hourly instead of runaway minute loop
+
             _timer_meta[job_id] = {
                 "type": task_type,
                 "created_at": created_at,
                 "interval_hours": info.get("interval_hours", 1.0),
-                "cron_expr": info.get("cron_expr"),
+                "cron_expr": cron_expr_raw,
                 "duration": info.get("duration"),
                 "target_time": info.get("target_time"),
                 "status": status,
                 "paused_time_left": info.get("paused_time_left"),
             }
+
+            if cron_healed and task_type == "cron":
+                try:
+                    _register_scheduled_session(
+                        job_id, label, "cron", agent_id or "system", prompt or f"Run task {label}",
+                        status=status, extra={"cron_expr": cron_expr_raw, "fire_count": info.get("fire_count", 0)}
+                    )
+                except Exception as _he:
+                    logger.warning(f"Could not persist healed cron metadata for {job_id}: {_he}")
 
             if status == "completed":
                 continue
@@ -1404,15 +1556,34 @@ def restore_state() -> None:
                     existing_job.resume()
             else:
                 if task_type == "cron":
-                    cron_expr = info.get("cron_expr") or "* * * * *"
+                    # Support optional trailing timezone (e.g. "0 9 * * mon-fri Europe/London")
+                    cron_parts = cron_expr_raw.strip().split()
+                    cron_tz = scheduler.timezone
+                    cron_expr = cron_expr_raw
+                    if len(cron_parts) == 6:
+                        cron_expr = " ".join(cron_parts[:5])
+                        try:
+                            import pytz
+                            cron_tz = pytz.timezone(cron_parts[5])
+                        except Exception:
+                            cron_tz = scheduler.timezone
                     try:
-                        trigger = CronTrigger.from_crontab(cron_expr, timezone=scheduler.timezone)
+                        trigger = CronTrigger.from_crontab(cron_expr, timezone=cron_tz)
+                        target_func = _job_cron
+                        target_kwargs = {
+                            "job_id": job_id, "label": label, "cron_expr": cron_expr_raw,
+                            "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
+                            "created_at": created_at, "task_type": "cron"
+                        }
+                        if job_id.startswith("bcm_session_") and (not agent_id or agent_id == "system"):
+                            target_func = _job_bcm_session_scheduler
+                            sess_name = "swing_trigger" if "swing" in job_id else label.replace("BCM Session (", "").replace(")", "").strip()
+                            target_kwargs["session_name"] = sess_name
+
                         job = scheduler.add_job(
-                            _job_cron,
+                            target_func,
                             trigger=trigger,
-                            kwargs={"job_id": job_id, "label": label, "cron_expr": cron_expr,
-                                    "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
-                                    "created_at": created_at, "task_type": "cron"},
+                            kwargs=target_kwargs,
                             id=job_id, name=label, replace_existing=True,
                         )
                         if status == "paused":
@@ -1492,37 +1663,169 @@ def start_bcm_session_scheduler_loop():
     for session_name, cfg in SESSIONS.items():
         job_id = f"bcm_session_{session_name.lower().replace('/', '_').replace(' ', '_')}"
         label = f"BCM Session ({session_name})"
-        created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Fire 1 hour after open (e.g. 8 + 1 = 9)
         target_hour = cfg["open"] + 1
-        cron_expr = f"0 {target_hour} * * mon-fri"
+        default_cron = f"0 {target_hour} * * mon-fri"
         tz_str = cfg["tz"]
+        expected_cron_full = f"{default_cron} {tz_str}"
         
-        _timer_meta[job_id] = {
-            "type": "cron",
-            "created_at": created_at,
-            "cron_expr": f"{cron_expr} {tz_str}",
-            "status": "running",
-            "label": label,
-            "agent_id": "system",
-            "prompt": f"Run BCM Session Scheduler for {session_name}",
-        }
+        job = scheduler.get_job(job_id)
+        if job_id in _timer_meta or job is not None:
+            # Job exists and was restored from DB. Check for corrupted/wildcard cron expression
+            meta_cron = _timer_meta.get(job_id, {}).get("cron_expr")
+            
+            is_corrupted = not meta_cron or meta_cron.strip() in ("* * * * *", "* * * * * *")
+            is_wrong_london_fallback = meta_cron and meta_cron.strip() == "0 9 * * mon-fri Europe/London" and session_name != "London"
+            
+            if is_corrupted or is_wrong_london_fallback:
+                meta_cron = expected_cron_full
+                if job_id in _timer_meta:
+                    _timer_meta[job_id]["cron_expr"] = expected_cron_full
+                _register_scheduled_session(job_id, label, "cron", "system", f"Run BCM Session Scheduler for {session_name}", status="running", extra={"cron_expr": expected_cron_full})
+                if job:
+                    try:
+                        scheduler.reschedule_job(job_id, trigger=CronTrigger.from_crontab(default_cron, timezone=pytz.timezone(tz_str)))
+                    except Exception as e:
+                        logger.warning(f"Could not reschedule job {job_id}: {e}")
+            if job:
+                new_kwargs = job.kwargs.copy() if job.kwargs else {}
+                new_kwargs["session_name"] = session_name
+                new_kwargs["cron_expr"] = meta_cron
+                scheduler.modify_job(job_id, func=_job_bcm_session_scheduler, kwargs=new_kwargs)
+                logger.info(f"Preserved/healed DB state for BCM Session: {session_name} ({meta_cron})")
+            else:
+                s_kwargs = {
+                    "job_id": job_id, "label": label, "cron_expr": meta_cron,
+                    "task_type": "cron", "session_name": session_name
+                }
+                cron_parts = meta_cron.split()
+                cron_pattern = " ".join(cron_parts[:5]) if len(cron_parts) == 6 else default_cron
+                job_tz = pytz.timezone(cron_parts[5]) if len(cron_parts) == 6 else pytz.timezone(tz_str)
+                try:
+                    scheduler.add_job(
+                        _job_bcm_session_scheduler,
+                        trigger=CronTrigger.from_crontab(cron_pattern, timezone=job_tz),
+                        kwargs=s_kwargs,
+                        id=job_id, name=label, replace_existing=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"Job {job_id} could not be added: {e}")
+        else:
+            # Initial setup with defaults
+            created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+            _timer_meta[job_id] = {
+                "type": "cron",
+                "created_at": created_at,
+                "cron_expr": expected_cron_full,
+                "status": "running",
+                "label": label,
+                "agent_id": "system",
+                "prompt": f"Run BCM Session Scheduler for {session_name}",
+            }
+            job_kwargs = {
+                "job_id": job_id, "label": label, "cron_expr": expected_cron_full,
+                "task_type": "cron", "session_name": session_name
+            }
+            try:
+                scheduler.add_job(
+                    _job_bcm_session_scheduler,
+                    trigger=CronTrigger.from_crontab(default_cron, timezone=pytz.timezone(tz_str)),
+                    kwargs=job_kwargs,
+                    id=job_id, name=label, replace_existing=True,
+                )
+            except Exception as e:
+                logger.warning(f"Job {job_id} could not be added (might exist concurrently): {e}")
+            
+    # Reconcile Swing Mode crons
+    bcm_trade_mode = os.environ.get("BCM_TRADE_MODE", "intraday").lower()
+    try:
+        from backend.bcm.session_scheduler import SWING_DAILY_CLOSE_HOUR_UTC, SWING_DAILY_CLOSE_MINUTE_UTC, SWING_FRIDAY_GAP_HOUR_UTC
         
-        job_kwargs = {
-            "job_id": job_id, "label": label, "cron_expr": f"{cron_expr} {tz_str}",
-            "task_type": "cron", "session_name": session_name
-        }
+        swing_jobs = [
+            ("bcm_session_swing_daily_close", f"BCM Session (Swing Daily Close)", f"{SWING_DAILY_CLOSE_MINUTE_UTC} {SWING_DAILY_CLOSE_HOUR_UTC} * * mon-fri", "UTC"),
+            ("bcm_session_swing_friday_gap", f"BCM Session (Swing Friday Gap)", f"0 {SWING_FRIDAY_GAP_HOUR_UTC} * * fri", "UTC")
+        ]
         
+        for s_job_id, s_label, s_cron, s_tz in swing_jobs:
+            expected_cron_full = f"{s_cron} {s_tz}"
+            job = scheduler.get_job(s_job_id)
+            if s_job_id in _timer_meta or job is not None:
+                meta_cron = _timer_meta.get(s_job_id, {}).get("cron_expr")
+                if not meta_cron or meta_cron.strip() in ("* * * * *", "* * * * * *"):
+                    meta_cron = expected_cron_full
+                    if s_job_id in _timer_meta:
+                        _timer_meta[s_job_id]["cron_expr"] = expected_cron_full
+                    _register_scheduled_session(s_job_id, s_label, "cron", "system", "Run BCM Session Scheduler for Swing", status="running", extra={"cron_expr": expected_cron_full})
+                    if job:
+                        try:
+                            scheduler.reschedule_job(s_job_id, trigger=CronTrigger.from_crontab(s_cron, timezone=pytz.timezone(s_tz)))
+                        except Exception as e:
+                            logger.warning(f"Could not reschedule job {s_job_id}: {e}")
+                if job:
+                    new_kwargs = job.kwargs.copy() if job.kwargs else {}
+                    new_kwargs["session_name"] = "swing_trigger"
+                    new_kwargs["cron_expr"] = meta_cron
+                    scheduler.modify_job(s_job_id, func=_job_bcm_session_scheduler, kwargs=new_kwargs)
+                    logger.info(f"Preserved/healed DB state for Swing Job: {s_job_id} ({meta_cron})")
+                else:
+                    s_kwargs = {
+                        "job_id": s_job_id, "label": s_label, "cron_expr": meta_cron,
+                        "task_type": "cron", "session_name": "swing_trigger"
+                    }
+                    cron_parts = meta_cron.split()
+                    cron_pattern = " ".join(cron_parts[:5]) if len(cron_parts) == 6 else s_cron
+                    job_tz = pytz.timezone(cron_parts[5]) if len(cron_parts) == 6 else pytz.timezone(s_tz)
+                    try:
+                        scheduler.add_job(
+                            _job_bcm_session_scheduler,
+                            trigger=CronTrigger.from_crontab(cron_pattern, timezone=job_tz),
+                            kwargs=s_kwargs,
+                            id=s_job_id, name=s_label, replace_existing=True,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Job {s_job_id} could not be added: {e}")
+            elif bcm_trade_mode == "swing":
+                created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+                _timer_meta[s_job_id] = {
+                    "type": "cron", "created_at": created_at, "cron_expr": expected_cron_full,
+                    "status": "running", "label": s_label, "agent_id": "system",
+                    "prompt": f"Run BCM Session Scheduler for Swing",
+                }
+                s_kwargs = {
+                    "job_id": s_job_id, "label": s_label, "cron_expr": expected_cron_full,
+                    "task_type": "cron", "session_name": "swing_trigger"
+                }
+                try:
+                    scheduler.add_job(
+                        _job_bcm_session_scheduler,
+                        trigger=CronTrigger.from_crontab(s_cron, timezone=pytz.timezone(s_tz)),
+                        kwargs=s_kwargs,
+                        id=s_job_id, name=s_label, replace_existing=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"Job {s_job_id} could not be added (might exist concurrently): {e}")
+    except Exception as e:
+        logger.error(f"Failed to register swing scheduler jobs: {e}")
+
+    logger.info("Started BCM Session Scheduler loops in APScheduler for all sessions.")
+
+def _job_watcher_sync():
+    """Background job to run watcher's memory synchronization."""
+    try:
+        from backend.bcm.watcher import watcher
+        watcher.sync_memory_state()
+    except Exception as e:
+        logger.error(f"Error running watcher sync: {e}")
+
+def start_watcher_loop(interval_seconds: int = 300):
+    job_id = "watcher_sync_loop"
+    try:
         if scheduler.get_job(job_id):
-            # The job exists (e.g. restored from DB). Update its func and kwargs to ensure it runs the auto-trader,
-            # but leave its trigger/next_run_time intact to preserve misfire history.
-            scheduler.modify_job(job_id, func=_job_bcm_session_scheduler, kwargs=job_kwargs)
+            scheduler.modify_job(job_id, func=_job_watcher_sync, kwargs={})
         else:
             scheduler.add_job(
-                _job_bcm_session_scheduler,
-                trigger=CronTrigger.from_crontab(cron_expr, timezone=pytz.timezone(tz_str)),
-                kwargs=job_kwargs,
-                id=job_id, name=label, replace_existing=False,
+                _job_watcher_sync, 'interval', seconds=interval_seconds,
+                kwargs={}, id=job_id, name="Watcher Memory Sync", replace_existing=True
             )
-    logger.info("Started BCM Session Scheduler loops in APScheduler for all sessions.")
+        logger.info(f"Started Watcher Sync loop (interval: {interval_seconds}s)")
+    except Exception as e:
+        logger.warning(f"Watcher Sync loop job {job_id} could not be added/modified: {e}")

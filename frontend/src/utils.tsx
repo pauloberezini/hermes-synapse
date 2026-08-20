@@ -361,7 +361,7 @@ export const formatTimeLeft = (seconds: number) => {
 };
 
 // Wake-word config
-export const WAKE_WORDS = ['jarvis', 'джарвис', 'жарвис', 'джарвиз', 'харвис'];
+export const WAKE_WORDS = ['synapse', 'синапс', 'jarvis', 'джарвис', 'жарвис', 'джарвиз', 'харвис'];
 
 // Sound Player utilities
 export const playBeep = (freq = 880, dur = 0.25) => {
@@ -561,7 +561,7 @@ export function getSortedAgents<T extends { id: string; name?: string; agent_typ
     if (isOrchA && !isOrchB) return -1;
     if (!isOrchA && isOrchB) return 1;
 
-    // Master Jarvis is top of Orchestrators
+    // SYNAPSE (Master) is always top of Orchestrators
     if (a.id === 'jarvis') return -1;
     if (b.id === 'jarvis') return 1;
 

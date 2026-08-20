@@ -278,7 +278,7 @@ export function ChatTab({
                 value={chatSessions.find(s => s.id === currentChatId)?.agent_id || 'jarvis'}
                 onChange={(agentId) => handleSetSessionAgent(currentChatId, agentId)}
                 agents={[
-                  { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                  { id: 'jarvis', name: 'SYNAPSE (Main)', agent_type: 'orchestrator' },
                   ...(Array.isArray(subagents) ? subagents : [])
                 ]}
               />
@@ -312,7 +312,7 @@ export function ChatTab({
             id="mic-toggle-btn"
             onClick={() => setMicEnabled(v => !v)}
             className="btn-primary"
-            title={micEnabled ? 'Turn off microphone' : 'Turn on microphone (say "Jarvis")'}
+            title={micEnabled ? 'Turn off microphone' : 'Turn on microphone (say "SYNAPSE")'}
             style={{
               padding: '6px 12px',
               border: micState === 'capturing'
@@ -892,7 +892,7 @@ export function ChatTab({
                           {msg.role === 'user' ? 'CREATOR' : (() => {
                             const activeSessionAgentId = chatSessions.find(s => s.id === currentChatId)?.agent_id || currentChatId;
                             const matchedAgent = (Array.isArray(subagents) ? subagents : []).find(a => a.id === activeSessionAgentId);
-                            return matchedAgent ? matchedAgent.name.toUpperCase() : 'JARVIS';
+                            return matchedAgent ? matchedAgent.name.toUpperCase() : 'SYNAPSE';
                           })()}
                         </span>
                         {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
@@ -1101,7 +1101,7 @@ export function ChatTab({
                     e.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={isUploading ? "Uploading file..." : attachedFile ? `Ask Jarvis about "${attachedFile.name}"...` : "Enter command or request for Jarvis, Sir..."}
+                placeholder={isUploading ? "Uploading file..." : attachedFile ? `Ask SYNAPSE about "${attachedFile.name}"...` : "Enter command or request for SYNAPSE, Sir..."}
                 style={styles.chatInput}
                 className="form-input"
                 disabled={!isConnected || isUploading}
@@ -1175,7 +1175,7 @@ export function ChatTab({
                 color: fullscreenMsg.role === 'user' ? 'var(--accent-orange)' : 'var(--accent-cyan)',
                 border: `1px solid ${fullscreenMsg.role === 'user' ? 'rgba(255, 159, 0, 0.3)' : 'rgba(0, 240, 255, 0.3)'}`
               }}>
-                {fullscreenMsg.role === 'user' ? 'CREATOR' : 'JARVIS ASSISTANT'}
+                {fullscreenMsg.role === 'user' ? 'CREATOR' : 'SYNAPSE'}
               </span>
               {fullscreenMsg.id && (
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>

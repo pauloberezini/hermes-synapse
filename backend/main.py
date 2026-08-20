@@ -135,11 +135,12 @@ async def lifespan(app: FastAPI):
 
     # Start background APScheduler & self-improving skill distillation loop
     try:
-        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, start_bcm_session_scheduler_loop
+        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, start_bcm_session_scheduler_loop, start_watcher_loop
         restore_state()
         scheduler.start()
         start_skill_distillation_loop(interval_seconds=900)
         start_rss_poller_loop(interval_seconds=300)
+        start_watcher_loop(interval_seconds=300)
 
         # Start BCM Session Scheduler in background (non-blocking, opt-in via ENABLE_BCM_AUTO_TRADER)
         if os.environ.get("ENABLE_BCM_AUTO_TRADER", "false").lower() == "true":
@@ -167,20 +168,29 @@ async def lifespan(app: FastAPI):
             reporting_role="Worker"
         )
         logger.debug(f"Starting Mesh heartbeat for {node_id}")
-        while True:
-            try:
-                router.register_peer(manifest)
-            except Exception as e:
-                logger.error(f"Error in mesh heartbeat task: {e}")
-            await asyncio.sleep(60)
+        try:
+            while True:
+                try:
+                    router.register_peer(manifest)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in mesh heartbeat task: {e}")
+                await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            logger.debug(f"Mesh heartbeat task cancelled for {node_id}")
             
-    asyncio.create_task(_mesh_heartbeat_task())
+    mesh_task = asyncio.create_task(_mesh_heartbeat_task())
 
     yield
-    # Shutdown: Stop APScheduler
+    # Shutdown: Stop mesh heartbeat task
+    if mesh_task and not mesh_task.done():
+        mesh_task.cancel()
+
+    # Shutdown: Stop APScheduler & background scheduler loops cleanly
     try:
-        from backend.scheduler import scheduler
-        scheduler.shutdown(wait=False)
+        from backend.scheduler import shutdown_scheduler
+        shutdown_scheduler(wait=False)
     except Exception as e:
         logger.warning(f"Failed to shutdown scheduler cleanly: {e}")
 

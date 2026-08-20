@@ -33,7 +33,7 @@ export function LayerSandboxDrawer({
     setOutput(null);
     setLogs([]);
 
-    const orchName = activeOrchestrator?.name || activeOrchestrator?.id || 'Jarvis';
+    const orchName = activeOrchestrator?.name || activeOrchestrator?.id || 'SYNAPSE';
     addLog('info', `Initializing Orchestrator Pulse for layer: ${orchName}...`);
 
     try {

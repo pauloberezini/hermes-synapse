@@ -3,11 +3,8 @@ import {
   MessageSquare, 
   Settings, 
   Terminal, 
-  Activity, 
   Cpu, 
   Database,
-  Layers,
-  Wrench,
   BookOpen,
   Network,
   Server,
@@ -244,7 +241,7 @@ export default function App() {
 
   // Open Settings dropdown automatically if a settings sub-tab is active
   useEffect(() => {
-    if (['config', 'subagents', 'mcp', 'obsidian', 'logs', 'activity', 'memory', 'tools', 'rss'].includes(activeTab)) {
+    if (['config', 'mcp', 'obsidian', 'logs', 'memory', 'rss', 'metrics'].includes(activeTab)) {
       setSettingsOpen(true);
     }
   }, [activeTab]);
@@ -327,7 +324,7 @@ export default function App() {
     setMicState('listening');
     if (!command) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    // Interrupt TTS before sending so Jarvis doesn't talk over himself
+    // Interrupt TTS before sending so SYNAPSE doesn't talk over himself
     window.speechSynthesis?.cancel();
     wsRef.current.send(JSON.stringify({ type: 'chat_message', content: command, chat_id: currentChatIdRef.current }));
     setIsGenerating(true);
@@ -681,10 +678,10 @@ export default function App() {
                   .replace(/\*\*|__|\*|_|`/g, '')
                   .trim()
                   .slice(0, 80);
-                new Notification('JARVIS', {
-                  body: preview || 'New Jarvis response',
+                new Notification('SYNAPSE', {
+                  body: preview || 'New SYNAPSE response',
                   icon: '/favicon.ico',
-                  tag: 'jarvis-reply',
+                  tag: 'synapse-reply',
                   silent: false,
                 });
               }
@@ -789,7 +786,7 @@ export default function App() {
             if (data.trace.agent !== 'Router') {
               setMessages((prev) => [...prev, {
                 role: 'system',
-                content: `⚙️ [${data.trace.agent}] ${data.trace.action}: ${data.trace.message.split('\n')[0]}`
+                content: `⚙️ [${data.trace.agent}] ${data.trace.action}: ${(data.trace.message || '').split('\n')[0]}`
               }]);
               setOfficeLiveTrace({
                 agent: data.trace.agent,
@@ -1699,7 +1696,7 @@ export default function App() {
 
           {/* Settings group */}
           <button
-            className={`sidebar-nav-btn${(['config','subagents','mcp','obsidian','logs','activity','memory','tools','rss','metrics'].includes(activeTab)) ? ' active' : ''}`}
+            className={`sidebar-nav-btn${(['config','mcp','obsidian','logs','memory','rss','metrics'].includes(activeTab)) ? ' active' : ''}`}
             onClick={() => setSettingsOpen(prev => !prev)}
             title="Settings"
           >
@@ -1720,11 +1717,6 @@ export default function App() {
                 <Rss size={15} className="sidebar-icon" />
                 <span className="sidebar-label">RSS Feeds & Nodes</span>
               </button>
-              <button className={`sidebar-nav-btn sub${activeTab === 'subagents' ? ' active' : ''}`}
-                onClick={() => { setActiveTab('subagents'); setSidebarOpen(false); setSidebarExpanded(false); }}>
-                <Layers size={15} className="sidebar-icon" />
-                <span className="sidebar-label">Sub-agents</span>
-              </button>
               <button className={`sidebar-nav-btn sub${activeTab === 'mcp' ? ' active' : ''}`}
                 onClick={() => { setActiveTab('mcp'); setSidebarOpen(false); setSidebarExpanded(false); }}>
                 <Server size={15} className="sidebar-icon" />
@@ -1740,25 +1732,15 @@ export default function App() {
                 <Database size={15} className="sidebar-icon" />
                 <span className="sidebar-label">Memory Vault (RAG)</span>
               </button>
-              <button className={`sidebar-nav-btn sub${activeTab === 'tools' ? ' active' : ''}`}
-                onClick={() => { setActiveTab('tools'); setSidebarOpen(false); setSidebarExpanded(false); }}>
-                <Wrench size={15} className="sidebar-icon" />
-                <span className="sidebar-label">Core Tools</span>
-              </button>
               <button className={`sidebar-nav-btn sub${activeTab === 'logs' ? ' active' : ''}`}
                 onClick={() => { setActiveTab('logs'); setSidebarOpen(false); setSidebarExpanded(false); }}>
                 <Terminal size={15} className="sidebar-icon" />
-                <span className="sidebar-label">Decision Logs</span>
+                <span className="sidebar-label">Logs & Tracing</span>
               </button>
               <button className={`sidebar-nav-btn sub${activeTab === 'metrics' ? ' active' : ''}`}
                 onClick={() => { setActiveTab('metrics'); setSidebarOpen(false); setSidebarExpanded(false); }}>
                 <BarChart3 size={15} className="sidebar-icon" />
                 <span className="sidebar-label">Metrics Dashboard</span>
-              </button>
-              <button className={`sidebar-nav-btn sub${activeTab === 'activity' ? ' active' : ''}`}
-                onClick={() => { setActiveTab('activity'); setSidebarOpen(false); setSidebarExpanded(false); }}>
-                <Activity size={15} className="sidebar-icon" />
-                <span className="sidebar-label">Activity Logs</span>
               </button>
             </div>
           )}
@@ -1778,7 +1760,7 @@ export default function App() {
           <div className="sidebar-status-row" title={`Model: ${config.model}`}>
             <Cpu size={14} style={{ color: 'var(--text-dim)', flexShrink: 0 }} />
             <span className="sidebar-label sidebar-status-text" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
-              {config.model.split('/').pop()}
+              {config?.model?.split('/').pop()}
             </span>
           </div>
 
@@ -1858,8 +1840,10 @@ export default function App() {
         {activeTab === 'logs' && (
           <LogsTab
             logs={logs}
+            activityLogs={activityLogs}
             selectedLog={selectedLog}
             setSelectedLog={setSelectedLog}
+            clearLogs={handleClearActivityLogs}
           />
         )}
 
@@ -2084,7 +2068,7 @@ export default function App() {
                 value={newSessionAgentInput}
                 onChange={(agentId) => setNewSessionAgentInput(agentId)}
                 agents={[
-                  { id: 'jarvis', name: 'Jarvis (Main)', agent_type: 'orchestrator' },
+                  { id: 'jarvis', name: 'SYNAPSE (Main)', agent_type: 'orchestrator' },
                   ...subagents
                 ]}
                 variant="full"

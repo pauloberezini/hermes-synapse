@@ -28,7 +28,7 @@ def get_qdrant_client() -> QdrantClient:
     global _qdrant_client
     if _qdrant_client is None:
         logger.info(f"Connecting to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}...")
-        _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+        _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
     return _qdrant_client
 
 def raw_init_rag():

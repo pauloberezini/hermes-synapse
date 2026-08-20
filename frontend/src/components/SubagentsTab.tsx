@@ -313,7 +313,7 @@ export function SubagentsTab({
           >
             <MessageSquare size={16} style={{ color: 'var(--accent-cyan)' }} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Jarvis (Main)</span>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>SYNAPSE (Main)</span>
               <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>Personal Assistant</span>
             </div>
           </button>
@@ -350,7 +350,7 @@ export function SubagentsTab({
                         )}
                       </div>
                       <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
-                        <span>{agent.model.split('/').pop()}</span>
+                        <span>{agent.model?.split('/').pop()}</span>
                         {agent.skills && <span style={{ color: 'rgba(0,240,255,0.5)' }}>· {agent.skills.split(',').length} skill{agent.skills.split(',').length !== 1 ? 's' : ''}</span>}
                         {!modelSupportsTools(agent.model) && (
                           <span style={{ color: '#f59e0b', padding: '0px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.55rem', fontWeight: 600, letterSpacing: '0.3px' }}>
@@ -432,7 +432,7 @@ export function SubagentsTab({
                     <ModelSelect value={newAgentModel} onChange={setNewAgentModel} models={models} />
                     {!modelSupportsTools(newAgentModel) && (
                       <span style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        ⚠️ This reasoning model does not support direct tool calling. Jarvis will run research/code tools on its behalf if scheduled in the query plan.
+                        ⚠️ This reasoning model does not support direct tool calling. SYNAPSE will run research/code tools on its behalf if scheduled in the query plan.
                       </span>
                     )}
                   </>
@@ -480,7 +480,7 @@ export function SubagentsTab({
                     <ModelSelect value={editAgentModel} onChange={setEditAgentModel} models={models} />
                     {!modelSupportsTools(editAgentModel) && (
                       <span style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        ⚠️ This reasoning model does not support direct tool calling. Jarvis will run research/code tools on its behalf if scheduled in the query plan.
+                        ⚠️ This reasoning model does not support direct tool calling. SYNAPSE will run research/code tools on its behalf if scheduled in the query plan.
                       </span>
                     )}
                   </>
@@ -523,7 +523,7 @@ export function SubagentsTab({
                         <div style={styles.msgHeader}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={msg.role === 'user' ? styles.userLabel : styles.assistantLabel}>
-                              {msg.role === 'user' ? 'CREATOR' : (currentChatId === 'dashboard' ? 'JARVIS' : (subagents.find(a => a.id === currentChatId)?.name.toUpperCase() || 'SUB-AGENT'))}
+                              {msg.role === 'user' ? 'CREATOR' : (currentChatId === 'dashboard' ? 'SYNAPSE' : (subagents.find(a => a.id === currentChatId)?.name.toUpperCase() || 'SUB-AGENT'))}
                             </span>
                             {msg.role === 'assistant' && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
                               <span style={{ fontSize: '0.7rem', color: 'var(--success)', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1px 5px', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.5px' }}>
@@ -561,7 +561,7 @@ export function SubagentsTab({
                       <span className="hud-status">ENGAGING NEURAL ORCHESTRATION GRAPH [MODEL: {
                         currentChatId === 'dashboard'
                           ? (config?.model?.split('/').pop() || 'GEMINI')
-                          : (subagents.find(a => a.id === currentChatId)?.model.split('/').pop() || 'GEMINI')
+                          : (subagents.find(a => a.id === currentChatId)?.model?.split('/').pop() || 'GEMINI')
                       }]</span>
                       <div className="hud-bar-wrapper"><div className="hud-bar-fill" /></div>
                     </div>
@@ -576,7 +576,7 @@ export function SubagentsTab({
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
-                    placeholder={`Request for assistant "${currentChatId === 'dashboard' ? 'Jarvis' : (subagents.find(a => a.id === currentChatId)?.name || 'Sub-agent')}"...`}
+                    placeholder={`Request for assistant "${currentChatId === 'dashboard' ? 'SYNAPSE' : (subagents.find(a => a.id === currentChatId)?.name || 'Sub-agent')}"...`}
                     style={styles.chatInput}
                     className="form-input"
                     disabled={!isConnected}

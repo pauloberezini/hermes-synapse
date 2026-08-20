@@ -9,7 +9,10 @@ import abc
 import os
 import logging
 from typing import Any, Dict, Optional
-import stripe
+try:
+    import stripe
+except ImportError:
+    stripe = None
 from backend.database import _execute, db_get_skill_owner, db_get_developer_stripe_account
 
 logger = logging.getLogger(__name__)
@@ -58,6 +61,8 @@ class NoOpBillingAdapter(BaseBillingAdapter):
 
 class StripeBillingAdapter(BaseBillingAdapter):
     def __init__(self):
+        if stripe is None:
+            raise ImportError("Stripe is not installed. Run `pip install stripe` to use StripeBillingAdapter.")
         stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 
     async def check_entitlement(self, user_id: str, skill_id: str) -> bool:
@@ -133,6 +138,6 @@ class StripeBillingAdapter(BaseBillingAdapter):
 
 def get_billing_adapter() -> BaseBillingAdapter:
     """Factory function returning active BillingAdapter based on environment configuration."""
-    if os.environ.get("STRIPE_SECRET_KEY"):
+    if os.environ.get("STRIPE_SECRET_KEY") and stripe is not None:
         return StripeBillingAdapter()
     return NoOpBillingAdapter()
