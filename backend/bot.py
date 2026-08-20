@@ -119,7 +119,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_text = update.message.text
     
-        # ⚡ FAST-First CLI v2.0 (Dynamic Hooks)
+    # ⚡ FAST-First CLI v2.0 (Dynamic Hooks)
     if user_text.startswith('/'):
         try:
             from backend.bcm.plugin import handle_fast_command
@@ -130,6 +130,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         except ImportError:
             pass
+        except Exception as e:
+            logger.error(f"Error handling fast command with plugin: {e}", exc_info=True)
+            await update.message.reply_text(f"⚠️ Error executing command `{user_text.split()[0]}`: {e}", parse_mode='Markdown')
+            return
     
     # Broadcast user's message to dashboard UI immediately
     await manager.broadcast({

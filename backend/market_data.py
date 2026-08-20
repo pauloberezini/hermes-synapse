@@ -30,11 +30,7 @@ import httpx
 logger = logging.getLogger("hermes.market_data")
 
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        "Version/17.0 Safari/605.1.15"
-    )
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 }
 
 # ---------------------------------------------------------------------------
@@ -147,12 +143,29 @@ class HttpProvider(MarketDataProvider):
 
     async def _fetch_yahoo(self, ticker: str) -> Optional[float]:
         t_clean = ticker.strip().upper()
-        tickers_to_try = [ticker]
-        if not t_clean.endswith("=X"):
-            tickers_to_try.append(f"{t_clean}=X")
+        
+        YAHOO_MAP = {
+            "XAUUSD": "GC=F",
+            "GOLD": "GC=F",
+            "BRENT": "BZ=F",
+            "WTI": "CL=F",
+            "US500": "^GSPC",
+            "SPX": "^GSPC",
+            "NDX": "^NDX",
+            "US100": "^NDX",
+            "DOW": "^DJI",
+            "US30": "^DJI"
+        }
+        
+        if t_clean in YAHOO_MAP:
+            tickers_to_try = [YAHOO_MAP[t_clean]]
+        else:
+            tickers_to_try = [t_clean]
+            if not t_clean.endswith("=X") and not t_clean.startswith("^") and "=" not in t_clean:
+                tickers_to_try.append(f"{t_clean}=X")
 
         for t in tickers_to_try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}"
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{t}"
             try:
                 async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
                     r = await client.get(url)
@@ -183,6 +196,13 @@ class HttpProvider(MarketDataProvider):
 # Factory — driven by MARKET_DATA_PROVIDER env var
 # ---------------------------------------------------------------------------
 
+try:
+    from backend.bcm.providers import CcxtProvider, AlpacaProvider
+except ImportError:
+    CcxtProvider = None
+    AlpacaProvider = None
+
+
 def get_provider() -> MarketDataProvider:
     """Return the configured MarketDataProvider.
 
@@ -195,18 +215,20 @@ def get_provider() -> MarketDataProvider:
 
     if provider_name == "ccxt":
         try:
-            p = CcxtProvider()
-            logger.info("Market data: using %s", p.name())
-            return p
+            if CcxtProvider is not None:
+                p = CcxtProvider()
+                logger.info("Market data: using %s", p.name())
+                return p
         except Exception as exc:
             logger.warning(
                 "CcxtProvider unavailable (%s); falling back to HttpProvider.", exc
             )
     elif provider_name == "alpaca":
         try:
-            p = AlpacaProvider()
-            logger.info("Market data: using %s", p.name())
-            return p
+            if AlpacaProvider is not None:
+                p = AlpacaProvider()
+                logger.info("Market data: using %s", p.name())
+                return p
         except Exception as exc:
             logger.warning(
                 "AlpacaProvider unavailable (%s); falling back to HttpProvider.", exc
@@ -219,3 +241,4 @@ def get_provider() -> MarketDataProvider:
     p = HttpProvider()
     logger.info("Market data: using %s", p.name())
     return p
+

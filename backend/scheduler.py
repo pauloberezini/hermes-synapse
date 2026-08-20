@@ -1650,10 +1650,17 @@ async def _start_restored_tasks() -> None:
 def _job_watcher_sync():
     """Background job to run watcher's memory synchronization."""
     try:
-        from backend.bcm.watcher import watcher
-        watcher.sync_memory_state()
+        try:
+            from backend.bcm.watcher import watcher
+        except ImportError:
+            return
+
+        if hasattr(watcher, "sync_memory_state"):
+            watcher.sync_memory_state()
+        elif hasattr(watcher, "sync"):
+            watcher.sync()
     except Exception as e:
-        logger.error(f"Error running watcher sync: {e}")
+        logger.warning(f"Error running watcher sync: {e}")
 
 def start_watcher_loop(interval_seconds: int = 300):
     job_id = "watcher_sync_loop"
@@ -1669,10 +1676,110 @@ def start_watcher_loop(interval_seconds: int = 300):
     except Exception as e:
         logger.warning(f"Watcher Sync loop job {job_id} could not be added/modified: {e}")
 
-def _load_private_plugins(scheduler_obj=None, restore_items=None):
+def _load_private_plugins(scheduler_obj=None, restore_items=None) -> bool:
     """Dynamically loads and initializes private plugins if they exist."""
     try:
         from backend.bcm.plugin import init_plugin
         init_plugin(scheduler_obj, restore_items)
+        return True
     except ImportError:
-        pass
+        return False
+
+
+def start_bcm_session_scheduler_loop():
+    """Register and reconcile all BCM Intraday and Swing session cron schedules."""
+    try:
+        # 1. Intraday session triggers from SESSIONS
+        try:
+            from backend.bcm.session_scheduler import SESSIONS
+            for session_name, scfg in SESSIONS.items():
+                job_id = f"bcm_session_{session_name.lower().replace('/', '_').replace(' ', '_')}"
+                label = f"BCM Session ({session_name})"
+                target_hour = scfg["open"] + 1
+                tz_str = scfg.get("tz", "UTC")
+                cron_expr_5 = f"0 {target_hour} * * mon-fri"
+                full_cron = f"{cron_expr_5} {tz_str}"
+                
+                try:
+                    import pytz
+                    cron_tz = pytz.timezone(tz_str)
+                except Exception:
+                    cron_tz = scheduler.timezone
+
+                trigger = CronTrigger.from_crontab(cron_expr_5, timezone=cron_tz)
+                scheduler.add_job(
+                    _job_bcm_session_scheduler,
+                    trigger=trigger,
+                    kwargs={
+                        "job_id": job_id,
+                        "label": label,
+                        "session_name": session_name,
+                        "cron_expr": full_cron,
+                        "task_type": "cron"
+                    },
+                    id=job_id,
+                    name=label,
+                    replace_existing=True
+                )
+                _timer_meta[job_id] = {
+                    "type": "cron",
+                    "label": label,
+                    "cron_expr": full_cron,
+                    "status": "running"
+                }
+        except ImportError:
+            logger.info("BCM session_scheduler module not available for intraday triggers.")
+
+        # 2. Swing session triggers
+        swing_jobs = [
+            ("bcm_session_swing_daily_close", "BCM Session (Swing Daily Close)", "15 23 * * mon-fri UTC", "swing_trigger"),
+            ("bcm_session_swing_friday_gap", "BCM Session (Swing Friday Gap)", "0 20 * * fri UTC", "swing_trigger"),
+        ]
+
+        for job_id, label, default_cron, sess_name in swing_jobs:
+            existing_meta = _timer_meta.get(job_id, {})
+            current_cron = existing_meta.get("cron_expr", default_cron)
+            if not current_cron or current_cron.strip() in ("* * * * *", "* * * * * *"):
+                current_cron = default_cron
+
+            cron_parts = current_cron.strip().split()
+            cron_5 = " ".join(cron_parts[:5])
+            tz_str = cron_parts[5] if len(cron_parts) == 6 else "UTC"
+            try:
+                import pytz
+                cron_tz = pytz.timezone(tz_str)
+            except Exception:
+                cron_tz = scheduler.timezone
+
+            trigger = CronTrigger.from_crontab(cron_5, timezone=cron_tz)
+            scheduler.add_job(
+                _job_bcm_session_scheduler,
+                trigger=trigger,
+                kwargs={
+                    "job_id": job_id,
+                    "label": label,
+                    "session_name": sess_name,
+                    "cron_expr": current_cron,
+                    "task_type": "cron"
+                },
+                id=job_id,
+                name=label,
+                replace_existing=True
+            )
+            _timer_meta[job_id] = {
+                "type": "cron",
+                "label": label,
+                "cron_expr": current_cron,
+                "status": "running"
+            }
+            try:
+                _register_scheduled_session(
+                    job_id, label, "cron", "system", f"Run BCM Session Scheduler for {sess_name}",
+                    status="running", extra={"cron_expr": current_cron}
+                )
+            except Exception as _e:
+                logger.warning(f"Could not persist swing session schedule for {job_id}: {_e}")
+
+        logger.info("BCM session scheduler loop started and reconciled.")
+    except Exception as e:
+        logger.error(f"Error starting BCM session scheduler loop: {e}")

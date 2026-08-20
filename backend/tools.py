@@ -3,10 +3,15 @@ import json
 import logging
 import asyncio
 import httpx
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger("hermes.tools")
+
+# Threading-local context for passing parent_message_id to call_subagent without breaking API
+_call_context = threading.local()
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 

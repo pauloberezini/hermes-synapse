@@ -17,17 +17,27 @@ import pandas as pd
 import numpy as np
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from backend.bcm.fast_market_cache import fast_market_cache
-from backend.bcm.regime_detector import RegimeDetector
-from backend.bcm.confluence_engine import ConfluenceEngine, ConfluenceDecision
-from backend.bcm.compliance_officer import ComplianceOfficer
-from backend.bcm.exchange_factory import ExchangeFactory
-from backend.bcm.autonomous_trader import (
-    ask_ai_decision,
-    get_macro_terminal_context,
-    format_any_bcm_response,
-    check_liquidity_layer_0
-)
+bcm_available = False
+try:
+    from backend.bcm.fast_market_cache import (
+        fast_market_cache,
+        get_historical_data,
+        get_remizov_shift
+    )
+    from backend.bcm.regime_detector import RegimeDetector
+    from backend.bcm.confluence_engine import ConfluenceEngine, ConfluenceDecision
+    from backend.bcm.compliance_officer import ComplianceOfficer
+    from backend.bcm.exchange_factory import ExchangeFactory
+    from backend.bcm.autonomous_trader import (
+        ask_ai_decision,
+        get_macro_terminal_context,
+        format_any_bcm_response,
+        check_liquidity_layer_0
+    )
+    bcm_available = True
+except ImportError:
+    pass
+
 from backend.mcp_client import MCPServerClient
 from backend import scheduler
 from backend import price_monitor
@@ -37,15 +47,18 @@ from backend import database
 @pytest.fixture(autouse=True)
 def clean_cache_and_state():
     """Reset memory cache and test globals between test runs."""
-    fast_market_cache._memory_store.clear()
+    if bcm_available and "fast_market_cache" in globals():
+        fast_market_cache._memory_store.clear()
     yield
-    fast_market_cache._memory_store.clear()
+    if bcm_available and "fast_market_cache" in globals():
+        fast_market_cache._memory_store.clear()
 
 
 # ==============================================================================
 # 1. Cross-Service: Market Cache -> Regime Detector -> Confluence -> Decision
 # ==============================================================================
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_cross_cache_regime_confluence_pipeline():
     """Cross-Service Test: Verify market data flow from FastMarketCache through
     RegimeDetector and ConfluenceEngine into ask_ai_decision.
@@ -101,6 +114,7 @@ def test_cross_cache_regime_confluence_pipeline():
 # 2. Cross-Service: MCPServerClient -> AutonomousTrader Macro Context
 # ==============================================================================
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_macro_terminal_mcp_client_integration():
     """Cross-Service Test: Verify MCPServerClient starts, calls tools,
@@ -147,6 +161,7 @@ async def test_cross_macro_terminal_mcp_client_integration():
 # 3. Cross-Service: Scheduler -> BCM Cycle -> DB Persistence -> WebSocket
 # ==============================================================================
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_scheduler_bcm_pipeline_and_db_persistence():
     """Cross-Service Test: Verify the full scheduler cycle invoking BCM agents,
@@ -199,6 +214,7 @@ async def test_cross_scheduler_bcm_pipeline_and_db_persistence():
 # 4. Cross-Service: ExchangeFactory -> ComplianceOfficer -> Risk Guardrails
 # ==============================================================================
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_cross_exchange_factory_and_compliance_officer():
     """Cross-Service Test: Verify ExchangeFactory broker retrieval and
     ComplianceOfficer pre-trade audit limits (drawdown, max leverage, spread check).
@@ -292,11 +308,17 @@ async def test_cross_price_monitor_alerting_and_graceful_cancellation():
 # 6. Cross-Service: CTraderOpenApiClient -> Protocol Messages -> Symbol Lookup
 # ==============================================================================
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_ctrader_openapi_client_and_lookup_pipeline():
     """Cross-Service Test: Verify CTraderOpenApiClient proto message framing,
     app/account authentication flows, and symbol lookup pipeline execution.
     """
+    import sys, os
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
     from backend.bcm.openapi_client import CTraderOpenApiClient, pb2, common_pb2
     from scripts.ctrader_lookup import lookup
 
@@ -356,5 +378,192 @@ async def test_cross_ctrader_openapi_client_and_lookup_pipeline():
         assert mock_client.authorize_account.called
         assert mock_client.send_message.call_count == 2
         assert mock_client.close.called
+
+
+# ==============================================================================
+# 7. Cross-Service: Complexity Classifier -> RAG -> Agent Execution -> Decision Log
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_cross_agent_llm_error_recovery_and_decision_logging():
+    """Cross-Service Test: End-to-end multi-layer pipeline test across:
+      Classifier (recovering from null content) -> RAG memory search ->
+      Agent completion (recovering gracefully from upstream OpenRouter errors) ->
+      Database Decision Logs & User-facing message.
+    """
+    from backend.agent import JarvisAgent
+    import backend.database as db
+
+    agent = JarvisAgent()
+    agent.api_key = "sk-test-cross"
+
+    user_query = "Проверь 20/08 17:00 IDT 🚫 BCM Blocked — US500"
+    session_id = "cross_test_session_error_recovery"
+
+    # 1. Classifier returns 200 with null content (reproducing docker log warning)
+    mock_classifier_resp = MagicMock()
+    mock_classifier_resp.status_code = 200
+    mock_classifier_resp.json.return_value = {"choices": [{"message": {"content": None}}]}
+
+    # 2. Main agent LLM call returns 200 with error payload (reproducing docker log KeyError: 'choices')
+    mock_agent_err_resp = MagicMock()
+    mock_agent_err_resp.status_code = 200
+    mock_agent_err_resp.text = '{"error": {"message": "OpenRouter provider temporary unavailable", "code": 503}}'
+    mock_agent_err_resp.json.return_value = {"error": {"message": "OpenRouter provider temporary unavailable", "code": 503}}
+
+    async def fake_post(url, *args, **kwargs):
+        if "chat/completions" in str(url):
+            # First call is classifier, subsequent is agent
+            if kwargs.get("json", {}).get("max_tokens") == 5:
+                return mock_classifier_resp
+            return mock_agent_err_resp
+        return mock_agent_err_resp
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=fake_post), \
+         patch("backend.rag.search_memory", return_value=[{"title": "BCM Guide", "content": "Risk compliance rules."}]), \
+         patch("backend.database.save_decision_log") as mock_save_decision:
+
+        response = await agent.respond(user_query, session_id=session_id)
+
+        # Verify graceful user-facing apology with provider error context
+        assert "Apologies, Sir." in response
+        assert "OpenRouter provider temporary unavailable" in response or "OpenRouter" in response
+
+        # Verify decision log was saved to DB with failure flag and error details
+        assert mock_save_decision.called
+        saved_log = mock_save_decision.call_args[0][0]
+        assert saved_log["session_id"] == session_id
+        assert saved_log["success"] is False
+        assert "OpenRouter provider temporary unavailable" in str(saved_log["error"]) or "LLM API Error" in str(saved_log["error"])
+
+
+# ==============================================================================
+# 5. Cross-Service: BCM Session + US100 Multi-Asset Pipeline + DB Logging
+# ==============================================================================
+
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
+@pytest.mark.asyncio
+async def test_cross_bcm_scheduler_us100_market_analysis_pipeline():
+    """Cross-Service Test: Verify end-to-end BCM market cycle execution for US100
+    from Scheduler through Technical Analysis, Confluence, AI Decision synthesis,
+    and DB persistence without 404 or unhandled errors.
+    """
+    from backend.bcm.autonomous_trader import get_technical_analysis, ask_ai_decision
+    from backend.bcm.tools import _normalize_yf_symbol
+
+    symbol = "US100"
+    normalized_ticker = _normalize_yf_symbol(symbol)
+    assert normalized_ticker == "^NDX"
+
+    dates = pd.date_range("2026-08-01", periods=100, freq="h")
+    prices = 19800.0 + np.cumsum(np.random.normal(0.5, 5, 100))
+    mock_df = pd.DataFrame({
+        "Open": prices,
+        "High": prices + 20,
+        "Low": prices - 20,
+        "Close": prices,
+        "Volume": [15000] * 100
+    }, index=dates)
+
+    # 1. Technical Analysis on US100
+    with patch("backend.bcm.autonomous_trader._fetch_yahoo_direct", return_value=mock_df) as mock_fetch:
+        analysis = get_technical_analysis(symbol)
+        assert analysis is not None
+        assert "rsi" in analysis.lower()
+        assert "macd" in analysis.lower()
+        assert "close" in analysis.lower()
+        assert mock_fetch.called
+
+    # 2. AI Decision Synthesis for US100
+    mock_llm_decision = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps({
+                        "decision": "WAIT",
+                        "confidence": 75,
+                        "reasoning": "NASDAQ 100 consolidating at key VWAP resistance level.",
+                        "trade_parameters": {}
+                    })
+                }
+            }
+        ]
+    }
+
+    with patch("requests.post") as mock_post, \
+         patch("backend.database.save_decision_log") as mock_db_log:
+        
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_llm_decision
+        mock_post.return_value = mock_resp
+
+        decision_result = ask_ai_decision(symbol, analysis)
+        assert decision_result is not None
+        assert "decision" in str(decision_result) or "WAIT" in str(decision_result)
+
+
+# ==============================================================================
+# 6. Cross-Service: HttpProvider Multi-Asset Yahoo Resolution + Resilience
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_cross_http_provider_multi_asset_yahoo_resolution():
+    """Cross-Service Test: Verify HttpProvider maps commodity, index, forex,
+    and crypto symbols to valid Yahoo endpoints, successfully parsing price metadata
+    and handling non-200 / network errors gracefully without crashing.
+    """
+    from backend.market_data import HttpProvider
+
+    provider = HttpProvider()
+
+    # Mock successful Yahoo response
+    def create_mock_yahoo_resp(price_val: float):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        mock_r.json.return_value = {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {
+                            "regularMarketPrice": price_val
+                        }
+                    }
+                ]
+            }
+        }
+        return mock_r
+
+    test_symbols = {
+        "US100": 19850.50,
+        "US500": 5600.25,
+        "GOLD": 2510.40,
+        "BRENT": 77.80,
+        "EURUSD": 1.0875,
+        "BTCUSD": 61200.00
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        for sym, expected_price in test_symbols.items():
+            mock_get.return_value = create_mock_yahoo_resp(expected_price)
+            price = await provider._fetch_yahoo(sym)
+            assert price == expected_price
+            assert mock_get.called
+
+        # Test error resilience: 404 / 500 / Network Exception
+        mock_404 = MagicMock()
+        mock_404.status_code = 404
+        mock_get.return_value = mock_404
+        res_404 = await provider._fetch_yahoo("UNKNOWN_TICKER")
+        assert res_404 is None
+
+        mock_get.side_effect = Exception("Connection timeout")
+        res_err = await provider._fetch_yahoo("US100")
+        assert res_err is None
+
+
+
+
 
 

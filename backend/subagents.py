@@ -77,7 +77,17 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
         else:
             data = raw_data
             
-        return data["choices"][0]["message"]["content"] or ""
+        if not isinstance(data, dict):
+            raise Exception(f"LLM returned non-dict response: {data}")
+            
+        if "error" in data or not data.get("choices"):
+            err_detail = data.get("error", {})
+            err_text = err_detail.get("message") if isinstance(err_detail, dict) else str(err_detail)
+            raise Exception(f"LLM API error: {err_text or raw_data}")
+            
+        choice_0 = data["choices"][0] if (isinstance(data.get("choices"), list) and len(data["choices"]) > 0) else {}
+        choice_msg = choice_0.get("message") if isinstance(choice_0, dict) else {}
+        return (choice_msg.get("content") or "") if isinstance(choice_msg, dict) else ""
 
 # ─── Safety guard ────────────────────────────────────────────────────────────
 

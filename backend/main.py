@@ -65,6 +65,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("websockets.server").setLevel(logging.WARNING)
 logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 class EndpointLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -144,7 +145,9 @@ async def lifespan(app: FastAPI):
 
         # Start BCM Session Scheduler in background (non-blocking, opt-in via ENABLE_BCM_AUTO_TRADER)
         if os.environ.get("ENABLE_BCM_AUTO_TRADER", "false").lower() == "true":
-            _load_private_plugins(scheduler)
+            loaded = _load_private_plugins(scheduler)
+            if not loaded:
+                logger.warning("ENABLE_BCM_AUTO_TRADER is true, but no private BCM plugin was found.")
         else:
             logger.info("BCM Session Scheduler is disabled (set ENABLE_BCM_AUTO_TRADER=true in .env to enable).")
     except Exception as e:
