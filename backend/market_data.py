@@ -30,11 +30,7 @@ import httpx
 logger = logging.getLogger("hermes.market_data")
 
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        "Version/17.0 Safari/605.1.15"
-    )
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 }
 
 # ---------------------------------------------------------------------------
@@ -147,12 +143,29 @@ class HttpProvider(MarketDataProvider):
 
     async def _fetch_yahoo(self, ticker: str) -> Optional[float]:
         t_clean = ticker.strip().upper()
-        tickers_to_try = [ticker]
-        if not t_clean.endswith("=X"):
-            tickers_to_try.append(f"{t_clean}=X")
+        
+        YAHOO_MAP = {
+            "XAUUSD": "GC=F",
+            "GOLD": "GC=F",
+            "BRENT": "BZ=F",
+            "WTI": "CL=F",
+            "US500": "^GSPC",
+            "SPX": "^GSPC",
+            "NDX": "^NDX",
+            "US100": "^NDX",
+            "DOW": "^DJI",
+            "US30": "^DJI"
+        }
+        
+        if t_clean in YAHOO_MAP:
+            tickers_to_try = [YAHOO_MAP[t_clean]]
+        else:
+            tickers_to_try = [t_clean]
+            if not t_clean.endswith("=X") and not t_clean.startswith("^") and "=" not in t_clean:
+                tickers_to_try.append(f"{t_clean}=X")
 
         for t in tickers_to_try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}"
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{t}"
             try:
                 async with httpx.AsyncClient(timeout=8.0, headers=_HEADERS) as client:
                     r = await client.get(url)
@@ -175,128 +188,20 @@ class HttpProvider(MarketDataProvider):
 # Provider 2: CcxtProvider (optional — crypto only)
 # ---------------------------------------------------------------------------
 
-class CcxtProvider(MarketDataProvider):
-    """Real-time crypto prices via any CCXT-supported exchange.
-
-    Install: uv sync --group market-ccxt
-    Config:  CCXT_EXCHANGE=binance  (default: binance)
-
-    For stock symbols this provider transparently delegates to HttpProvider
-    so mixed alert lists (crypto + stocks) keep working out of the box.
-    """
-
-    def __init__(self) -> None:
-        try:
-            import ccxt  # noqa: F401 — intentional lazy import
-            exchange_id = os.getenv("CCXT_EXCHANGE", "binance")
-            exchange_cls = getattr(ccxt, exchange_id, None)
-            if exchange_cls is None:
-                raise ValueError(f"Unknown CCXT exchange: {exchange_id!r}")
-            self._exchange = exchange_cls({"enableRateLimit": True})
-            self._http_fallback = HttpProvider()
-            logger.info("CcxtProvider initialised (exchange=%s)", exchange_id)
-        except ImportError:
-            raise RuntimeError(
-                "ccxt is not installed. Run: uv sync --group market-ccxt"
-            )
-
-    def name(self) -> str:
-        return f"CcxtProvider ({os.getenv('CCXT_EXCHANGE', 'binance')})"
-
-    async def get_price(self, symbol: str, is_crypto: bool) -> Optional[float]:
-        if not is_crypto:
-            # Delegate stocks to the zero-config HTTP fallback
-            return await self._http_fallback.get_price(symbol, is_crypto=False)
-        return await self._fetch_ccxt(symbol)
-
-    async def _fetch_ccxt(self, coin_id: str) -> Optional[float]:
-        """Map CoinGecko coin_id to CCXT trading pair and fetch ticker."""
-        _COINGECKO_TO_BASE: dict[str, str] = {
-            "bitcoin": "BTC",
-            "ethereum": "ETH",
-            "binancecoin": "BNB",
-            "solana": "SOL",
-            "ripple": "XRP",
-            "the-open-network": "TON",
-        }
-        base = _COINGECKO_TO_BASE.get(coin_id, coin_id.upper())
-        quote = os.getenv("CCXT_QUOTE", "USDT")
-        pair = f"{base}/{quote}"
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            ticker = await loop.run_in_executor(
-                None, self._exchange.fetch_ticker, pair
-            )
-            last = ticker.get("last")
-            if last is not None:
-                return float(last)
-        except Exception as exc:
-            logger.warning("CcxtProvider: error for %s: %s", pair, exc)
-        return None
 
 
-# ---------------------------------------------------------------------------
-# Provider 3: AlpacaProvider (optional — stocks only)
-# ---------------------------------------------------------------------------
-
-class AlpacaProvider(MarketDataProvider):
-    """Real-time US equity prices via the Alpaca Market Data API.
-
-    Install:  uv sync --group market-alpaca
-    Config:   ALPACA_API_KEY, ALPACA_API_SECRET
-              ALPACA_BASE_URL (default: https://data.alpaca.markets)
-
-    Paper-trading credentials from https://alpaca.markets work for data.
-    For crypto symbols this provider delegates to HttpProvider.
-    """
-
-    def __init__(self) -> None:
-        try:
-            from alpaca.data import StockHistoricalDataClient  # noqa: F401
-            from alpaca.data.requests import StockLatestTradeRequest  # noqa: F401
-            api_key = os.getenv("ALPACA_API_KEY")
-            api_secret = os.getenv("ALPACA_API_SECRET")
-            if not api_key or not api_secret:
-                raise RuntimeError(
-                    "ALPACA_API_KEY and ALPACA_API_SECRET must be set "
-                    "when MARKET_DATA_PROVIDER=alpaca"
-                )
-            self._client = StockHistoricalDataClient(api_key, api_secret)
-            self._http_fallback = HttpProvider()
-            logger.info("AlpacaProvider initialised")
-        except ImportError:
-            raise RuntimeError(
-                "alpaca-py is not installed. Run: uv sync --group market-alpaca"
-            )
-
-    def name(self) -> str:
-        return "AlpacaProvider (alpaca-py)"
-
-    async def get_price(self, symbol: str, is_crypto: bool) -> Optional[float]:
-        if is_crypto:
-            return await self._http_fallback.get_price(symbol, is_crypto=True)
-        return await self._fetch_alpaca(symbol)
-
-    async def _fetch_alpaca(self, ticker: str) -> Optional[float]:
-        from alpaca.data.requests import StockLatestTradeRequest
-        import asyncio
-        try:
-            req = StockLatestTradeRequest(symbol_or_symbols=ticker.upper())
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, self._client.get_stock_latest_trade, req
-            )
-            trade = result.get(ticker.upper())
-            if trade is not None:
-                return float(trade.price)
-        except Exception as exc:
-            logger.warning("AlpacaProvider: error for %s: %s", ticker, exc)
-        return None
 
 
 # ---------------------------------------------------------------------------
 # Factory — driven by MARKET_DATA_PROVIDER env var
 # ---------------------------------------------------------------------------
+
+try:
+    from backend.bcm.providers import CcxtProvider, AlpacaProvider
+except ImportError:
+    CcxtProvider = None
+    AlpacaProvider = None
+
 
 def get_provider() -> MarketDataProvider:
     """Return the configured MarketDataProvider.
@@ -310,18 +215,20 @@ def get_provider() -> MarketDataProvider:
 
     if provider_name == "ccxt":
         try:
-            p = CcxtProvider()
-            logger.info("Market data: using %s", p.name())
-            return p
+            if CcxtProvider is not None:
+                p = CcxtProvider()
+                logger.info("Market data: using %s", p.name())
+                return p
         except Exception as exc:
             logger.warning(
                 "CcxtProvider unavailable (%s); falling back to HttpProvider.", exc
             )
     elif provider_name == "alpaca":
         try:
-            p = AlpacaProvider()
-            logger.info("Market data: using %s", p.name())
-            return p
+            if AlpacaProvider is not None:
+                p = AlpacaProvider()
+                logger.info("Market data: using %s", p.name())
+                return p
         except Exception as exc:
             logger.warning(
                 "AlpacaProvider unavailable (%s); falling back to HttpProvider.", exc
@@ -334,3 +241,4 @@ def get_provider() -> MarketDataProvider:
     p = HttpProvider()
     logger.info("Market data: using %s", p.name())
     return p
+

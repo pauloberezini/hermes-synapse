@@ -51,14 +51,14 @@ describe('ChatTab Component', () => {
     expect(screen.getByText('Hello, Sir.')).toBeInTheDocument();
     expect(screen.getByText('What is the weather today?')).toBeInTheDocument();
     
-    expect(screen.getByText('JARVIS')).toBeInTheDocument();
+    expect(screen.getByText('SYNAPSE')).toBeInTheDocument();
     expect(screen.getByText('CREATOR')).toBeInTheDocument();
   });
 
   it('triggers setInputValue on text entry', () => {
     render(<ChatTab {...defaultProps} />);
     
-    const input = screen.getByPlaceholderText(/Enter command or request for Jarvis/i);
+    const input = screen.getByPlaceholderText(/Enter command or request for Synapse/i);
     fireEvent.change(input, { target: { value: 'New message' } });
     
     expect(defaultProps.setInputValue).toHaveBeenCalledWith('New message');

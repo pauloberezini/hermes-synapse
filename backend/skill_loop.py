@@ -88,11 +88,17 @@ class SkillDistiller:
                 resp = client.post(f"{self.api_base}/chat/completions", json=payload, headers=headers)
 
             if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"]["content"].strip()
-                if content.startswith("```"):
-                    content = re.sub(r"^```[a-zA-Z]*\n", "", content)
-                    content = re.sub(r"\n```$", "", content)
-                return self._parse_skill_markdown(content, log_entry)
+                resp_data = resp.json()
+                if isinstance(resp_data, dict) and resp_data.get("choices") and len(resp_data["choices"]) > 0:
+                    choice_0 = resp_data["choices"][0]
+                    msg_obj = choice_0.get("message") if isinstance(choice_0, dict) else {}
+                    raw_content = msg_obj.get("content") if isinstance(msg_obj, dict) else None
+                    if raw_content and isinstance(raw_content, str):
+                        content = raw_content.strip()
+                        if content.startswith("```"):
+                            content = re.sub(r"^```[a-zA-Z]*\n", "", content)
+                            content = re.sub(r"\n```$", "", content)
+                        return self._parse_skill_markdown(content, log_entry)
         except Exception as err:
             logger.warning(f"LLM skill distillation failed: {err}. Falling back to heuristic distiller.")
 

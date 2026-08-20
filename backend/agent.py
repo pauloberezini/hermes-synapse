@@ -82,6 +82,16 @@ async def generate_chat_title(user_message: str, api_key: str, api_base: str, mo
     """
     Generates a very short chat title (2-5 words) in the language of the query.
     """
+    if not user_message or not isinstance(user_message, str):
+        return "New Chat"
+
+    if not api_key:
+        words = user_message.split()
+        fallback_title = " ".join(words[:4])
+        if len(words) > 4:
+            fallback_title += "..."
+        return fallback_title or "New Chat"
+
     try:
         import httpx
         headers = {
@@ -97,17 +107,29 @@ async def generate_chat_title(user_message: str, api_key: str, api_base: str, mo
             "temperature": 0.5,
             "max_tokens": 15
         }
+        is_openmodel = "openmodel.ai" in api_base
+        url = f"{api_base}/messages" if is_openmodel else f"{api_base}/chat/completions"
+        actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
-                f"{api_base}/chat/completions",
-                json=payload,
+                url,
+                json=actual_payload,
                 headers=headers
             )
         if resp.status_code == 200:
-            title = resp.json()["choices"][0]["message"]["content"].strip()
-            if (title.startswith('"') and title.endswith('"')) or (title.startswith("'") and title.endswith("'")):
-                title = title[1:-1].strip()
-            return title
+            raw_data = resp.json()
+            resp_data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
+            if isinstance(resp_data, dict) and resp_data.get("choices") and len(resp_data["choices"]) > 0:
+                choice_0 = resp_data["choices"][0]
+                if isinstance(choice_0, dict):
+                    msg_obj = choice_0.get("message")
+                    raw_content = msg_obj.get("content") if isinstance(msg_obj, dict) else None
+                    if raw_content and isinstance(raw_content, str):
+                        title = raw_content.strip()
+                        if (title.startswith('"') and title.endswith('"')) or (title.startswith("'") and title.endswith("'")):
+                            title = title[1:-1].strip()
+                        if title:
+                            return title
     except Exception as e:
         logger.warning(f"Title generator LLM call failed ({e})")
     
@@ -115,7 +137,7 @@ async def generate_chat_title(user_message: str, api_key: str, api_base: str, mo
     fallback_title = " ".join(words[:4])
     if len(words) > 4:
         fallback_title += "..."
-    return fallback_title
+    return fallback_title or "New Chat"
 
 async def classify_complexity(user_message: str, api_key: str, api_base: str) -> str:
     """
@@ -124,15 +146,26 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str) ->
     Fallback: keyword-matching if LLM call fails.
     COMPLEXITY_ROUTING env overrides: 'always_direct', 'always_agent'
     """
-    routing_mode = os.getenv("COMPLEXITY_ROUTING", "auto").strip().lower()
+    if not user_message or not isinstance(user_message, str):
+        return "direct"
+
+    routing_mode = (os.getenv("COMPLEXITY_ROUTING") or "auto").strip().lower()
     if routing_mode == "always_direct":
         return "direct"
     if routing_mode == "always_agent":
         return "agent"
-    
+
     # Try LLM classifier with the fast/cheap planner model
     from backend.subagents import get_agent_model
     classifier_model = get_agent_model("planner", os.getenv("LLM_MODEL", "ollama/llama3"))
+
+    if not api_key:
+        msg_lower = user_message.lower()
+        if any(kw in msg_lower for kw in _ORCHESTRATE_KEYWORDS):
+            return "orchestrate"
+        if any(kw in msg_lower for kw in _AGENT_KEYWORDS):
+            return "agent"
+        return "direct"
     
     try:
         import httpx
@@ -147,18 +180,30 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str) ->
                 {"role": "user",   "content": user_message}
             ],
             "temperature": 0.0,
-            "max_tokens": 5
+            "max_tokens": 10
         }
+        is_openmodel = "openmodel.ai" in api_base
+        url = f"{api_base}/messages" if is_openmodel else f"{api_base}/chat/completions"
+        actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
-                f"{api_base}/chat/completions",
-                json=payload,
+                url,
+                json=actual_payload,
                 headers=headers
             )
         if resp.status_code == 200:
-            level = resp.json()["choices"][0]["message"]["content"].strip().lower()
-            if level in ("direct", "agent", "orchestrate"):
-                return level
+            raw_data = resp.json()
+            resp_data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
+            if isinstance(resp_data, dict) and resp_data.get("choices") and len(resp_data["choices"]) > 0:
+                choice_0 = resp_data["choices"][0]
+                if isinstance(choice_0, dict):
+                    msg_obj = choice_0.get("message")
+                    raw_content = msg_obj.get("content") if isinstance(msg_obj, dict) else None
+                    if raw_content and isinstance(raw_content, str):
+                        cleaned = raw_content.strip().lower().replace("`", "").replace("'", "").replace('"', '').rstrip(".")
+                        for valid_lvl in ("orchestrate", "agent", "direct"):
+                            if valid_lvl in cleaned:
+                                return valid_lvl
     except Exception as e:
         logger.warning(f"Complexity classifier LLM call failed ({e}), falling back to keyword routing")
     
@@ -251,10 +296,10 @@ If Sir asks what you can do, or requests info about a specific skill, describe i
 """
 
 class JarvisAgent:
-    def __init__(self):
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
-        self.model = os.getenv("LLM_MODEL", "ollama/llama3")
+    def __init__(self, api_key: Optional[str] = None, api_base: Optional[str] = None, model: Optional[str] = None):
+        self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
+        self.api_base = api_base if api_base is not None else os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
+        self.model = model if model is not None else os.getenv("LLM_MODEL", "ollama/llama3")
         self.system_prompt = DEFAULT_SYSTEM_PROMPT
         self.max_history_len = 20  # Keep last 20 messages for context
         self.last_costs: Dict[str, float] = {}
@@ -535,11 +580,27 @@ class JarvisAgent:
                         
                     raw_data = response.json()
                     data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
+
+                    if not isinstance(data, dict) or "error" in data or not data.get("choices"):
+                        err_detail = data.get("error", {}) if isinstance(data, dict) else str(data)
+                        if isinstance(err_detail, dict):
+                            err_text = err_detail.get("message") or str(err_detail)
+                        else:
+                            err_text = str(err_detail) if err_detail else "Empty choices returned from model."
+                        error_msg = f"LLM API Error: {err_text}"
+                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+                        logger.error(f"LLM API error response from {provider_name}: {raw_data}")
+                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {err_text}."
+                        break
+
                     usage = data.get("usage", {})
                     total_prompt_tokens += usage.get("prompt_tokens", 0)
                     total_completion_tokens += usage.get("completion_tokens", 0)
                     
-                    choice_msg = data["choices"][0]["message"]
+                    choice_0 = data["choices"][0] if (isinstance(data.get("choices"), list) and len(data["choices"]) > 0) else {}
+                    choice_msg = choice_0.get("message") if isinstance(choice_0, dict) else {}
+                    if not isinstance(choice_msg, dict):
+                        choice_msg = {}
                     
                     tool_calls = choice_msg.get("tool_calls")
                     if not tool_calls:
@@ -596,8 +657,14 @@ class JarvisAgent:
                                 if response_fallback.status_code == 200:
                                     raw_fallback_data = response_fallback.json()
                                     fallback_data = translate_to_openai_response(raw_fallback_data) if is_openmodel else raw_fallback_data
-                                    response_text = fallback_data["choices"][0]["message"].get("content") or ""
-                                    total_completion_tokens += fallback_data.get("usage", {}).get("completion_tokens", 0)
+                                    if isinstance(fallback_data, dict) and fallback_data.get("choices") and len(fallback_data["choices"]) > 0:
+                                        fb_choice_0 = fallback_data["choices"][0]
+                                        fb_choice = fb_choice_0.get("message") if isinstance(fb_choice_0, dict) else {}
+                                        fb_content = fb_choice.get("content") if isinstance(fb_choice, dict) else ""
+                                        response_text = fb_content if isinstance(fb_content, str) else ""
+                                        total_completion_tokens += fallback_data.get("usage", {}).get("completion_tokens", 0)
+                                    else:
+                                        response_text = "Sir, the operation requested has been completed successfully."
                                 else:
                                     response_text = "Sir, the operation requested has been completed successfully."
                             except Exception as fallback_err:
@@ -638,6 +705,10 @@ class JarvisAgent:
                         source="Agent",
                         message=f"🧠 Decision: launching tools {[tc.get('function', {}).get('name') for tc in tool_calls]}"
                     )
+                    
+                    # Set parent_message_id context so call_subagent can bind to the current assistant message
+                    from backend.tools import _call_context as _parent_ctx
+                    _parent_ctx.parent_message_id = self.last_saved_ids.get(session_id, {}).get("assistant")
                     
                     # 1. Append assistant's tool-call response to messages thread
                     messages.append(choice_msg)
@@ -837,12 +908,13 @@ class JarvisAgent:
 
         return extracted if extracted else None
 
-    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None) -> str:
+    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None, parent_message_id: Optional[int] = None) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
         session_id = chat_id or subagent["id"]
         subagent_name = subagent["name"]
         system_prompt = subagent["system_prompt"]
         subagent_model = subagent["model"]
+        tool_calls_log: List[Dict[str, Any]] = []
 
         from backend.activity_logger import log_activity
         log_activity(
@@ -1065,11 +1137,27 @@ class JarvisAgent:
                         
                     raw_data = response.json()
                     data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
+
+                    if not isinstance(data, dict) or "error" in data or not data.get("choices"):
+                        err_detail = data.get("error", {}) if isinstance(data, dict) else str(data)
+                        if isinstance(err_detail, dict):
+                            err_text = err_detail.get("message") or str(err_detail)
+                        else:
+                            err_text = str(err_detail) if err_detail else "Empty choices returned from model."
+                        error_msg = f"LLM API Error: {err_text}"
+                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+                        logger.error(f"Subagent '{subagent_name}' ({subagent_model}) API error response: {raw_data}")
+                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {err_text}."
+                        break
+
                     usage = data.get("usage", {})
                     total_prompt_tokens += usage.get("prompt_tokens", 0)
                     total_completion_tokens += usage.get("completion_tokens", 0)
                     
-                    choice_msg = data["choices"][0]["message"]
+                    choice_0 = data["choices"][0] if (isinstance(data.get("choices"), list) and len(data["choices"]) > 0) else {}
+                    choice_msg = choice_0.get("message") if isinstance(choice_0, dict) else {}
+                    if not isinstance(choice_msg, dict):
+                        choice_msg = {}
                     
                     tool_calls = choice_msg.get("tool_calls")
                     if not tool_calls:
@@ -1160,6 +1248,16 @@ class JarvisAgent:
                         if tool_name == "bybit_place_order" and ("success" in result_str.lower() or "orderid" in result_str.lower()):
                             order_placed_successfully = True
                         
+                        # Accumulate tool call for agent thread viewer
+                        from backend.marketplace.lifecycle import LifecycleManager as _LCM
+                        _skill_id = _LCM.get_skill_for_tool(tool_name)
+                        tool_calls_log.append({
+                            "name": tool_name,
+                            "args": tool_args,
+                            "result": result_str[:600] if len(result_str) > 600 else result_str,
+                            "skill": _skill_id,
+                        })
+                        
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.get("id"),
@@ -1178,6 +1276,11 @@ class JarvisAgent:
         prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
         completion_est = len(response_text) // 4
         cost_usd = calculate_cost(subagent_model, prompt_est, completion_est)
+        
+        # Resolve parent_message_id: prefer explicit param, then threading.local context
+        from backend.tools import _call_context as _tc
+        resolved_parent_id = parent_message_id or getattr(_tc, "parent_message_id", None)
+        
         log_entry = {
             "timestamp": datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S"),
             "session_id": session_id,
@@ -1191,7 +1294,9 @@ class JarvisAgent:
             "traces": [],
             "agent_id": subagent["id"],
             "completion_tokens_estimate": completion_est,
-            "cost_usd": cost_usd
+            "cost_usd": cost_usd,
+            "parent_message_id": resolved_parent_id,
+            "tool_calls_log": tool_calls_log,
         }
         
         DECISION_LOGS.insert(0, log_entry)
@@ -1202,6 +1307,7 @@ class JarvisAgent:
             save_decision_log(log_entry)
         except Exception as db_err:
             logger.error(f"Failed to save subagent decision log to DB: {db_err}")
+
 
         try:
             from backend.bcm.autonomous_trader import format_any_bcm_response
@@ -1249,14 +1355,17 @@ def translate_to_anthropic_payload(openai_payload):
                 if content:
                     blocks.append({"type": "text", "text": content})
                 for tc in tool_calls:
+                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                    fn_args = fn.get("arguments", "{}") if isinstance(fn, dict) else "{}"
+                    fn_name = fn.get("name", "") if isinstance(fn, dict) else ""
                     try:
-                        args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                        args = json.loads(fn_args) if isinstance(fn_args, str) else fn_args
                     except Exception:
                         args = {}
                     blocks.append({
                         "type": "tool_use",
-                        "id": tc["id"],
-                        "name": tc["function"]["name"],
+                        "id": tc.get("id", "") if isinstance(tc, dict) else "",
+                        "name": fn_name,
                         "input": args
                     })
                 anthropic_messages.append({"role": "assistant", "content": blocks})
@@ -1268,14 +1377,14 @@ def translate_to_anthropic_payload(openai_payload):
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": msg["tool_call_id"],
+                        "tool_use_id": msg.get("tool_call_id", "") if isinstance(msg, dict) else "",
                         "content": content or ""
                     }
                 ]
             })
 
     anthropic_payload = {
-        "model": openai_payload["model"],
+        "model": openai_payload.get("model", ""),
         "messages": anthropic_messages,
         "max_tokens": 4096,
         "temperature": openai_payload.get("temperature", 0.7)
@@ -1288,21 +1397,34 @@ def translate_to_anthropic_payload(openai_payload):
     return anthropic_payload
 
 def translate_to_openai_response(anthropic_response):
+    if not isinstance(anthropic_response, dict):
+        return {"choices": [{"message": {"role": "assistant", "content": None}}], "usage": {}}
+    if "error" in anthropic_response:
+        return {"error": anthropic_response["error"]}
     content_list = anthropic_response.get("content", [])
+    if not isinstance(content_list, list):
+        content_list = []
     text_content = ""
     tool_calls = []
     import json
     
     for block in content_list:
+        if not isinstance(block, dict):
+            continue
         if block.get("type") == "text":
             text_content += block.get("text", "")
         elif block.get("type") == "tool_use":
+            tool_input = block.get("input", {})
+            try:
+                args_str = json.dumps(tool_input) if isinstance(tool_input, (dict, list, str, int, float, bool)) else "{}"
+            except Exception:
+                args_str = "{}"
             tool_calls.append({
-                "id": block["id"],
+                "id": block.get("id", ""),
                 "type": "function",
                 "function": {
-                    "name": block["name"],
-                    "arguments": json.dumps(block["input"])
+                    "name": block.get("name", ""),
+                    "arguments": args_str
                 }
             })
             
@@ -1316,8 +1438,8 @@ def translate_to_openai_response(anthropic_response):
             }
         ],
         "usage": {
-            "prompt_tokens": anthropic_response.get("usage", {}).get("input_tokens", 0),
-            "completion_tokens": anthropic_response.get("usage", {}).get("output_tokens", 0)
+            "prompt_tokens": anthropic_response.get("usage", {}).get("input_tokens", 0) if isinstance(anthropic_response.get("usage"), dict) else 0,
+            "completion_tokens": anthropic_response.get("usage", {}).get("output_tokens", 0) if isinstance(anthropic_response.get("usage"), dict) else 0
         }
     }
     

@@ -118,16 +118,14 @@ class TestGetProviderFactory:
     def test_ccxt_falls_back_to_http_when_not_installed(self, monkeypatch):
         """When ccxt package is absent the factory must fall back gracefully."""
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "ccxt")
-        with patch("backend.market_data.CcxtProvider.__init__",
-                   side_effect=RuntimeError("ccxt not installed")):
+        with patch("backend.market_data.CcxtProvider", None):
             provider = get_provider()
         assert isinstance(provider, HttpProvider)
 
     def test_alpaca_falls_back_to_http_when_not_installed(self, monkeypatch):
         """When alpaca-py is absent the factory must fall back gracefully."""
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "alpaca")
-        with patch("backend.market_data.AlpacaProvider.__init__",
-                   side_effect=RuntimeError("alpaca-py not installed")):
+        with patch("backend.market_data.AlpacaProvider", None):
             provider = get_provider()
         assert isinstance(provider, HttpProvider)
 

@@ -1,5 +1,28 @@
 import React from 'react';
 
+export interface ToolCallLog {
+  name: string;
+  args: Record<string, unknown>;
+  result: string;
+  skill?: string | null;
+}
+
+export interface AgentThread {
+  id: number;
+  agent_id: string;
+  agent_name: string;
+  model: string;
+  user_message: string;
+  assistant_response: string;
+  skills_used: string[];
+  tool_calls_log: ToolCallLog[];
+  latency_ms: number;
+  cost_usd: number;
+  timestamp: string;
+  success: boolean;
+  error?: string | null;
+}
+
 export interface ChatMessage {
   id?: number;
   role: 'user' | 'assistant' | 'system';
@@ -8,6 +31,8 @@ export interface ChatMessage {
   cost_usd?: number;
   timestamp?: string;
   created_at?: string;
+  agent_threads?: AgentThread[];      // lazy-loaded subagent communication threads
+  agent_threads_loaded?: boolean;     // true once fetch has been attempted
 }
 
 export interface DecisionLog {

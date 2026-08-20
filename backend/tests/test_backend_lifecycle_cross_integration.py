@@ -6,6 +6,13 @@ from backend import price_monitor
 from backend import rag
 from backend.main import lifespan, app
 
+bcm_available = False
+try:
+    import backend.bcm
+    bcm_available = True
+except ImportError:
+    pass
+
 
 @pytest.mark.asyncio
 async def test_full_application_lifecycle_graceful_shutdown():
@@ -55,7 +62,7 @@ async def test_cross_subsystem_scheduler_shutdown_cleanup():
     """
     with patch("backend.skill_loop.get_skill_distiller"), \
          patch("backend.rss_service.fetch_all_active_rss_nodes", return_value=[]), \
-         patch("backend.bcm.watcher.watcher.sync_memory_state"):
+         patch.dict("sys.modules", {"backend.bcm.watcher": MagicMock()}):
         
         # Start background loops
         distill_task = scheduler.start_skill_distillation_loop(interval_seconds=60)
@@ -78,6 +85,7 @@ async def test_cross_subsystem_scheduler_shutdown_cleanup():
         assert rss_task.done()
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_bcm_session_concurrent_cancellation():
     """Cross Test: Simulate a running BCM session being interrupted by sudden shutdown
@@ -109,6 +117,7 @@ async def test_cross_bcm_session_concurrent_cancellation():
         assert len(rows) > 0
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_bcm_session_cron_schedule_and_db_persistence():
     """Cross Test: End-to-end verification of BCM session execution, metadata persistence
@@ -156,4 +165,33 @@ async def test_cross_bcm_session_cron_schedule_and_db_persistence():
     job = scheduler.scheduler.get_job(job_id)
     assert job is not None
     assert job.name == label
+
+
+def test_cross_watcher_memory_sync_scheduler_lifecycle_it():
+    """Cross Test: Verify watcher memory synchronization job integration with APScheduler
+    and ZeroCostWatcher memory state across the background scheduler lifecycle.
+    """
+    from backend.scheduler import scheduler, start_watcher_loop, _job_watcher_sync
+    try:
+        from backend.bcm.watcher import watcher
+    except ImportError:
+        pytest.skip("Private BCM module not installed")
+
+    # 1. Initialize watcher with sample tracking history
+    watcher._pnl_history["TEST_POS_1"] = [10.0, 20.0]
+    watcher._pnl_history["TEST_POS_EMPTY"] = []
+
+    # 2. Register watcher sync loop in scheduler
+    start_watcher_loop(interval_seconds=120)
+    job = scheduler.get_job("watcher_sync_loop")
+    assert job is not None
+    assert job.name == "Watcher Memory Sync"
+
+    # 3. Trigger watcher sync job directly
+    _job_watcher_sync()
+
+    # 4. Verify cross-state modification
+    assert "TEST_POS_1" in watcher._pnl_history
+    assert "TEST_POS_EMPTY" not in watcher._pnl_history
+
 

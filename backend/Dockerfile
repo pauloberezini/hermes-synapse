@@ -61,6 +61,7 @@ RUN pip install --no-cache-dir psycopg2-binary>=2.9.0
 
 # Copy source code and environment configuration
 COPY backend/ /app/backend/
+COPY scripts/ /app/scripts/
 
 EXPOSE 8000
 

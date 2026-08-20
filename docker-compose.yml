@@ -26,6 +26,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./hermes_sdk:/app/hermes_sdk
+      - ./scripts:/app/scripts
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
       - sandbox_data:/app/backend/data/sandbox

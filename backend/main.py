@@ -65,6 +65,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("websockets.server").setLevel(logging.WARNING)
 logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 class EndpointLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -135,7 +136,7 @@ async def lifespan(app: FastAPI):
 
     # Start background APScheduler & self-improving skill distillation loop
     try:
-        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, start_bcm_session_scheduler_loop, start_watcher_loop
+        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, _load_private_plugins, start_watcher_loop
         restore_state()
         scheduler.start()
         start_skill_distillation_loop(interval_seconds=900)
@@ -144,7 +145,9 @@ async def lifespan(app: FastAPI):
 
         # Start BCM Session Scheduler in background (non-blocking, opt-in via ENABLE_BCM_AUTO_TRADER)
         if os.environ.get("ENABLE_BCM_AUTO_TRADER", "false").lower() == "true":
-            start_bcm_session_scheduler_loop()
+            loaded = _load_private_plugins(scheduler)
+            if not loaded:
+                logger.warning("ENABLE_BCM_AUTO_TRADER is true, but no private BCM plugin was found.")
         else:
             logger.info("BCM Session Scheduler is disabled (set ENABLE_BCM_AUTO_TRADER=true in .env to enable).")
     except Exception as e:
@@ -359,6 +362,15 @@ async def update_settings(update: SettingsUpdate):
 async def get_logs():
     from backend.database import get_decision_logs
     return get_decision_logs(100)
+
+@app.get("/api/messages/{message_id}/agent_threads")
+async def get_message_agent_threads(message_id: int):
+    """Returns all subagent decision logs spawned for a given parent assistant message.
+    Used by the Agent Thread Viewer UI component to display expandable subagent communication.
+    """
+    from backend.database import get_agent_threads_for_message
+    threads = get_agent_threads_for_message(message_id)
+    return {"threads": threads, "message_id": message_id}
 
 @app.get("/api/metrics")
 async def get_metrics():
