@@ -135,7 +135,7 @@ async def lifespan(app: FastAPI):
 
     # Start background APScheduler & self-improving skill distillation loop
     try:
-        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, start_bcm_session_scheduler_loop, start_watcher_loop
+        from backend.scheduler import scheduler, restore_state, start_skill_distillation_loop, start_rss_poller_loop, _load_private_plugins, start_watcher_loop
         restore_state()
         scheduler.start()
         start_skill_distillation_loop(interval_seconds=900)
@@ -144,7 +144,7 @@ async def lifespan(app: FastAPI):
 
         # Start BCM Session Scheduler in background (non-blocking, opt-in via ENABLE_BCM_AUTO_TRADER)
         if os.environ.get("ENABLE_BCM_AUTO_TRADER", "false").lower() == "true":
-            start_bcm_session_scheduler_loop()
+            _load_private_plugins(scheduler)
         else:
             logger.info("BCM Session Scheduler is disabled (set ENABLE_BCM_AUTO_TRADER=true in .env to enable).")
     except Exception as e:

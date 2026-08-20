@@ -119,24 +119,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_text = update.message.text
     
-    # ⚡ FAST-First CLI v2.0 (Stage 4)
-    if user_text.startswith("/") and user_text.lower() in ["/pnl", "/positions", "/risk", "/balance"]:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        # ⚡ FAST-First CLI v2.0 (Dynamic Hooks)
+    if user_text.startswith('/'):
         try:
-            import json
-            from backend.bcm.tools import handle_exchange_get_positions, handle_exchange_get_balance
-            if user_text.lower() in ["/pnl", "/balance"]:
-                res = handle_exchange_get_balance({})
-            elif user_text.lower() == "/positions":
-                res = handle_exchange_get_positions({})
-            else:
-                res = {"status": "Fast command recognized but not fully mapped yet."}
-            
-            reply_text = f"⚡ **FAST EXECUTION** ({user_text}):\n```json\n{json.dumps(res, indent=2, ensure_ascii=False)}\n```"
-            await update.message.reply_text(reply_text, parse_mode="Markdown")
-        except Exception as e:
-            await update.message.reply_text(f"⚡ FAST EXECUTION ERROR: {e}")
-        return
+            from backend.bcm.plugin import handle_fast_command
+            handled, response = handle_fast_command(user_text)
+            if handled:
+                if response:
+                    await update.message.reply_text(response, parse_mode='Markdown')
+                return
+        except ImportError:
+            pass
     
     # Broadcast user's message to dashboard UI immediately
     await manager.broadcast({

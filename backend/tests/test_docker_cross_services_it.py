@@ -17,7 +17,7 @@ import pandas as pd
 import numpy as np
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from backend.bcm.fast_market_cache import fast_market_cache, get_historical_data, get_remizov_shift
+from backend.bcm.fast_market_cache import fast_market_cache
 from backend.bcm.regime_detector import RegimeDetector
 from backend.bcm.confluence_engine import ConfluenceEngine, ConfluenceDecision
 from backend.bcm.compliance_officer import ComplianceOfficer
