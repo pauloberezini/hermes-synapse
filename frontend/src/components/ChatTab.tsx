@@ -77,6 +77,229 @@ const detectMissingEnvKey = (content: string): string | null => {
   return match ? match[1] : null;
 };
 
+// ─── Skill badge colors ─────────────────────────────────────────────────────
+const SKILL_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  web_search:       { bg: 'rgba(0,240,255,0.08)', border: 'rgba(0,240,255,0.3)',  text: '#00f0ff' },
+  market_monitor:   { bg: 'rgba(255,159,0,0.08)', border: 'rgba(255,159,0,0.3)', text: '#ff9f00' },
+  forex_provider:   { bg: 'rgba(255,159,0,0.08)', border: 'rgba(255,159,0,0.3)', text: '#ff9f00' },
+  forex:            { bg: 'rgba(255,159,0,0.08)', border: 'rgba(255,159,0,0.3)', text: '#ff9f00' },
+  obsidian_rag:     { bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.3)', text: '#a78bfa' },
+  todoist_sync:     { bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)', text: '#10b981' },
+  google_calendar:  { bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)', text: '#10b981' },
+  shell_execution:  { bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.3)',  text: '#ef4444' },
+  bcm:              { bg: 'rgba(251,191,36,0.08)', border: 'rgba(251,191,36,0.3)', text: '#fbbf24' },
+};
+
+function SkillBadge({ skill }: { skill: string }) {
+  const colors = SKILL_COLORS[skill] || { bg: 'rgba(100,100,100,0.1)', border: 'rgba(100,100,100,0.3)', text: 'var(--text-dim)' };
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      fontSize: '0.65rem', fontWeight: 600, fontFamily: 'var(--font-mono)',
+      padding: '1px 6px', borderRadius: '4px',
+      backgroundColor: colors.bg, border: `1px solid ${colors.border}`, color: colors.text,
+      letterSpacing: '0.3px',
+    }}>
+      {skill}
+    </span>
+  );
+}
+
+interface AgentThreadDrawerProps {
+  messageId: number;
+  fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
+}
+
+function AgentThreadDrawer({ messageId, fetchWithAuth }: AgentThreadDrawerProps) {
+  const [open, setOpen] = React.useState(false);
+  const [threads, setThreads] = React.useState<import('../types').AgentThread[] | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [expandedTools, setExpandedTools] = React.useState<Set<string>>(new Set());
+
+  const handleToggle = async () => {
+    const willOpen = !open;
+    setOpen(willOpen);
+    if (willOpen && threads === null && !loading) {
+      setLoading(true);
+      try {
+        const res = await fetchWithAuth(`/api/messages/${messageId}/agent_threads`);
+        if (res.ok) {
+          const data = await res.json();
+          setThreads(data.threads || []);
+        } else {
+          setThreads([]);
+        }
+      } catch {
+        setThreads([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const toggleTool = (key: string) => {
+    setExpandedTools(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const hasThreads = threads !== null && threads.length > 0;
+  const buttonLabel = threads === null ? '🧵 agents' :
+    threads.length === 0 ? null :
+    `🧵 ${threads.length} agent${threads.length > 1 ? 's' : ''}`;
+
+  // Don't render button at all if we've loaded and there's nothing
+  if (threads !== null && threads.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: '10px' }}>
+      <button
+        onClick={handleToggle}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          fontSize: '0.72rem', fontWeight: 600, fontFamily: 'var(--font-mono)',
+          padding: '3px 10px', borderRadius: '6px', cursor: 'pointer',
+          backgroundColor: open ? 'rgba(0,240,255,0.1)' : 'rgba(0,240,255,0.05)',
+          border: '1px solid rgba(0,240,255,0.25)',
+          color: 'var(--accent-cyan)', transition: 'all 0.2s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(0,240,255,0.12)')}
+        onMouseLeave={e => (e.currentTarget.style.backgroundColor = open ? 'rgba(0,240,255,0.1)' : 'rgba(0,240,255,0.05)')}
+      >
+        {loading ? '⏳ loading...' : (buttonLabel || '🧵 agents')}
+        <span style={{ opacity: 0.7, fontSize: '0.65rem' }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: '8px',
+          display: 'flex', flexDirection: 'column', gap: '8px',
+          paddingLeft: '4px',
+          borderLeft: '2px solid rgba(0,240,255,0.15)',
+        }}>
+          {loading && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', padding: '6px 0' }}>
+              Loading agent threads...
+            </div>
+          )}
+
+          {!loading && hasThreads && threads!.map((thread, ti) => (
+            <div key={thread.id} style={{
+              background: 'rgba(0,240,255,0.03)',
+              border: '1px solid rgba(0,240,255,0.12)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+            }}>
+              {/* Agent header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
+                  🤖 {thread.agent_name || thread.agent_id}
+                </span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                  {thread.model}
+                </span>
+                {/* Skill badges */}
+                {thread.skills_used.map(skill => (
+                  <SkillBadge key={skill} skill={skill} />
+                ))}
+                {/* Cost & latency */}
+                {thread.cost_usd > 0 && (
+                  <span style={{ fontSize: '0.65rem', color: 'rgba(16,185,129,0.85)', fontFamily: 'var(--font-mono)', marginLeft: 'auto' }}>
+                    💰 ${thread.cost_usd.toFixed(6)}
+                  </span>
+                )}
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                  ⏱ {(thread.latency_ms / 1000).toFixed(1)}s
+                </span>
+              </div>
+
+              {/* Query */}
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', marginBottom: '4px' }}>
+                <span style={{ fontWeight: 600, color: 'rgba(255,159,0,0.7)' }}>Query: </span>
+                {thread.user_message}
+              </div>
+
+              {/* Response */}
+              <div style={{
+                fontSize: '0.73rem', color: 'var(--text-primary)',
+                background: 'rgba(0,0,0,0.2)', borderRadius: '5px',
+                padding: '6px 8px', marginBottom: thread.tool_calls_log.length > 0 ? '6px' : '0',
+                maxHeight: '120px', overflowY: 'auto',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                {thread.assistant_response || <span style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>empty response</span>}
+              </div>
+
+              {/* Tool calls */}
+              {thread.tool_calls_log.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: 600, marginBottom: '2px' }}>
+                    TOOL CALLS ({thread.tool_calls_log.length})
+                  </div>
+                  {thread.tool_calls_log.map((tc, tci) => {
+                    const toolKey = `${ti}-${tci}`;
+                    const isExpanded = expandedTools.has(toolKey);
+                    return (
+                      <div key={tci} style={{
+                        background: 'rgba(0,0,0,0.25)',
+                        borderRadius: '4px',
+                        overflow: 'hidden',
+                        border: '1px solid rgba(255,255,255,0.05)',
+                      }}>
+                        <button
+                          onClick={() => toggleTool(toolKey)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            width: '100%', background: 'none', border: 'none',
+                            cursor: 'pointer', padding: '4px 8px', textAlign: 'left',
+                          }}
+                        >
+                          <span style={{ fontSize: '0.7rem' }}>🛠</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
+                            {tc.name}
+                          </span>
+                          {tc.skill && <SkillBadge skill={tc.skill} />}
+                          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginLeft: 'auto' }}>
+                            {isExpanded ? '▲' : '▼'}
+                          </span>
+                        </button>
+                        {isExpanded && (
+                          <div style={{ padding: '0 8px 6px 8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>
+                              <span style={{ fontWeight: 600, color: 'rgba(255,159,0,0.7)' }}>Args: </span>
+                              <code style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                                {JSON.stringify(tc.args)}
+                              </code>
+                            </div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>
+                              <span style={{ fontWeight: 600, color: 'rgba(16,185,129,0.8)' }}>Result: </span>
+                              <span style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+                                {tc.result}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {!loading && threads !== null && threads.length === 0 && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', padding: '4px 0' }}>
+              No subagent threads found for this message.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface MissingEnvConfigCardProps {
   messageIndex: number;
   envKey: string;
@@ -998,6 +1221,13 @@ export function ChatTab({
                         />
                       );
                     })()}
+                    {/* Agent Thread Drawer — expandable subagent communication */}
+                    {msg.role === 'assistant' && msg.id && (
+                      <AgentThreadDrawer
+                        messageId={msg.id}
+                        fetchWithAuth={fetchWithAuth}
+                      />
+                    )}
                   </div>
                 )}
               </div>

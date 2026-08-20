@@ -6,6 +6,13 @@ from backend import price_monitor
 from backend import rag
 from backend.main import lifespan, app
 
+bcm_available = False
+try:
+    import backend.bcm
+    bcm_available = True
+except ImportError:
+    pass
+
 
 @pytest.mark.asyncio
 async def test_full_application_lifecycle_graceful_shutdown():
@@ -78,6 +85,7 @@ async def test_cross_subsystem_scheduler_shutdown_cleanup():
         assert rss_task.done()
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_bcm_session_concurrent_cancellation():
     """Cross Test: Simulate a running BCM session being interrupted by sudden shutdown
@@ -109,6 +117,7 @@ async def test_cross_bcm_session_concurrent_cancellation():
         assert len(rows) > 0
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_bcm_session_cron_schedule_and_db_persistence():
     """Cross Test: End-to-end verification of BCM session execution, metadata persistence

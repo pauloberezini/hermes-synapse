@@ -363,6 +363,15 @@ async def get_logs():
     from backend.database import get_decision_logs
     return get_decision_logs(100)
 
+@app.get("/api/messages/{message_id}/agent_threads")
+async def get_message_agent_threads(message_id: int):
+    """Returns all subagent decision logs spawned for a given parent assistant message.
+    Used by the Agent Thread Viewer UI component to display expandable subagent communication.
+    """
+    from backend.database import get_agent_threads_for_message
+    threads = get_agent_threads_for_message(message_id)
+    return {"threads": threads, "message_id": message_id}
+
 @app.get("/api/metrics")
 async def get_metrics():
     from backend.database import db_get_aggregated_metrics

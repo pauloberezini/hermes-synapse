@@ -1358,6 +1358,9 @@ def call_subagent(subagent_id: str, query: str) -> str:
     subagent = get_subagent(clean_id)
     if not subagent:
         return json.dumps({"error": f"Субагент с id '{clean_id}' не onйден."}, ensure_ascii=False)
+    
+    # Read parent_message_id from threading.local context (set by parent agent before tool dispatch)
+    parent_msg_id = getattr(_call_context, "parent_message_id", None)
         
     try:
         # Run the async agent respond call inside sync context
@@ -1365,9 +1368,24 @@ def call_subagent(subagent_id: str, query: str) -> str:
         if loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                response = pool.submit(asyncio.run, agent_instance.respond(query, session_id=clean_id)).result(timeout=45)
+                response = pool.submit(
+                    asyncio.run,
+                    agent_instance._respond_as_subagent(
+                        query,
+                        subagent,
+                        chat_id=clean_id,
+                        parent_message_id=parent_msg_id
+                    )
+                ).result(timeout=45)
         else:
-            response = loop.run_until_complete(agent_instance.respond(query, session_id=clean_id))
+            response = loop.run_until_complete(
+                agent_instance._respond_as_subagent(
+                    query,
+                    subagent,
+                    chat_id=clean_id,
+                    parent_message_id=parent_msg_id
+                )
+            )
         return json.dumps({
             "subagent_id": clean_id,
             "query": query,
@@ -1376,6 +1394,7 @@ def call_subagent(subagent_id: str, query: str) -> str:
     except Exception as e:
         logger.error(f"Error calling subagent {clean_id}: {e}")
         return json.dumps({"error": f"Сбой при вызове субагента: {str(e)}"}, ensure_ascii=False)
+
 
 def list_subagents() -> str:
     """Lists all registered subagents available in the system."""

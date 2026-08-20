@@ -7,6 +7,13 @@ from backend import rag
 from backend import scheduler
 from backend import price_monitor
 
+bcm_available = False
+try:
+    import backend.bcm
+    bcm_available = True
+except ImportError:
+    pass
+
 
 @pytest.mark.asyncio
 async def test_qdrant_client_no_compatibility_warning():
@@ -156,6 +163,7 @@ async def test_telegram_error_handler_handles_conflict_and_network_gracefully():
         assert "Telegram network warning" in mock_log_warn.call_args[0][0]
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_fast_market_cache_exports_historical_data_and_remizov_shift():
     """IT: Verify get_historical_data and get_remizov_shift are exported by fast_market_cache
     and function properly with caching, preventing Confluence Engine pre-check ImportError.
@@ -187,6 +195,7 @@ def test_fast_market_cache_exports_historical_data_and_remizov_shift():
         assert mock_fetch.call_count == 1
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_ask_ai_decision_no_unbound_local_os_or_scoping_error():
     """IT: Reproduce and verify ask_ai_decision executes without UnboundLocalError on 'os'
     and without NameError on 'analysis_json', returning a valid MD decision.
@@ -229,6 +238,7 @@ def test_ask_ai_decision_no_unbound_local_os_or_scoping_error():
         assert "decision" in parsed
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_scheduler_bcm_cycle_integration():
     """IT: Verify scheduler _trigger_agent_task runs the BCM multi-agent cycle
@@ -262,6 +272,7 @@ async def test_scheduler_bcm_cycle_integration():
         )
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_get_macro_terminal_context_in_running_loop_and_timeout_no_warning():
     """IT: Verify get_macro_terminal_context executes inside an active async event loop
@@ -293,6 +304,7 @@ async def test_get_macro_terminal_context_in_running_loop_and_timeout_no_warning
         assert len(unawaited_coro_warnings) == 0, f"Found unawaited coroutine warnings: {unawaited_coro_warnings}"
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_dynamic_futures_spread_and_curve_status_no_yfinance_404():
     """IT: Verify _get_dynamic_next_month_ticker and _get_futures_curve_status generate
     dynamic active contract tickers for current year/month and gracefully calculate
@@ -333,6 +345,7 @@ def test_dynamic_futures_spread_and_curve_status_no_yfinance_404():
         assert "spread_pct" in curve_fallback
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_intermarket_yfinance_silent_on_missing_tickers():
     """IT: Verify _fetch_yahoo_prices suppresses all yfinance console errors and logger noise
     when encountering non-existent, invalid, or delisted tickers.
@@ -390,6 +403,7 @@ def test_tools_run_async_safety_and_lifecycle():
         assert len(unawaited_coro_warnings) == 0
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_cross_bcm_full_multi_agent_cycle_integration():
     """Cross Test: Verify the end-to-end BCM hedge fund multi-agent architecture
@@ -471,6 +485,7 @@ async def test_cross_bcm_full_multi_agent_cycle_integration():
         assert verdict["recommended_tp"] == 65000.0
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_bcm_swing_session_cron_trigger_reconciliation_it():
     """Integration Test: Reproduce DB corrupted cron_expr (* * * * *) on BCM swing session
@@ -537,6 +552,7 @@ async def test_bcm_swing_session_cron_trigger_reconciliation_it():
         assert next_fire.hour == 23
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_apscheduler_persistent_job_store_conflict_safety_it():
     """Integration Test: Verify that calling start_bcm_session_scheduler_loop repeatedly
@@ -663,6 +679,7 @@ async def test_reconcile_swing_jobs_even_in_intraday_mode():
         assert job.kwargs.get("session_name") == "swing_trigger"
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_ctrader_openapi_client_connection_failure_and_cleanup():
     """IT: Verify CTraderOpenApiClient.connect handles ConnectionRefusedError cleanly
@@ -683,6 +700,7 @@ async def test_ctrader_openapi_client_connection_failure_and_cleanup():
     assert client.is_connected is False
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 @pytest.mark.asyncio
 async def test_ctrader_lookup_handles_connection_refusal_cleanly():
     """IT: Verify ctrader_lookup.lookup exits cleanly without unhandled exception when OpenAPI connection fails."""
@@ -1014,6 +1032,7 @@ async def test_classify_and_title_handles_none_and_non_dict_content_gracefully_i
         assert "Summarize daily portfolio" in title2
 
 
+@pytest.mark.skipif(not bcm_available, reason="Private BCM plugin not installed")
 def test_get_technical_analysis_us100_and_index_symbols_normalized_it():
     """IT: Reproduce yfinance 404 for US100 and verify all CFD/Index/Commodity symbols
     resolve to valid Yahoo Finance tickers in get_technical_analysis without 404 errors.
