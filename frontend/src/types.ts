@@ -11,16 +11,25 @@ export interface AgentThread {
   id: number;
   agent_id: string;
   agent_name: string;
+  parent_agent_id?: string | null;
+  depth?: number;
+  role_description?: string;
   model: string;
   user_message: string;
   assistant_response: string;
+  reasoning_content?: string | null;
   skills_used: string[];
   tool_calls_log: ToolCallLog[];
+  prompt_tokens_estimate?: number;
+  completion_tokens_estimate?: number;
+  total_tokens?: number;
   latency_ms: number;
   cost_usd: number;
   timestamp: string;
   success: boolean;
   error?: string | null;
+  traces?: { timestamp: string; agent: string; action: string; message: string; status: string }[];
+  children?: AgentThread[];
 }
 
 export interface ChatMessage {

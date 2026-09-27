@@ -782,12 +782,16 @@ export default function App() {
                 .catch(err => console.error('Error refreshing session history on reminder fired:', err));
             }
           } else if (data.type === 'trace_update') {
-
+            const traceSessionId = data.session_id || data.chat_id;
             if (data.trace.agent !== 'Router') {
-              setMessages((prev) => [...prev, {
-                role: 'system',
-                content: `⚙️ [${data.trace.agent}] ${data.trace.action}: ${(data.trace.message || '').split('\n')[0]}`
-              }]);
+              // Live orchestrator traces are broadcast globally; only paint them
+              // in the chat that owns this run (scheduled plugin jobs use task_*).
+              if (traceSessionId === currentChatIdRef.current) {
+                setMessages((prev) => [...prev, {
+                  role: 'system',
+                  content: `⚙️ [${data.trace.agent}] ${data.trace.action}: ${(data.trace.message || '').split('\n')[0]}`
+                }]);
+              }
               setOfficeLiveTrace({
                 agent: data.trace.agent,
                 action: data.trace.action,

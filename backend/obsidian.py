@@ -78,6 +78,9 @@ async def list_notes(folder: str = "") -> List[str]:
             if r.status_code != 200:
                 return []
             entries = r.json().get("files", [])
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            logger.debug(f"Obsidian offline/unreachable at {url}: {e}")
+            return []
         except Exception as e:
             logger.warning(f"Obsidian _list_dir('{dir_path}') failed: {e}")
             return []
@@ -93,12 +96,28 @@ async def list_notes(folder: str = "") -> List[str]:
                 results.append(prefix + entry)
         return results
 
+    notes: List[str] = []
+    if _get_api_key():
+        try:
+            async with _client() as c:
+                notes = await _list_dir(c, folder)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            logger.debug(f"Obsidian offline/unreachable in list_notes: {e}")
+        except Exception as e:
+            logger.warning(f"Obsidian list_notes failed: {e}")
+    # ponytail: plugin down → still show notes we indexed into RAG
     try:
-        async with _client() as c:
-            return await _list_dir(c, folder)
+        from backend.rag import list_documents
+        for d in list_documents(source_filter="obsidian"):
+            path = (d.get("note_path") or "").strip()
+            if not path or path in notes:
+                continue
+            if folder and not path.startswith(folder.rstrip("/") + "/") and path != folder:
+                continue
+            notes.append(path)
     except Exception as e:
-        logger.warning(f"Obsidian list_notes failed: {e}")
-    return []
+        logger.debug(f"RAG note list fallback skipped: {e}")
+    return notes
 
 
 
@@ -107,16 +126,26 @@ async def read_note(note_path: str) -> Optional[str]:
     Read the raw markdown content of a note by its vault-relative path.
     e.g. read_note("Daily/2026-06-23.md")
     """
+    if _get_api_key():
+        try:
+            encoded = note_path.lstrip("/")
+            async with _client() as c:
+                r = await c.get(f"{_get_base_url()}/vault/{encoded}")
+                if r.status_code == 200:
+                    return r.text
+                if r.status_code == 404:
+                    logger.debug(f"Obsidian note '{note_path}' not found in vault (HTTP 404)")
+                else:
+                    logger.warning(f"Obsidian read_note '{note_path}' → HTTP {r.status_code}")
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            logger.debug(f"Obsidian offline/unreachable for read_note '{note_path}': {e}")
+        except Exception as e:
+            logger.warning(f"Obsidian read_note failed: {e}")
     try:
-        encoded = note_path.lstrip("/")
-        async with _client() as c:
-            r = await c.get(f"{_get_base_url()}/vault/{encoded}")
-            if r.status_code == 200:
-                return r.text
-            logger.warning(f"Obsidian read_note '{note_path}' → HTTP {r.status_code}")
-    except Exception as e:
-        logger.warning(f"Obsidian read_note failed: {e}")
-    return None
+        from backend.rag import get_note_text_by_path
+        return get_note_text_by_path(note_path)
+    except Exception:
+        return None
 
 
 async def create_note(note_path: str, content: str) -> bool:

@@ -39,7 +39,7 @@ class TestContextManager(unittest.TestCase):
             {"role": "assistant", "content": "Response 1 " + "Y" * 2000},
             {"role": "user", "content": "Turn 2 " + "Z" * 2000},
         ]
-        user_content = "Execute trade on Bybit"
+        user_content = "Execute trade on Exchange"
 
         messages = build_subagent_messages(
             system_prompt=system_prompt,

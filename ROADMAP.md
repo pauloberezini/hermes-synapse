@@ -20,7 +20,7 @@ graph TD
     Stage8 --> Stage9["Stage 9: Self-Improving Skill Loop (Markdown Distillation)"]
     Stage9 --> Stage10["Stage 10: Pluggable Memory & Enterprise DB (GraphRAG, Postgres, WAL)"]
     Stage10 --> Stage11["Stage 11: Developer SDK & Fine-Tuning Exporters (hermes_sdk, ShareGPT/OpenAI)"]
-    Stage11 --> Stage12["Stage 12: BCM Engine (CCXT Crypto & Compliance Auditing)"]
+    Stage11 --> Stage12["Stage 12: Plugin Boundary (Private Extensions & Market Data Providers)"]
     Stage12 --> Stage13["Stage 13: Enterprise SSO & RBAC (OIDC/OAuth2, Audit Logs)"]
     Stage13 --> Stage14["Stage 14: Community Skills Marketplace (hermes_sdk Registry)"]
     Stage14 --> Stage15["Stage 15: Autonomous Agent Mesh (P2P Inter-Agent Protocol)"]
@@ -78,10 +78,10 @@ graph TD
 11. **Stage 11: Developer SDK & Fine-Tuning Exporters (`hermes_sdk`)**
     * Multi-format fine-tuning dataset exporters (ShareGPT, OpenAI, Alpaca formats) via `/api/exporters`.
     * Programmatic Python package (`hermes_sdk`) for embedding and executing Hermes agent networks inside external python applications.
-12. **Stage 12: BCM Engine (Abstracted Broker & Compliance Auditing)**
-    * Autonomous financial trading engine (`backend/bcm/autonomous_trader.py`).
-    * Universal Exchange Standard integration via CCXT for 100+ crypto exchanges, ensuring open-source extensibility (`backend/bcm/mock_exchange.py`).
-    * Compliance Officer auditing & hard-limit risk protection (`backend/bcm/compliance_officer.py`).
+12. **Stage 12: Plugin Boundary (Private Extensions & Market Data Providers)**
+    * Generic plugin loader (`backend/plugins.py`): any `backend/<name>/plugin.py` is discovered at startup; core calls `hook()` / `collect()` and never imports a plugin by name.
+    * Hook contract: `init_plugin`, `get_extra_agents`, `init_schema`, `get_team_presets`, `extra_tool_schemas`, `tools_for_skill`, `market_data_provider`, `handle_fast_command`, `resolve_cron_job`, `format_agent_response`, `watcher_sync`.
+    * `MarketDataProvider` ABC (`backend/market_data.py`) with a built-in HTTP provider; plugins supply alternatives via `MARKET_DATA_PROVIDER`.
 13. **Stage 13: Open-Source SSO & Multi-Tenant Security (OIDC / OAuth2 & RBAC)**
     * OpenID Connect / OAuth2 integration (`backend/auth.py`), JWT claims validation (`decode_jwt_payload`), and Role-Based Access Control (`check_rbac_permission`).
 14. **Stage 14: Community Skills Marketplace & Plugin Registry**
@@ -89,11 +89,11 @@ graph TD
 15. **Stage 15: Autonomous Agent Mesh & Peer-to-Peer Protocol**
     * Decentralized inter-agent communication engine (`backend/mesh.py`, `AgentMeshRouter`) enabling P2P capability matching, peer discovery, and task delegation.
 16. **Stage 16: Paperclip Governance Control Plane & Resumable Task Engine**
-    * `BudgetGuard` real-time token/dollar spend enforcement per session and globally across all sessions ([governance.py](file:///Users/pauloberezini/Documents/private/git/jarvis/backend/governance.py)).
-    * Human-in-the-loop action approval queue for high-stakes tool executions ([ApprovalsModal.tsx](file:///Users/pauloberezini/Documents/private/git/jarvis/frontend/src/components/ApprovalsModal.tsx)).
-    * 1-Click company archetype presets (Hedge Fund, Engineering Shop, OSINT Bureau) ([presets.py](file:///Users/pauloberezini/Documents/private/git/jarvis/backend/presets.py)).
+    * `BudgetGuard` real-time token/dollar spend enforcement per session and globally across all sessions (`backend/governance.py`).
+    * Human-in-the-loop action approval queue for high-stakes tool executions (`frontend/src/components/ApprovalsModal.tsx`).
+    * 1-Click company archetype presets (Engineering Shop, OSINT Bureau; plugins may add more) (`backend/presets.py`).
     * Org Chart hierarchy (CEO, Director, Worker) & automatic escalation routing (`escalate_task`).
-    * Atomic task checkout locks & Kanban ticket board ([TaskBoardTab.tsx](file:///Users/pauloberezini/Documents/private/git/jarvis/frontend/src/components/TaskBoardTab.tsx)).
+    * Atomic task checkout locks & Kanban ticket board (`frontend/src/components/TaskBoardTab.tsx`).
     * Heartbeat Pulse execution engine with DB state checkpointing (`run_orchestration_pulse`).
 
 ---
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS subagents (
 | **`timers_alarms`** | Timers & Alarms | `set_timer`, `set_alarm`, `cancel_timer_or_alarm` |
 | **`shell_execution`**| Shell Execution | `get_system_stats`, `execute_command` |
 | **`python_sandbox`** | Python Sandbox | `execute_command` |
-| **`bcm`** | BCM Trading | `bcm tools (CCXT Unified API, trading risk checks)` |
+| **`<plugin>`** | Plugin skills | `Any tools a backend/<name>/plugin.py exposes via tools_for_skill()` |
 | **`mcp_all`** | MCP Servers | `All connected Model Context Protocol server tools` |
 | **`distilled_skill`**| Distilled Skills | `Dynamic procedures distilled into .agents/skills/ from successful traces` |
 

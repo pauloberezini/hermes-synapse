@@ -1,10 +1,18 @@
 import os
 import uuid
 import logging
-from typing import List, Dict, Any
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
-from fastembed import TextEmbedding
+from typing import List, Dict, Any, Optional
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models
+except ImportError:
+    QdrantClient = None
+    models = None
+
+try:
+    from fastembed import TextEmbedding
+except ImportError:
+    TextEmbedding = None
 
 logger = logging.getLogger("hermes.rag")
 
@@ -16,16 +24,22 @@ COLLECTION_NAME = "hermes_memory"
 _embedding_model = None
 _qdrant_client = None
 
-def get_embedding_model() -> TextEmbedding:
+def get_embedding_model() -> Optional[Any]:
     global _embedding_model
+    if TextEmbedding is None:
+        logger.warning("fastembed is not installed; semantic embeddings disabled")
+        return None
     if _embedding_model is None:
         logger.info("Initializing local fastembed TextEmbedding model (BAAI/bge-small-en-v1.5)...")
         # TextEmbedding downloads model if not cached and runs ONNX inference on CPU
         _embedding_model = TextEmbedding()
     return _embedding_model
 
-def get_qdrant_client() -> QdrantClient:
+def get_qdrant_client() -> Optional[Any]:
     global _qdrant_client
+    if QdrantClient is None:
+        logger.warning("qdrant_client is not installed; vector storage disabled")
+        return None
     if _qdrant_client is None:
         logger.info(f"Connecting to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}...")
         _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
@@ -35,6 +49,8 @@ def raw_init_rag():
     """Initializes the RAG collection in Qdrant if it doesn't already exist."""
     try:
         client = get_qdrant_client()
+        if client is None or models is None:
+            return
         # Check if collection exists
         collections = client.get_collections().collections
         exists = any(c.name == COLLECTION_NAME for c in collections)
@@ -85,11 +101,26 @@ def raw_index_document(doc_id: str, title: str, text: str,
     try:
         client = get_qdrant_client()
         embedder = get_embedding_model()
+        if client is None or embedder is None or models is None:
+            return False
         
+        # 0. Sanitize text via MemoryGuard (OWASP ASI06 / PII redaction)
+        try:
+            from backend.governance import MemoryGuard
+            allow, clean_text, warnings = MemoryGuard.sanitize_for_indexing(text, source=source)
+            if not allow:
+                logger.warning(f"[MemoryGuard] Blocked document '{title}' ({doc_id}) from source='{source}'.")
+                return False
+            text_to_index = clean_text
+        except Exception as e:
+            logger.warning(f"MemoryGuard error in raw_index_document: {e}")
+            text_to_index = text
+
         # Delete old chunks of this document first to avoid duplication on re-indexing
         delete_document(doc_id)
         
-        chunks = chunk_text(text)
+        chunks = chunk_text(text_to_index)
+
         if not chunks:
             return False
             
@@ -136,6 +167,8 @@ def raw_search_memory(query: str, limit: int = 3, threshold: float = 0.7,
     try:
         client = get_qdrant_client()
         embedder = get_embedding_model()
+        if client is None or embedder is None or models is None:
+            return []
         
         # Embed the query string
         query_vector = list(embedder.embed([query]))[0].tolist()
@@ -183,6 +216,8 @@ def raw_delete_document(doc_id: str) -> bool:
     """Deletes all vector points associated with a document ID."""
     try:
         client = get_qdrant_client()
+        if client is None or models is None:
+            return False
         client.delete(
             collection_name=COLLECTION_NAME,
             points_selector=models.Filter(
@@ -208,6 +243,8 @@ def list_documents(source_filter: str = "") -> List[Dict[str, str]]:
     """
     try:
         client = get_qdrant_client()
+        if client is None or models is None:
+            return []
         
         # Build optional filter
         scroll_filter = None
@@ -248,15 +285,58 @@ def list_documents(source_filter: str = "") -> List[Dict[str, str]]:
         logger.error(f"Error listing documents: {e}")
         return []
 
-def raw_index_vector(doc_id: str, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
+
+def get_note_text_by_path(note_path: str) -> Optional[str]:
+    """Reassemble an Obsidian note from RAG chunks when the vault plugin is down."""
+    if not note_path:
+        return None
+    try:
+        client = get_qdrant_client()
+        records, _ = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="note_path",
+                        match=models.MatchValue(value=note_path),
+                    )
+                ]
+            ),
+            limit=80,
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not records:
+            return None
+        chunks = sorted(records, key=lambda r: (r.payload or {}).get("chunk_index", 0))
+        text = "\n".join((r.payload or {}).get("content", "") for r in chunks).strip()
+        return text or None
+    except Exception as e:
+        logger.error(f"Error reading RAG note '{note_path}': {e}")
+        return None
+
+def raw_index_vector(doc_id: Any, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
     """Index a raw vector directly to Qdrant (used by BCM trading memory)."""
     try:
         client = get_qdrant_client()
+        point_id = doc_id
+        if isinstance(doc_id, str):
+            try:
+                uuid.UUID(doc_id)
+                point_id = doc_id
+            except ValueError:
+                if doc_id.isdigit():
+                    point_id = int(doc_id)
+                else:
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, doc_id))
+        elif isinstance(doc_id, int):
+            point_id = abs(doc_id)
+
         client.upsert(
             collection_name=collection_name,
             points=[
                 models.PointStruct(
-                    id=doc_id,
+                    id=point_id,
                     vector=vector,
                     payload=payload
                 )

@@ -23,11 +23,18 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.interval import IntervalTrigger
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.date import DateTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+except ImportError:
+    AsyncIOScheduler = None  # type: ignore
+    SQLAlchemyJobStore = None  # type: ignore
+    CronTrigger = None  # type: ignore
+    DateTrigger = None  # type: ignore
+    IntervalTrigger = None  # type: ignore
 
 
 logger = logging.getLogger("hermes.scheduler")
@@ -46,12 +53,16 @@ else:
 if _DB_URL.startswith("postgres://"):
     _DB_URL = _DB_URL.replace("postgres://", "postgresql://", 1)
 
-_jobstore = SQLAlchemyJobStore(url=_DB_URL, tablename="apscheduler_jobs")
-scheduler = AsyncIOScheduler(
-    jobstores={"default": _jobstore},
-    job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
-    timezone="Asia/Jerusalem",
-)
+if SQLAlchemyJobStore is not None and AsyncIOScheduler is not None:
+    _jobstore = SQLAlchemyJobStore(url=_DB_URL, tablename="apscheduler_jobs")
+    scheduler = AsyncIOScheduler(
+        jobstores={"default": _jobstore},
+        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 14400},
+        timezone="Asia/Jerusalem",
+    )
+else:
+    _jobstore = None
+    scheduler = None
 
 # Fire-count is cosmetic and session-local (acceptable to reset on restart)
 _fire_counts: Dict[str, int] = {}
@@ -300,124 +311,6 @@ async def _job_cron(
         logger.info(f"Cron task '{label}' ({job_id}) cancelled.")
     except Exception as e:
         logger.error(f"Error in cron task '{label}' ({job_id}): {e}")
-
-
-async def _job_bcm_session_scheduler(**kwargs):
-    job_id = kwargs.get("job_id", "bcm_session")
-    label = kwargs.get("label", "BCM Session")
-    session_name = kwargs.get("session_name", "Market")
-    
-    try:
-        # Ensure this cron trigger runs only once per minute across multiple workers
-        try:
-            from backend.database import _get_backend
-            db = _get_backend()
-            current_minute = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
-            lock_key = f"cron_lock_{job_id}_{session_name}"
-            
-            # We need rowcount, so we connect manually
-            with db.connect() as conn:
-                cur = conn.cursor()
-                try:
-                    cur.execute(db.translate_placeholder("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, '')"), (lock_key,))
-                    conn.commit()
-                except Exception:
-                    conn.rollback()  # Clear aborted transaction state
-                cur.execute(db.translate_placeholder("UPDATE app_settings SET value = ? WHERE key = ? AND value != ?"), (current_minute, lock_key, current_minute))
-                conn.commit()
-                if cur.rowcount == 0:
-                    logger.info(f"Cron task '{label}' ({session_name}) already triggered by another worker this minute. Skipping.")
-                    return
-        except Exception as e:
-            logger.error(f"Failed to acquire cron lock for '{label}' ({session_name}): {e}")
-            
-        _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
-        count = _fire_counts[job_id]
-        logger.info(f"🎯 BCM Session triggered #{count}: '{label}' ({session_name})")
-        
-        from backend.activity_logger import log_activity
-        from backend.websocket_manager import manager
-        from backend.database import save_message
-        
-        task_session_id = f"task_{job_id}"
-        cron_expr = kwargs.get("cron_expr") or _timer_meta.get(job_id, {}).get("cron_expr")
-        if not cron_expr or cron_expr.strip() in ("* * * * *", "* * * * * *"):
-            if "swing_daily_close" in job_id:
-                cron_expr = "15 23 * * mon-fri UTC"
-            elif "swing_friday_gap" in job_id:
-                cron_expr = "0 20 * * fri UTC"
-            elif session_name:
-                try:
-                    from backend.bcm.session_scheduler import SESSIONS
-                except ImportError:
-                    logger.error("BCM module not found. Cannot run session scheduler.")
-                    return
-                if session_name in SESSIONS:
-                    cfg = SESSIONS[session_name]
-                    cron_expr = f"0 {cfg['open'] + 1} * * mon-fri {cfg['tz']}"
-                else:
-                    raise ValueError(f"BCM Session '{session_name}' not found in SESSIONS.")
-            else:
-                cron_expr = "0 * * * *"
-            if job_id in _timer_meta:
-                _timer_meta[job_id]["cron_expr"] = cron_expr
-
-        extra_info = {"fire_count": count}
-        if cron_expr:
-            extra_info["cron_expr"] = cron_expr
-        _register_scheduled_session(job_id, label, "cron", "system", f"Run BCM Session Scheduler for {session_name}", status="running", extra=extra_info)
-        log_activity("active", "BCM Scheduler", f"🎯 BCM Session analysis started for {session_name} (#{count})")
-        
-        import sys
-        import subprocess
-        import os
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        scheduler_script = os.path.join(script_dir, "bcm", "session_scheduler.py")
-        
-        cmd = [sys.executable, scheduler_script]
-        if session_name:
-            cmd.extend(["--session", session_name])
-            
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            cmd,
-            capture_output=True,
-            text=True
-        )
-        output_str = proc.stdout if proc.stdout else (proc.stderr or "Completed without output.")
-        logger.info(f"BCM Session {session_name} output:\n{output_str}")
-        
-        summary_msg = f"📊 **BCM Session ({session_name}) Run #{count}**\n\n```\n{output_str[-1500:]}\n```"
-        save_message(task_session_id, "assistant", summary_msg)
-        
-        try:
-            await _send_telegram_alert(
-                "dashboard",
-                f"📊 **BCM SESSION ({session_name.upper()})** (#{count})\n\n{output_str[-800:]}"
-            )
-        except Exception:
-            pass
-            
-        await manager.broadcast({
-            "type": "chat_message",
-            "role": "assistant",
-            "content": summary_msg,
-            "chat_id": task_session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-        await _broadcast_ws({
-            "type": "reminder_fired",
-            "reminder": {
-                "id": job_id, "label": label, "cron_expr": kwargs.get("cron_expr"),
-                "fire_count": count, "status": "running", "type": "cron",
-            },
-            "session_id": task_session_id,
-        })
-    except asyncio.CancelledError:
-        logger.info(f"BCM Session task '{label}' ({session_name}) cancelled gracefully.")
-    except Exception as e:
-        logger.error(f"Error in BCM session scheduler task: {e}")
 
 
 def _register_scheduled_session(
@@ -759,11 +652,11 @@ def update_timer(
         except Exception as e:
             raise ValueError(f"Invalid cron expression '{cron_expr_clean}': {e}")
 
-        # If it's a BCM session and no custom LLM agent is specified, keep the dedicated function
-        if item_id.startswith("bcm_session_") and (not agent_id or agent_id == "system"):
-            target_func = _job_bcm_session_scheduler
-            session_name = label.replace("BCM Session (", "").replace(")", "").strip()
-            target_kwargs["session_name"] = session_name
+        from backend.plugins import hook
+        private_cron = hook("resolve_cron_job", item_id, agent_id, label)
+        if private_cron:
+            target_func, extra_kwargs = private_cron
+            target_kwargs.update(extra_kwargs)
 
         target_kwargs["cron_expr"] = cron_expr_clean
         meta_update["cron_expr"] = cron_expr_clean
@@ -1187,12 +1080,6 @@ async def _trigger_agent_task(
     job_id: Optional[str] = None,
     label: Optional[str] = None,
 ) -> None:
-    if agent_id == "jarvis":
-        lower_prompt = (prompt + " " + (label or "")).lower()
-        if any(kw in lower_prompt for kw in ["hedge fund", "trading", "bcm", "pepperstone", "ctrader", "intraday"]):
-            agent_id = "bcm_orchestrator"
-            logger.info(f"Auto-rerouted scheduled task {job_id or label} to bcm_orchestrator based on trading keywords.")
-
     session_id = task_session_id or (f"task_{job_id}" if job_id else agent_id)
     if job_id and agent_id:
         try:
@@ -1206,136 +1093,27 @@ async def _trigger_agent_task(
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_prompt_display = f"[Scheduled Run - {now_str}] {prompt}"
 
-        # Immediate persistence so UI history API returns the prompt instantly (only for BCM since agent.py handles others)
-        user_msg_id = None
-        if agent_id == "bcm_orchestrator":
-            from backend.database import save_message
-            user_msg_id = save_message(session_id, "user", user_prompt_display)
-
         await manager.broadcast({
             "type": "chat_message",
             "role": "user",
             "content": user_prompt_display,
             "chat_id": session_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "id": user_msg_id
         })
 
-        # ── Live positions guardrail for BCM orchestrator ─────────────────
-        # Fetch real cTrader positions and inject as authoritative context
-        # BEFORE the LLM runs, to prevent it from using stale session memory
-        # with hallucinated lot sizes or wrong symbol names.
-        effective_prompt = prompt
-        if agent_id == "bcm_orchestrator":
-            try:
-                from backend.bcm.tools import (
-                    handle_exchange_get_positions,
-                    handle_exchange_get_spot_prices,
-                    format_live_positions_guardrail,
-                )
-                pos_data = await asyncio.get_event_loop().run_in_executor(
-                    None, handle_exchange_get_positions, {}
-                )
-                guardrail = format_live_positions_guardrail(pos_data)
-
-                spot_data = await asyncio.get_event_loop().run_in_executor(
-                    None, handle_exchange_get_spot_prices, {"symbols": ["BRENT", "XAUUSD", "US500", "GBPUSD", "EURUSD"]}
-                )
-                if isinstance(spot_data, dict) and spot_data.get("prices"):
-                    price_lines = []
-                    for p in spot_data["prices"]:
-                        price_lines.append(
-                            f"  {p['name']} (ID {p.get('symbolId', 'N/A')}): bid={p.get('bid', 'N/A')}, ask={p.get('ask', 'N/A')}, mid={p.get('mid', 'N/A')}"
-                        )
-                    guardrail += (
-                        "\n[LIVE EXCHANGE SPOT PRICES — AUTHORITATIVE]\n"
-                        + "\n".join(price_lines)
-                        + "\nUse these as the ONLY source for current market prices.\n\n"
-                    )
-
-                effective_prompt = guardrail + prompt
-                n_pos = len(pos_data.get("positions", [])) if isinstance(pos_data, dict) else 0
-                n_prices = len(spot_data.get("prices", [])) if isinstance(spot_data, dict) else 0
-                logger.info(f"BCM guardrail injected: {n_pos} positions, {n_prices} live prices")
-            except Exception as _pe:
-                logger.warning(f"BCM positions guardrail fetch failed: {_pe}; proceeding without guardrail")
-
-        # ─────────────────────────────────────────────────────────────────
-
-        bcm_executed = False
-        if agent_id == "bcm_orchestrator":
-            try:
-                from backend.bcm.autonomous_trader import ask_ai_decision, get_technical_analysis, format_md_decision_summary, TICKER_MAP
-                requested_syms = []
-                for sym_key in ["SpotBrent", "SpotCrude", "XAUUSD", "US500", "GBPUSD", "EURUSD", "BRENT", "USOIL", "GOLD"]:
-                    if sym_key.lower() in prompt.lower():
-                        norm_sym = "BRENT" if sym_key in ("BRENT", "SpotBrent") else ("USOIL" if sym_key in ("USOIL", "SpotCrude") else ("GOLD" if sym_key in ("GOLD", "XAUUSD") else sym_key))
-                        if norm_sym in TICKER_MAP and norm_sym not in requested_syms:
-                            requested_syms.append(norm_sym)
-
-                if requested_syms:
-                    symbols_to_run = requested_syms
-                else:
-                    # Deduplicate based on analysis ticker (e.g., avoid running both ETH and ETHUSD)
-                    seen_analysis = set()
-                    symbols_to_run = []
-                    for k, v in TICKER_MAP.items():
-                        if v["analysis"] not in seen_analysis:
-                            seen_analysis.add(v["analysis"])
-                            symbols_to_run.append(k)
-                reports = []
-                for target_sym in symbols_to_run:
-                    await manager.broadcast({
-                        "type": "trace_update",
-                        "chat_id": session_id,
-                        "trace": {"agent": "bcm_orchestrator", "action": f"Analyzing market data for {target_sym}...", "status": "running"}
-                    })
-                    analysis_raw = await asyncio.get_event_loop().run_in_executor(
-                        None, get_technical_analysis, target_sym
-                    )
-                    analysis_data = {}
-                    try:
-                        analysis_data = json.loads(analysis_raw)
-                    except Exception:
-                        analysis_data = {"ticker": target_sym, "rsi_14": 50.0}
-
-                    md_json_str = await asyncio.get_event_loop().run_in_executor(
-                        None, ask_ai_decision, target_sym, analysis_data
-                    )
-
-                    try:
-                        from backend.bcm.autonomous_trader import format_any_bcm_response
-                        formatted_report = format_any_bcm_response(md_json_str, symbol=target_sym)
-                    except Exception:
-                        formatted_report = str(md_json_str)
-                    reports.append(formatted_report)
-
-                response_text = "\n\n---\n\n".join(reports)
-                bcm_executed = True
-            except Exception as _bcm_err:
-                logger.error(f"Error running BCM multi-agent cycle in scheduler: {_bcm_err}")
-                response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
-        else:
-            response_text = await agent_instance.respond(effective_prompt, session_id=session_id, override_agent_id=agent_id)
+        response_text = await agent_instance.respond(
+            prompt, session_id=session_id, override_agent_id=agent_id
+        )
 
         if not response_text or not response_text.strip():
             response_text = "Sir, the scheduled automation task completed successfully."
 
-        # Strip unwanted system log header prefixes requested by user
-        for prefix in ["[SYSTEM LOG: AUTONOMOUS CYCLE COMPLETED]", "SYSTEM LOG: AUTONOMOUS CYCLE COMPLETED", "[SYSTEM LOG]", "SYSTEM LOG:"]:
-            if response_text.startswith(prefix):
-                response_text = response_text[len(prefix):].lstrip("\n: ")
-
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
         suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
 
-        if bcm_executed:
-            from backend.database import save_message
-            assistant_msg_id = save_message(session_id, "assistant", response_text)
-        else:
-            saved_ids = agent_instance.last_saved_ids.get(session_id, {})
-            user_msg_id = saved_ids.get("user")
-            assistant_msg_id = saved_ids.get("assistant")
+        saved_ids = agent_instance.last_saved_ids.get(session_id, {})
+        user_msg_id = saved_ids.get("user")
+        assistant_msg_id = saved_ids.get("assistant")
 
 
         await manager.broadcast({
@@ -1375,9 +1153,21 @@ async def _send_telegram_alert(chat_id: str, text: str) -> None:
     try:
         from backend.bot import telegram_app
         if telegram_app:
-            await telegram_app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            try:
+                await telegram_app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            except Exception as pe:
+                if "can't parse entities" in str(pe).lower() or "entity" in str(pe).lower() or "bad request" in str(pe).lower():
+                    logger.warning(f"Telegram Markdown parse failed in scheduler: {pe}. Retrying with plain text.")
+                    await telegram_app.bot.send_message(chat_id=chat_id, text=text)
+                else:
+                    raise pe
     except Exception as exc:
-        logger.error(f"Telegram alert error: {exc}")
+        exc_str = str(exc)
+        exc_type = type(exc).__name__
+        if "NetworkError" in exc_type or "ConnectError" in exc_type or "TimedOut" in exc_type or "No address associated with hostname" in exc_str:
+            logger.warning(f"Telegram alert transient network issue: {exc}")
+        else:
+            logger.error(f"Telegram alert error: {exc}")
 
 
 async def _broadcast_ws(payload: Dict) -> None:
@@ -1399,6 +1189,10 @@ async def _run_skill_distillation_loop(interval_seconds: int = 900) -> None:
         await asyncio.sleep(10)
         while True:
             try:
+                from backend.database import purge_invalid_distilled_skills
+                purged = await asyncio.to_thread(purge_invalid_distilled_skills)
+                if purged:
+                    logger.info(f"Skill distillation loop: purged {purged} contaminated distilled skills.")
                 from backend.skill_loop import get_skill_distiller
                 distiller = get_skill_distiller()
                 distilled = await asyncio.to_thread(distiller.process_undistilled_logs, min_steps=3, limit=5)
@@ -1500,30 +1294,9 @@ def restore_state() -> None:
             if task_type == "cron":
                 if not cron_expr_raw or cron_expr_raw.strip() in ("* * * * *", "* * * * * *"):
                     cron_healed = True
-                    if job_id == "bcm_session_swing_daily_close":
-                        cron_expr_raw = "15 23 * * mon-fri UTC"
-                    elif job_id == "bcm_session_swing_friday_gap":
-                        cron_expr_raw = "0 20 * * fri UTC"
-                    elif job_id.startswith("bcm_session_"):
-                        try:
-                            from backend.bcm.session_scheduler import SESSIONS
-                        except ImportError:
-                            logger.info(f"BCM module not found, skipping {job_id}")
-                            continue
-                        
-                        matched_cfg = None
-                        for sn, scfg in SESSIONS.items():
-                            if job_id == f"bcm_session_{sn.lower().replace('/', '_').replace(' ', '_')}":
-                                matched_cfg = scfg
-                                break
-                        if matched_cfg:
-                            target_hour = matched_cfg["open"] + 1
-                            cron_expr_raw = f"0 {target_hour} * * mon-fri {matched_cfg['tz']}"
-                        else:
-                            logger.warning(f"Skipping corrupted BCM session job: {job_id}")
-                            continue
-                    else:
-                        cron_expr_raw = "0 * * * *"  # Default to hourly instead of runaway minute loop
+                    from backend.plugins import hook
+                    healed = hook("heal_cron_expr", job_id)
+                    cron_expr_raw = healed or "0 * * * *"
 
             _timer_meta[job_id] = {
                 "type": task_type,
@@ -1575,10 +1348,11 @@ def restore_state() -> None:
                             "chat_id": chat_id, "agent_id": agent_id, "prompt": prompt,
                             "created_at": created_at, "task_type": "cron"
                         }
-                        if job_id.startswith("bcm_session_") and (not agent_id or agent_id == "system"):
-                            target_func = _job_bcm_session_scheduler
-                            sess_name = "swing_trigger" if "swing" in job_id else label.replace("BCM Session (", "").replace(")", "").strip()
-                            target_kwargs["session_name"] = sess_name
+                        from backend.plugins import hook
+                        private_cron = hook("resolve_cron_job", job_id, agent_id, label)
+                        if private_cron:
+                            target_func, extra_kwargs = private_cron
+                            target_kwargs.update(extra_kwargs)
 
                         job = scheduler.add_job(
                             target_func,
@@ -1650,15 +1424,8 @@ async def _start_restored_tasks() -> None:
 def _job_watcher_sync():
     """Background job to run watcher's memory synchronization."""
     try:
-        try:
-            from backend.bcm.watcher import watcher
-        except ImportError:
-            return
-
-        if hasattr(watcher, "sync_memory_state"):
-            watcher.sync_memory_state()
-        elif hasattr(watcher, "sync"):
-            watcher.sync()
+        from backend.plugins import hook
+        hook("watcher_sync")
     except Exception as e:
         logger.warning(f"Error running watcher sync: {e}")
 
@@ -1666,120 +1433,18 @@ def start_watcher_loop(interval_seconds: int = 300):
     job_id = "watcher_sync_loop"
     try:
         if scheduler.get_job(job_id):
-            scheduler.modify_job(job_id, func=_job_watcher_sync, kwargs={})
+            scheduler.modify_job(job_id, func=_job_watcher_sync, kwargs={}, max_instances=2)
         else:
             scheduler.add_job(
                 _job_watcher_sync, 'interval', seconds=interval_seconds,
-                kwargs={}, id=job_id, name="Watcher Memory Sync", replace_existing=True
+                kwargs={}, id=job_id, name="Watcher Memory Sync", replace_existing=True,
+                coalesce=True, max_instances=2, misfire_grace_time=300
             )
         logger.info(f"Started Watcher Sync loop (interval: {interval_seconds}s)")
     except Exception as e:
         logger.warning(f"Watcher Sync loop job {job_id} could not be added/modified: {e}")
 
 def _load_private_plugins(scheduler_obj=None, restore_items=None) -> bool:
-    """Dynamically loads and initializes private plugins if they exist."""
-    try:
-        from backend.bcm.plugin import init_plugin
-        init_plugin(scheduler_obj, restore_items)
-        return True
-    except ImportError:
-        return False
+    from backend.plugins import init_all
+    return init_all(scheduler_obj, restore_items)
 
-
-def start_bcm_session_scheduler_loop():
-    """Register and reconcile all BCM Intraday and Swing session cron schedules."""
-    try:
-        # 1. Intraday session triggers from SESSIONS
-        try:
-            from backend.bcm.session_scheduler import SESSIONS
-            for session_name, scfg in SESSIONS.items():
-                job_id = f"bcm_session_{session_name.lower().replace('/', '_').replace(' ', '_')}"
-                label = f"BCM Session ({session_name})"
-                target_hour = scfg["open"] + 1
-                tz_str = scfg.get("tz", "UTC")
-                cron_expr_5 = f"0 {target_hour} * * mon-fri"
-                full_cron = f"{cron_expr_5} {tz_str}"
-                
-                try:
-                    import pytz
-                    cron_tz = pytz.timezone(tz_str)
-                except Exception:
-                    cron_tz = scheduler.timezone
-
-                trigger = CronTrigger.from_crontab(cron_expr_5, timezone=cron_tz)
-                scheduler.add_job(
-                    _job_bcm_session_scheduler,
-                    trigger=trigger,
-                    kwargs={
-                        "job_id": job_id,
-                        "label": label,
-                        "session_name": session_name,
-                        "cron_expr": full_cron,
-                        "task_type": "cron"
-                    },
-                    id=job_id,
-                    name=label,
-                    replace_existing=True
-                )
-                _timer_meta[job_id] = {
-                    "type": "cron",
-                    "label": label,
-                    "cron_expr": full_cron,
-                    "status": "running"
-                }
-        except ImportError:
-            logger.info("BCM session_scheduler module not available for intraday triggers.")
-
-        # 2. Swing session triggers
-        swing_jobs = [
-            ("bcm_session_swing_daily_close", "BCM Session (Swing Daily Close)", "15 23 * * mon-fri UTC", "swing_trigger"),
-            ("bcm_session_swing_friday_gap", "BCM Session (Swing Friday Gap)", "0 20 * * fri UTC", "swing_trigger"),
-        ]
-
-        for job_id, label, default_cron, sess_name in swing_jobs:
-            existing_meta = _timer_meta.get(job_id, {})
-            current_cron = existing_meta.get("cron_expr", default_cron)
-            if not current_cron or current_cron.strip() in ("* * * * *", "* * * * * *"):
-                current_cron = default_cron
-
-            cron_parts = current_cron.strip().split()
-            cron_5 = " ".join(cron_parts[:5])
-            tz_str = cron_parts[5] if len(cron_parts) == 6 else "UTC"
-            try:
-                import pytz
-                cron_tz = pytz.timezone(tz_str)
-            except Exception:
-                cron_tz = scheduler.timezone
-
-            trigger = CronTrigger.from_crontab(cron_5, timezone=cron_tz)
-            scheduler.add_job(
-                _job_bcm_session_scheduler,
-                trigger=trigger,
-                kwargs={
-                    "job_id": job_id,
-                    "label": label,
-                    "session_name": sess_name,
-                    "cron_expr": current_cron,
-                    "task_type": "cron"
-                },
-                id=job_id,
-                name=label,
-                replace_existing=True
-            )
-            _timer_meta[job_id] = {
-                "type": "cron",
-                "label": label,
-                "cron_expr": current_cron,
-                "status": "running"
-            }
-            try:
-                _register_scheduled_session(
-                    job_id, label, "cron", "system", f"Run BCM Session Scheduler for {sess_name}",
-                    status="running", extra={"cron_expr": current_cron}
-                )
-            except Exception as _e:
-                logger.warning(f"Could not persist swing session schedule for {job_id}: {_e}")
-
-        logger.info("BCM session scheduler loop started and reconciled.")
-    except Exception as e:
-        logger.error(f"Error starting BCM session scheduler loop: {e}")

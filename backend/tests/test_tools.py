@@ -129,7 +129,39 @@ def test_obsidian_tools(mock_search_memory):
     
     # 3. create_obsidian_note
     res_create = tools.execute_tool("create_obsidian_note", {"title": "New", "content": "Body"})
-    assert "created in Obsidian vault" in res_create
+    assert "created" in res_create
+
+
+def test_knowledge_save_request_detects_recipe_and_skips_chat():
+    from backend.tools import is_knowledge_save_request, try_direct_knowledge_save
+
+    recipe = (
+        "Я хочу чтобы у меня была своя база знаний рецептов\n\n"
+        "Ингредиенты на 1,1–1,3 кг:\n"
+        "• Филе индейки в магазинной кулинарной сетке: 1 шт.\n"
+        "• Соль: 18–20 г\n"
+        "• Чеснок: 3 зубчика\n"
+    )
+    assert is_knowledge_save_request(recipe) is True
+    assert is_knowledge_save_request("Привет") is False
+    assert is_knowledge_save_request("найди в заметках рецепт индейки") is False
+
+    with patch("backend.tools.create_obsidian_note", return_value='{"status":"created","path":"Health/Индейка.md"}'):
+        reply = try_direct_knowledge_save(recipe)
+    assert reply is not None
+    assert "Health/Индейка.md" in reply
+    assert try_direct_knowledge_save("Привет") is None
+
+
+@patch("backend.rag.index_document", return_value=True)
+def test_create_obsidian_note_indexes_when_vault_offline(mock_index):
+    with patch("backend.obsidian.create_note", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = False
+        res = json.loads(tools.create_obsidian_note("Индейка в сетке", "Филе индейки", "Health"))
+    assert res["status"] == "created"
+    assert res["vault"] is False
+    assert "Health/Индейка в сетке.md" in res["path"]
+    mock_index.assert_called_once()
 
 def test_execute_command():
     res = tools.execute_command("echo hello")

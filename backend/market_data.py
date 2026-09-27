@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -33,6 +34,38 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 }
 
+_LAST_LOGGED_ERRORS: dict[str, float] = {}
+
+
+def _log_throttled_warning(key: str, msg: str, *args, throttle_sec: float = 300.0) -> None:
+    now = time.time()
+    last = _LAST_LOGGED_ERRORS.get(key, 0.0)
+    if now - last >= throttle_sec:
+        _LAST_LOGGED_ERRORS[key] = now
+        logger.warning(msg, *args)
+    else:
+        logger.debug(msg, *args)
+
+
+def _is_network_or_timeout_error(exc: BaseException) -> bool:
+    """Detects network outages, DNS errors, or request timeouts across httpx and stdlib."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, TimeoutError, OSError)):
+        return True
+    exc_type = type(exc).__name__
+    exc_str = str(exc).lower()
+    return (
+        any(k in exc_type for k in ("Timeout", "Network", "Connect", "Resolution"))
+        or any(k in exc_str for k in (
+            "timeout",
+            "name or service not known",
+            "no address associated with hostname",
+            "connection refused",
+            "connection reset",
+            "gaierror",
+            "all connection attempts failed",
+        ))
+    )
+
 # ---------------------------------------------------------------------------
 # Crypto symbol normalisation map (shared with price_monitor / tools)
 # ---------------------------------------------------------------------------
@@ -42,7 +75,7 @@ CRYPTO_MAP: dict[str, str] = {
     "eth": "ethereum", "ethereum": "ethereum",
     "эфир": "ethereum", "эфириум": "ethereum",
     "bnb": "binancecoin",
-    "sol": "solana", "solana": "solana", "солаon": "solana",
+    "sol": "solana", "solana": "solana", "солана": "solana",
     "xrp": "ripple", "ripple": "ripple", "рипл": "ripple",
     "ton": "the-open-network", "тон": "the-open-network",
 }
@@ -94,10 +127,18 @@ class HttpProvider(MarketDataProvider):
     the core ``httpx`` dependency already present in the project.
     """
 
+    def __init__(self) -> None:
+        self._last_network_outage_time: float = 0.0
+
     def name(self) -> str:
         return "HttpProvider (CoinGecko + Yahoo Finance)"
 
     async def get_price(self, symbol: str, is_crypto: bool) -> Optional[float]:
+        # Fast circuit-breaker: if a recent network outage / DNS failure occurred (< 10s ago),
+        # skip remote HTTP queries to prevent latency cascades and repetitive connection warnings.
+        if (time.time() - getattr(self, "_last_network_outage_time", 0.0)) < 10.0:
+            return None
+
         if is_crypto:
             return await self._fetch_coingecko(symbol)
         
@@ -108,6 +149,8 @@ class HttpProvider(MarketDataProvider):
             fx_price = await self._fetch_forex(s_clean[:3], s_clean[3:])
             if fx_price is not None:
                 return fx_price
+            if time.time() - getattr(self, "_last_network_outage_time", 0.0) < 5.0:
+                return None
 
         return await self._fetch_yahoo(symbol)
 
@@ -122,7 +165,10 @@ class HttpProvider(MarketDataProvider):
                     if quote in rates:
                         return float(rates[quote])
         except Exception as exc:
-            logger.warning("HttpProvider: Forex API error for %s/%s: %s", base, quote, exc)
+            err_desc = f"{type(exc).__name__}: {exc}".rstrip(": ") if exc else type(exc).__name__
+            _log_throttled_warning(f"forex:{base}:{quote}", "HttpProvider: Forex API error for %s/%s: %s", base, quote, err_desc)
+            if _is_network_or_timeout_error(exc):
+                self._last_network_outage_time = time.time()
         return None
 
     async def _fetch_coingecko(self, coin_id: str) -> Optional[float]:
@@ -138,7 +184,10 @@ class HttpProvider(MarketDataProvider):
                     if coin_id in data:
                         return float(data[coin_id]["usd"])
         except Exception as exc:
-            logger.warning("HttpProvider: CoinGecko error for %s: %s", coin_id, exc)
+            err_desc = f"{type(exc).__name__}: {exc}".rstrip(": ") if exc else type(exc).__name__
+            _log_throttled_warning(f"coingecko:{coin_id}", "HttpProvider: CoinGecko error for %s: %s", coin_id, err_desc)
+            if _is_network_or_timeout_error(exc):
+                self._last_network_outage_time = time.time()
         return None
 
     async def _fetch_yahoo(self, ticker: str) -> Optional[float]:
@@ -180,7 +229,11 @@ class HttpProvider(MarketDataProvider):
                         if price is not None:
                             return float(price)
             except Exception as exc:
-                logger.warning("HttpProvider: Yahoo Finance error for %s: %s", t, exc)
+                err_desc = f"{type(exc).__name__}: {exc}".rstrip(": ") if exc else type(exc).__name__
+                _log_throttled_warning(f"yahoo:{t}", "HttpProvider: Yahoo Finance error for %s: %s", t, err_desc)
+                if _is_network_or_timeout_error(exc):
+                    self._last_network_outage_time = time.time()
+                    break
         return None
 
 
@@ -196,47 +249,30 @@ class HttpProvider(MarketDataProvider):
 # Factory — driven by MARKET_DATA_PROVIDER env var
 # ---------------------------------------------------------------------------
 
-try:
-    from backend.bcm.providers import CcxtProvider, AlpacaProvider
-except ImportError:
-    CcxtProvider = None
-    AlpacaProvider = None
-
-
 def get_provider() -> MarketDataProvider:
     """Return the configured MarketDataProvider.
 
-    Reads MARKET_DATA_PROVIDER from the environment. Falls back to
-    HttpProvider on any error so the system is always operational.
-
-    Valid values: 'http' (default), 'ccxt', 'alpaca'
+    Reads MARKET_DATA_PROVIDER from the environment. ``http`` is built in;
+    any other value is offered to installed plugins via the
+    ``market_data_provider(name)`` hook. Falls back to HttpProvider on any
+    error so the system is always operational.
     """
     provider_name = os.getenv("MARKET_DATA_PROVIDER", "http").strip().lower()
 
-    if provider_name == "ccxt":
+    if provider_name not in ("http", ""):
         try:
-            if CcxtProvider is not None:
-                p = CcxtProvider()
+            from backend.plugins import hook
+            p = hook("market_data_provider", provider_name)
+            if p is not None:
                 logger.info("Market data: using %s", p.name())
                 return p
+            logger.warning(
+                "No plugin provides MARKET_DATA_PROVIDER=%r; using HttpProvider.", provider_name
+            )
         except Exception as exc:
             logger.warning(
-                "CcxtProvider unavailable (%s); falling back to HttpProvider.", exc
+                "Provider %r unavailable (%s); falling back to HttpProvider.", provider_name, exc
             )
-    elif provider_name == "alpaca":
-        try:
-            if AlpacaProvider is not None:
-                p = AlpacaProvider()
-                logger.info("Market data: using %s", p.name())
-                return p
-        except Exception as exc:
-            logger.warning(
-                "AlpacaProvider unavailable (%s); falling back to HttpProvider.", exc
-            )
-    elif provider_name not in ("http", ""):
-        logger.warning(
-            "Unknown MARKET_DATA_PROVIDER=%r; using HttpProvider.", provider_name
-        )
 
     p = HttpProvider()
     logger.info("Market data: using %s", p.name())

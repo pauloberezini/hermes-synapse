@@ -1,53 +1,12 @@
 """
 backend/presets.py — Team Archetype Presets (Paperclip-inspired Blueprints)
 
-Provides 1-click multi-agent team setups for Hermes Synapse:
-  1. Financial Trading & Hedge Fund
-  2. Full-Stack Software Engineering Shop
-  3. OSINT & Intelligence Bureau
+Provides 1-click multi-agent team setups for Hermes Synapse.
 """
 
 from typing import List, Dict, Any
 
 TEAM_PRESETS: Dict[str, Dict[str, Any]] = {
-    "hedge_fund": {
-        "id": "hedge_fund",
-        "title": "Financial Hedge Fund & Trading Desk",
-        "description": "A quantitative trading team with Market Analyst, Risk Compliance Officer, and Automated Execution Trader.",
-        "icon": "TrendingUp",
-        "agents": [
-            {
-                "id": "fund_lead",
-                "name": "Portfolio Manager",
-                "system_prompt": "You are the Chief Investment Officer. Synthesize market data, evaluate risk scores, and authorize asset allocations. Delegate research to analysts.",
-                "model": "ollama/llama3",
-                "agent_type": "sub-orchestrator",
-                "parent_id": "jarvis",
-                "skills": "market_monitor,bcm",
-                "x": 200, "y": 150, "temperature": 0.3
-            },
-            {
-                "id": "quant_analyst",
-                "name": "Quant Market Analyst",
-                "system_prompt": "You are a Quantitative Market Analyst. Track live crypto/equity metrics, technical indicators (RSI, ATR, Keltner), and report market anomalies.",
-                "model": "ollama/llama3",
-                "agent_type": "agent",
-                "parent_id": "fund_lead",
-                "skills": "market_monitor,web_search",
-                "x": 450, "y": 100, "temperature": 0.2
-            },
-            {
-                "id": "risk_compliance",
-                "name": "Risk & Compliance Officer",
-                "system_prompt": "You are the Risk Officer. Verify drawdowns, validate stop-loss/take-profit parameters, and enforce strict hard trading limits.",
-                "model": "ollama/llama3",
-                "agent_type": "agent",
-                "parent_id": "fund_lead",
-                "skills": "bcm",
-                "x": 450, "y": 250, "temperature": 0.1
-            }
-        ]
-    },
     "engineering_shop": {
         "id": "engineering_shop",
         "title": "Full-Stack Software Engineering Shop",
@@ -123,8 +82,143 @@ TEAM_PRESETS: Dict[str, Dict[str, Any]] = {
                 "x": 450, "y": 850, "temperature": 0.2
             }
         ]
+    },
+    "devops_desk": {
+        "id": "devops_desk",
+        "title": "DevOps & QA Engineering Desk",
+        "description": "An autonomous CI/CD, issue triage, and test automation team with Issue Triager, Unit Test Generator, and PR Code Reviewer.",
+        "icon": "GitPullRequest",
+        "agents": [
+            {
+                "id": "devops_lead",
+                "name": "DevOps Team Lead",
+                "system_prompt": "You are the DevOps & QA Team Lead. Coordinate continuous integration, issue triage, test generation, and pull request audits. Delegate tasks to specialized DevOps sub-agents.",
+                "model": "ollama/llama3",
+                "agent_type": "sub-orchestrator",
+                "parent_id": "jarvis",
+                "skills": "shell_execution,python_sandbox",
+                "x": 200, "y": 1050, "temperature": 0.3
+            },
+            {
+                "id": "issue_triager",
+                "name": "GitHub Issue Triager",
+                "system_prompt": "You analyze bug reports and feature requests. Categorize issues, score severity, reproduce errors, and suggest targeted fixes.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "devops_lead",
+                "skills": "web_search,shell_execution",
+                "x": 450, "y": 1000, "temperature": 0.2
+            },
+            {
+                "id": "test_generator",
+                "name": "Automated Test Generator",
+                "system_prompt": "You generate comprehensive unit, integration, and regression test suites using pytest and vitest. Ensure high coverage and verify edge cases.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "devops_lead",
+                "skills": "python_sandbox,shell_execution",
+                "x": 450, "y": 1150, "temperature": 0.2
+            },
+            {
+                "id": "pr_reviewer",
+                "name": "PR Code Reviewer",
+                "system_prompt": "You perform rigorous code reviews on diffs and pull requests. Audit for code quality, architectural compliance, security risks, and open-source guardrails.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "devops_lead",
+                "skills": "python_sandbox,shell_execution",
+                "x": 450, "y": 1300, "temperature": 0.1
+            }
+        ]
+    },
+    "cybersec_redteam": {
+        "id": "cybersec_redteam",
+        "title": "Cybersecurity & Red Team",
+        "description": "An autonomous security auditing team with CISO, Vulnerability Scanner, and Static Code Analyzer.",
+        "icon": "ShieldAlert",
+        "agents": [
+            {
+                "id": "ciso_lead",
+                "name": "CISO & Security Lead",
+                "system_prompt": "You are the Chief Information Security Officer. Coordinate security audits, review vulnerability reports, and ensure compliance with open-source guardrails.",
+                "model": "ollama/llama3",
+                "agent_type": "sub-orchestrator",
+                "parent_id": "jarvis",
+                "skills": "shell_execution",
+                "x": 200, "y": 1350, "temperature": 0.2
+            },
+            {
+                "id": "vuln_scanner",
+                "name": "Vulnerability Scanner",
+                "system_prompt": "You run security scanning tools (like pip-audit, npm audit, nmap) to detect CVEs and misconfigurations in local environments.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "ciso_lead",
+                "skills": "shell_execution",
+                "x": 450, "y": 1300, "temperature": 0.1
+            },
+            {
+                "id": "static_analyzer",
+                "name": "Static Code Analyzer",
+                "system_prompt": "You run SAST tools (like Bandit, Semgrep) on local repositories to detect hardcoded secrets and dangerous code patterns.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "ciso_lead",
+                "skills": "shell_execution",
+                "x": 450, "y": 1450, "temperature": 0.1
+            }
+        ]
+    },
+    "customer_ops_desk": {
+        "id": "customer_ops_desk",
+        "title": "Customer Ops & Support Desk",
+        "description": "An automated L1/L2 support team for ticket triage, RAG knowledge retrieval, and response drafting.",
+        "icon": "Headset",
+        "agents": [
+            {
+                "id": "support_lead",
+                "name": "Support Operations Lead",
+                "system_prompt": "You coordinate the customer support desk. Route tickets to triagers and ensure drafted responses are accurate before submitting to the ApprovalQueue.",
+                "model": "ollama/llama3",
+                "agent_type": "sub-orchestrator",
+                "parent_id": "jarvis",
+                "skills": "obsidian_rag",
+                "x": 200, "y": 1650, "temperature": 0.3
+            },
+            {
+                "id": "ticket_triager",
+                "name": "Ticket Triager",
+                "system_prompt": "You analyze incoming user queries and categorize their severity, urgency, and topic.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "support_lead",
+                "skills": "",
+                "x": 450, "y": 1600, "temperature": 0.4
+            },
+            {
+                "id": "knowledge_retriever",
+                "name": "Knowledge Base Retriever",
+                "system_prompt": "You search vector memory and RAG databases for relevant documentation to answer user queries.",
+                "model": "ollama/llama3",
+                "agent_type": "agent",
+                "parent_id": "support_lead",
+                "skills": "obsidian_rag",
+                "x": 450, "y": 1750, "temperature": 0.1
+            }
+        ]
     }
 }
+
+
+
+
+def _all_presets() -> Dict[str, Dict[str, Any]]:
+    from backend.plugins import collect
+    merged = dict(TEAM_PRESETS)
+    for extra in collect("get_team_presets"):
+        if isinstance(extra, dict):
+            merged.update(extra)
+    return merged
 
 
 def list_presets() -> List[Dict[str, Any]]:
@@ -136,13 +230,13 @@ def list_presets() -> List[Dict[str, Any]]:
             "description": v["description"],
             "agent_count": len(v["agents"]),
         }
-        for k, v in TEAM_PRESETS.items()
+        for k, v in _all_presets().items()
     ]
 
 
 def load_preset(preset_id: str) -> bool:
     """Save all subagents from the chosen preset into the database."""
-    preset = TEAM_PRESETS.get(preset_id)
+    preset = _all_presets().get(preset_id)
     if not preset:
         return False
     from backend.database import save_subagent

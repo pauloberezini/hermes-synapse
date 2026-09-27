@@ -70,6 +70,7 @@ def mock_external_apis():
             return mock_resp
             
         client_inst.get.side_effect = mock_get
+        client_inst.post.side_effect = mock_get
         yield client_inst
 
 def test_web_search_ddg_mock():

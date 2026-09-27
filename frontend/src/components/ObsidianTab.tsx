@@ -16,7 +16,7 @@ interface ObsidianTabProps {
 }
 
 export function ObsidianTab({ authToken }: ObsidianTabProps) {
-  const [status, setStatus] = useState<null | { reachable: boolean; message: string }>(null);
+  const [status, setStatus] = useState<null | { reachable: boolean; knowledge_ok?: boolean; message: string }>(null);
   const [notes, setNotes] = useState<string[]>([]);
   const [indexedCount, setIndexedCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
@@ -131,6 +131,17 @@ export function ObsidianTab({ authToken }: ObsidianTabProps) {
 
   useEffect(() => { fetchStatus(); fetchNotes(); }, [fetchStatus, fetchNotes]);
 
+  const pluginOn = !!status?.reachable;
+  const kbOn = !!(status?.knowledge_ok || pluginOn || indexedCount > 0 || notes.length > 0);
+  const badgeColor = pluginOn ? '#00ffa0' : kbOn ? 'var(--text-secondary)' : '#ff6060';
+  const badgeText = !status
+    ? 'Checking...'
+    : pluginOn
+      ? status.message
+      : kbOn
+        ? (status.message?.startsWith('❌') ? `Knowledge base online · ${indexedCount || notes.length} notes` : status.message)
+        : status.message;
+
   const panelBtnStyle = (active: boolean): React.CSSProperties => ({
     padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem',
     fontWeight: 600, transition: 'all 0.2s',
@@ -152,20 +163,17 @@ export function ObsidianTab({ authToken }: ObsidianTabProps) {
           </p>
         </div>
 
-        {/* Status badge */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
           padding: '8px 16px',
           borderRadius: '20px',
-          background: status?.reachable ? 'rgba(0,255,160,0.08)' : 'rgba(255,60,60,0.08)',
-          border: `1px solid ${status?.reachable ? 'rgba(0,255,160,0.25)' : 'rgba(255,60,60,0.25)'}`,
+          background: pluginOn ? 'rgba(0,255,160,0.08)' : kbOn ? 'rgba(255,255,255,0.04)' : 'rgba(255,60,60,0.08)',
+          border: `1px solid ${pluginOn ? 'rgba(0,255,160,0.25)' : kbOn ? 'rgba(255,255,255,0.1)' : 'rgba(255,60,60,0.25)'}`,
         }}>
-          {status?.reachable ? <Wifi size={14} style={{ color: '#00ffa0' }} /> : <WifiOff size={14} style={{ color: '#ff4040' }} />}
-          <span style={{ fontSize: '0.78rem', color: status?.reachable ? '#00ffa0' : '#ff6060' }}>
-            {status ? status.message : 'Checking...'}
-          </span>
+          {kbOn ? <Wifi size={14} style={{ color: badgeColor }} /> : <WifiOff size={14} style={{ color: '#ff4040' }} />}
+          <span style={{ fontSize: '0.78rem', color: badgeColor }}>{badgeText}</span>
           <button onClick={fetchStatus} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}>
             <RefreshCw size={12} />
           </button>
@@ -236,9 +244,7 @@ export function ObsidianTab({ authToken }: ObsidianTabProps) {
           }}>
             {notes.length === 0 && (
               <div style={{ color: 'var(--text-dim)', fontSize: '0.85rem', padding: '20px', textAlign: 'center' }}>
-                {status?.reachable
-                  ? 'Vault is empty. Click "Sync" to load notes.'
-                  : 'Obsidian is unavailable. Run the app and enable the Local REST API plugin.'}
+                No notes yet. Create one here — Obsidian app is optional.
               </div>
             )}
             {notes.map(n => {

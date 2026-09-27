@@ -66,8 +66,19 @@ class QdrantMemoryEngine(MemoryEngine):
 
     def index_document(self, doc_id: str, title: str, text: str,
                        source: str = "manual", note_path: str = "") -> bool:
+        try:
+            from backend.governance import MemoryGuard
+            allow, clean_text, warnings = MemoryGuard.sanitize_for_indexing(text, source=source)
+            if not allow:
+                logger.warning(f"[MemoryGuard] Blocked document '{title}' ({doc_id}) from indexing.")
+                return False
+        except Exception as e:
+            logger.warning(f"MemoryGuard error (falling back to original text): {e}")
+            clean_text = text
+
         from backend.rag import raw_index_document
-        return raw_index_document(doc_id, title, text, source, note_path)
+        return raw_index_document(doc_id, title, clean_text, source, note_path)
+
 
     def search_memory(self, query: str, limit: int = 3, threshold: float = 0.7,
                       source_filter: str = "") -> List[Dict[str, Any]]:

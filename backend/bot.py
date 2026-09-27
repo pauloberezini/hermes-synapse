@@ -2,24 +2,31 @@ import os
 import logging
 import io
 import re
+import time
 from datetime import datetime, timezone
 from functools import wraps
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-    Application
-)
+from typing import Any, Optional
+try:
+    from telegram import Update
+    from telegram.ext import (
+        ApplicationBuilder,
+        CommandHandler,
+        ContextTypes,
+        MessageHandler,
+        filters,
+        Application
+    )
+except ImportError:
+    Update = Any
+    ApplicationBuilder = CommandHandler = ContextTypes = MessageHandler = filters = Application = Any
+
 from backend.agent import agent_instance
 from backend.websocket_manager import manager
 
 logger = logging.getLogger("hermes.bot")
 
 # Global Telegram Application instance
-telegram_app: Application = None
+telegram_app: Optional[Any] = None
 
 # ponytail: Admin security decorator to block unauthorized users before calling agent/changing state. Supports multiple comma-separated IDs.
 def admin_only(func):
@@ -122,14 +129,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ⚡ FAST-First CLI v2.0 (Dynamic Hooks)
     if user_text.startswith('/'):
         try:
-            from backend.bcm.plugin import handle_fast_command
-            handled, response = handle_fast_command(user_text)
+            from backend.plugins import hook
+            handled, response = hook("handle_fast_command", user_text, default=(False, None))
             if handled:
                 if response:
                     await update.message.reply_text(response, parse_mode='Markdown')
                 return
-        except ImportError:
-            pass
         except Exception as e:
             logger.error(f"Error handling fast command with plugin: {e}", exc_info=True)
             await update.message.reply_text(f"⚠️ Error executing command `{user_text.split()[0]}`: {e}", parse_mode='Markdown')
@@ -279,16 +284,119 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "logs": DECISION_LOGS[:20]  # Send last 20 logs
     })
 
+class TelegramPollingNetworkFilter(logging.Filter):
+    """
+    Suppresses giant 50-line tracebacks and downgrades transient network/DNS errors
+    emitted by python-telegram-bot's Updater loop to single-line WARNINGs with rate limiting.
+    Genuine application or API errors remain at ERROR level with full traceback.
+    """
+    def __init__(self, throttle_interval_seconds: float = 60.0):
+        super().__init__()
+        self.throttle_interval = throttle_interval_seconds
+        self._last_warning_time = 0.0
+        self._suppressed_count = 0
+        self._last_conflict_time = 0.0
+        self._suppressed_conflict_count = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        is_updater = record.name.startswith("telegram.ext")
+        msg_match = "Exception happened while polling for updates" in str(record.msg)
+        
+        is_net_err = False
+        is_conflict = False
+        exc = None
+        if record.exc_info and len(record.exc_info) >= 2 and record.exc_info[1]:
+            exc = record.exc_info[1]
+            network_error_indicators = [
+                "ConnectError",
+                "NetworkError",
+                "TimedOut",
+                "TimeoutException",
+                "RemoteProtocolError",
+                "gaierror",
+                "No address associated with hostname",
+                "All connection attempts failed",
+                "Temporary failure in name resolution",
+                "Connection reset by peer",
+            ]
+            curr = exc
+            while curr is not None:
+                curr_str = str(curr)
+                curr_type = type(curr).__name__
+                if any(ind in curr_type or ind in curr_str for ind in network_error_indicators):
+                    is_net_err = True
+                    break
+                if "Conflict" in curr_type or "terminated by other getUpdates request" in curr_str:
+                    is_conflict = True
+                    break
+                curr = getattr(curr, "__cause__", None) or getattr(curr, "__context__", None)
+            
+            if not is_conflict and ("Conflict" in type(exc).__name__ or "terminated by other getUpdates request" in str(exc)):
+                is_conflict = True
+
+        if is_updater and (msg_match or is_net_err or is_conflict):
+            if is_conflict:
+                now = time.time()
+                conflict_throttle = max(30.0, self.throttle_interval)
+                if (now - getattr(self, "_last_conflict_time", 0.0)) < conflict_throttle:
+                    self._suppressed_conflict_count = getattr(self, "_suppressed_conflict_count", 0) + 1
+                    return False
+                suppressed_note = f" (suppressed {self._suppressed_conflict_count} repetitive errors)" if getattr(self, "_suppressed_conflict_count", 0) > 0 else ""
+                self._suppressed_conflict_count = 0
+                self._last_conflict_time = now
+                record.exc_info = None
+                record.levelno = logging.WARNING
+                record.levelname = "WARNING"
+                record.msg = f"Telegram polling conflict detected: Another bot instance is running or restarting ({exc}){suppressed_note}."
+                return True
+
+            if is_net_err:
+                now = time.time()
+                # Suppress full traceback dump
+                record.exc_info = None
+                record.levelno = logging.WARNING
+                record.levelname = "WARNING"
+                
+                # Check rate limiting
+                if (now - self._last_warning_time) < self.throttle_interval:
+                    self._suppressed_count += 1
+                    # Drop duplicate repetitive log records within throttle window
+                    return False
+                else:
+                    suppressed_note = f" (suppressed {self._suppressed_count} repetitive errors)" if self._suppressed_count > 0 else ""
+                    self._suppressed_count = 0
+                    self._last_warning_time = now
+                    record.msg = f"Telegram polling transient network issue: {exc}{suppressed_note} (will retry automatically)"
+                    return True
+        return True
+
+def setup_telegram_logging_filters(throttle_interval_seconds: float = 60.0):
+    """Installs TelegramPollingNetworkFilter on telegram.ext loggers."""
+    filter_instance = TelegramPollingNetworkFilter(throttle_interval_seconds=throttle_interval_seconds)
+    for name in ["telegram.ext.Updater", "telegram.ext._updater", "telegram.ext"]:
+        target_logger = logging.getLogger(name)
+        if not any(isinstance(f, TelegramPollingNetworkFilter) for f in target_logger.filters):
+            target_logger.addFilter(filter_instance)
+
+# Install filter at module load time as well
+setup_telegram_logging_filters()
+
 async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Global Telegram error handler for handling Conflict and background network issues gracefully."""
-    from telegram.error import Conflict, NetworkError, TimedOut
-    err = context.error
-    if isinstance(err, Conflict):
-        logger.error(
+    try:
+        from telegram.error import Conflict, NetworkError, TimedOut
+    except ImportError:
+        Conflict = type("Conflict", (Exception,), {})
+        NetworkError = type("NetworkError", (Exception,), {})
+        TimedOut = type("TimedOut", (Exception,), {})
+    err = getattr(context, "error", None)
+    err_type_name = type(err).__name__
+    if isinstance(err, Conflict) or err_type_name == "Conflict" or "conflict" in str(err).lower():
+        logger.warning(
             "Telegram Conflict error: Terminated by another getUpdates request. "
             "Make sure only one bot instance is running with this token."
         )
-    elif isinstance(err, (NetworkError, TimedOut)):
+    elif isinstance(err, (NetworkError, TimedOut)) or err_type_name in ("NetworkError", "TimedOut"):
         logger.warning(f"Telegram network warning: {err}")
     else:
         logger.error(f"Telegram exception during update processing: {err}", exc_info=err)
@@ -296,6 +404,7 @@ async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_T
 async def init_bot() -> Application:
     """Initializes the Telegram bot application, binds handlers, and starts polling."""
     global telegram_app
+    setup_telegram_logging_filters()
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN is not set. Bot will not run.")

@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import asyncio
@@ -181,7 +182,7 @@ def get_weather(location: str, days_ahead: int = 0) -> str:
         day_forecasts = [item for item in forecast_list if item.get("dt_txt", "").startswith(target_date)]
         
         if not day_forecasts:
-            return json.dumps({"error": f"Forecast for '{location}' on {target_date} не onйден."})
+            return json.dumps({"error": f"Forecast for '{location}' on {target_date} не найден."})
             
         midday = [item for item in day_forecasts if "12:00:00" in item.get("dt_txt", "") or "15:00:00" in item.get("dt_txt", "")]
         selected = midday[0] if midday else day_forecasts[len(day_forecasts) // 2]
@@ -288,7 +289,7 @@ def cancel_timer_or_alarm(id: str) -> str:
             return json.dumps({
                 "status":  "not_found",
                 "id":      id,
-                "message": f"Активный таймер or alarm with ID '{id}' не onйден."
+                "message": f"Активный таймер or alarm with ID '{id}' не найден."
             }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error cancelling timer/alarm: {e}")
@@ -312,7 +313,7 @@ def set_recurring_reminder(label: str, interval_hours: float, chat_id: str, agen
             "reminder_id":    reminder_id,
             "label":          label,
             "interval_hours": interval_hours,
-            "message":        f"Повторяющееся onпомиonние '{label}' every {interval_hours}h set."
+            "message":        f"Повторяющееся напоминание '{label}' every {interval_hours}h set."
         }, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error setting recurring reminder: {e}")
@@ -329,7 +330,7 @@ def _get_calendar_service():
     creds_path = os.getenv("GOOGLE_CLIENT_SECRET_PATH", os.path.join(os.path.dirname(__file__), "data", "google_credentials.json"))
 
     if not os.path.exists(creds_path):
-        return None, "google_credentials.json не onйден. Запустите python backend/google_auth.py или задайте GOOGLE_CLIENT_SECRET_PATH"
+        return None, "google_credentials.json не найден. Запустите python backend/google_auth.py или задайте GOOGLE_CLIENT_SECRET_PATH"
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
@@ -347,7 +348,7 @@ def _get_calendar_service():
                 with open(token_path, "w") as f:
                     f.write(creds.to_json())
             else:
-                return None, "Токен Google не onйден. Запустите python backend/google_auth.py on вашем Mac."
+                return None, "Токен Google не найден. Запустите python backend/google_auth.py on вашем Mac."
 
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
         return service, None
@@ -410,7 +411,7 @@ def get_calendar_events(days_ahead: int = 7) -> str:
             start = start_info.get("dateTime", start_info.get("date", ""))
             is_all_day = "date" in start_info and "dateTime" not in start_info
             result.append({
-                "title":      e.get("summary", "(без onзвания)"),
+                "title":      e.get("summary", "(без названия)"),
                 "start":      start,
                 "all_day":    is_all_day,
                 "location":   e.get("location", ""),
@@ -652,7 +653,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "location": {"type": "string", "description": "Название города, onпример: Москва, Ашкелон, Tokyo"},
+                    "location": {"type": "string", "description": "Название города, например: Москва, Ашкелон, Tokyo"},
                     "days_ahead": {"type": "integer", "description": "Прогноз погоды вперед в днях: 0 для текущей погоды (по умолчанию), 1 для завтрашнего дня, 2 для послезавтра и т.д. (до 4 days)"}
                 },
                 "required": ["location"]
@@ -674,12 +675,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "set_timer",
-            "description": "Устаonвливает таймер обратного отсчёта с Telegram-уведомлением по истечении. Обратите внимание: максимальonя длительность таймера — 1 час (3600 seconds). Допускается параллельonя установка нескольких таймеров.",
+            "description": "Устанавливает таймер обратного отсчёта с Telegram-уведомлением по истечении. Обратите внимание: максимальная длительность таймера — 1 час (3600 seconds). Допускается параллельная установка нескольких таймеров.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "label":            {"type": "string",  "description": "Описание события, onпример: созвон, проверить духовку"},
-                    "duration_seconds": {"type": "integer", "description": "Интервал в secondsах (не более 3600)"}
+                    "label":            {"type": "string",  "description": "Описание события, например: созвон, проверить духовку"},
+                    "duration_seconds": {"type": "integer", "description": "Интервал в секундах (не более 3600)"}
                 },
                 "required": ["label", "duration_seconds"]
             }
@@ -689,12 +690,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "set_alarm",
-            "description": "Устаonвливает будильник on определённое время (onпример: '08:30', '21:00' или '2026-05-30 07:00'). Если время прошло для todayшнего дня, будильник автоматически устаonвливается on завтра.",
+            "description": "Устанавливает будильник на определённое время (например: '08:30', '21:00' или '2026-05-30 07:00'). Если время прошло для сегодняшнего дня, будильник автоматически устанавливается на завтра.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "time_str": {"type": "string", "description": "Время срабатывания в формате ЧЧ:ММ (24-часовой формат) или ГГГГ-ММ-ДД ЧЧ:ММ"},
-                    "label":    {"type": "string", "description": "Описание будильника (onпример: 'проснуться', 'встреча')"}
+                    "label":    {"type": "string", "description": "Описание будильника (например: 'проснуться', 'встреча')"}
                 },
                 "required": ["time_str", "label"]
             }
@@ -718,12 +719,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "set_recurring_reminder",
-            "description": "Создаёт повторяющееся onпомиonние, которое срабатывает every N часов через Telegram.",
+            "description": "Создаёт повторяющееся напоминание, которое срабатывает every N часов через Telegram.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "label":          {"type": "string", "description": "Текст onпомиonния"},
-                    "interval_hours": {"type": "number", "description": "Интервал повтора в часах, onпример: 24 для ежедневного"}
+                    "label":          {"type": "string", "description": "Текст напоминания"},
+                    "interval_hours": {"type": "number", "description": "Интервал повтора в часах, например: 24 для ежедневного"}
                 },
                 "required": ["label", "interval_hours"]
             }
@@ -753,9 +754,9 @@ TOOLS_SCHEMA = [
                     "title":            {"type": "string",  "description": "Название события"},
                     "date":             {"type": "string",  "description": "Дата в формате YYYY-MM-DD"},
                     "time":             {"type": "string",  "description": "Время в формате HH:MM (по умолчанию 10:00)"},
-                    "end_time":         {"type": "string",  "description": "Время окончания в формате HH:MM (опциоonльно, если известно точное время окончания)"},
+                    "end_time":         {"type": "string",  "description": "Время окончания в формате HH:MM (опционально, если известно точное время окончания)"},
                     "duration_minutes": {"type": "integer", "description": "Длительность в минутах (по умолчанию 60, игнорируется если передан end_time)"},
-                    "description":      {"type": "string",  "description": "Описание события (опциоonльно)"}
+                    "description":      {"type": "string",  "description": "Описание события (опционально)"}
                 },
                 "required": ["title", "date"]
             }
@@ -769,7 +770,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_str": {"type": "string", "description": "Фильтр Todoist, onпример: 'today', 'overdue', 'p1'"}
+                    "filter_str": {"type": "string", "description": "Фильтр Todoist, например: 'today', 'overdue', 'p1'"}
                 }
             }
         }
@@ -783,7 +784,7 @@ TOOLS_SCHEMA = [
                 "type": "object",
                 "properties": {
                     "content":    {"type": "string",  "description": "Текст задачи"},
-                    "due_string": {"type": "string",  "description": "Срок выполнения, onпример: today, завтра, следующая friday"},
+                    "due_string": {"type": "string",  "description": "Срок выполнения, например: today, завтра, следующая friday"},
                     "priority":   {"type": "integer", "description": "Приоритет: 1 (обычный) .. 4 (срочный)"}
                 },
                 "required": ["content"]
@@ -822,13 +823,41 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "add_price_alert",
-            "description": "Устаonвливает оповещение о достижении ценового порога криптовалюты (btc, eth, ton) или акции (AAPL, TSLA).",
+            "name": "perform_search",
+            "description": "Perform real-time web search for latest news, facts, inflation/interest rate reports, or financial events.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Символ актива, onпример: TON, BTC, AAPL, TSLA"},
-                    "target_price": {"type": "number", "description": "Целевая цеon в USD, при пересечении которой сработает алерт"},
+                    "query": {"type": "string", "description": "Search query"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Search the internet for current events, news, or macroeconomic reports.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_price_alert",
+            "description": "Устанавливает оповещение о достижении ценового порога криптовалюты (btc, eth, ton) или акции (AAPL, TSLA).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Символ актива, например: TON, BTC, AAPL, TSLA"},
+                    "target_price": {"type": "number", "description": "Целевая цена в USD, при пересечении которой сработает алерт"},
                     "condition": {"type": "string", "description": "Условие срабатывания: 'above' (выше целевой цены) или 'below' (ниже целевой цены)"}
                 },
                 "required": ["symbol", "target_price", "condition"]
@@ -843,7 +872,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbols": {"type": "string", "description": "Список активов через запятую, onпример: 'TON, BTC, TSLA'"}
+                    "symbols": {"type": "string", "description": "Список активов через запятую, например: 'TON, BTC, TSLA'"}
                 },
                 "required": ["symbols"]
             }
@@ -867,7 +896,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_rss_digest",
-            "description": "Получает последние новости из RSS-источников, onпример с Хабра, и выводит список последних публикаций.",
+            "description": "Получает последние новости из RSS-источников, например с Хабра, и выводит список последних публикаций.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -885,8 +914,8 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (опциоonльно, onпример 'rss_node_123' или 'all')"},
-                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опциоonльно)"}
+                    "node_id": {"type": "string", "description": "Идентификатор RSS-ноды (опционально, например 'rss_node_123' или 'all')"},
+                    "limit": {"type": "integer", "description": "Максимальное количество возвращаемых записей (опционально)"}
                 },
                 "required": []
             }
@@ -896,12 +925,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "create_subagent",
-            "description": "Создаёт нового специализированного сабагента или обновляет существующего (onпример, эксперта по спортивным ставкам, репетитора языков и т.д.).",
+            "description": "Создаёт нового специализированного сабагента или обновляет существующего (например, эксперта по спортивным ставкам, репетитора языков и т.д.).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "subagent_id": {"type": "string", "description": "Уникальный латинский идентификатор (slug), onпример: 'sports_betting', 'french_tutor'"},
-                    "name": {"type": "string", "description": "Понятное имя агента, onпример: 'Аonлитик Спортивных Ставок'"},
+                    "subagent_id": {"type": "string", "description": "Уникальный латинский идентификатор (slug), например: 'sports_betting', 'french_tutor'"},
+                    "name": {"type": "string", "description": "Понятное имя агента, например: 'Аналитик Спортивных Ставок'"},
                     "system_prompt": {"type": "string", "description": "Детальные инструкции (системный промпт), определяющие характер, тон и правила работы сабагента."},
                     "model": {"type": "string", "description": "Модель ИИ для работы сабагента. По умолчанию используется deepseek/deepseek-v4-flash."}
                 },
@@ -917,7 +946,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "subagent_id": {"type": "string", "description": "Идентификатор сабагента (id), onпример: 'sports_betting'"},
+                    "subagent_id": {"type": "string", "description": "Идентификатор сабагента (id), например: 'sports_betting'"},
                     "query": {"type": "string", "description": "Запрос или задание для сабагента"}
                 },
                 "required": ["subagent_id", "query"]
@@ -936,12 +965,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "save_subagent_memory",
-            "description": "Сохраняет или обновляет факт (пару ключ-зonчение) в долгосрочной памяти текущего субагента. Информация будет записаon в базу данных и проиндексироваon в RAG (Qdrant).",
+            "description": "Сохраняет или обновляет факт (пару ключ-значение) в долгосрочной памяти текущего субагента. Информация будет записана в базу данных и проиндексирована в RAG (Qdrant).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "key": {"type": "string", "description": "Ключ (идентификатор факта), onпример: 'vocabulary', 'user_grammar_level', 'common_mistakes', 'lessons_progress'"},
-                    "value": {"type": "string", "description": "Содержимое факта, onпример: список выученных слов, описание ошибок или уровень пользователя."}
+                    "key": {"type": "string", "description": "Ключ (идентификатор факта), например: 'vocabulary', 'user_grammar_level', 'common_mistakes', 'lessons_progress'"},
+                    "value": {"type": "string", "description": "Содержимое факта, например: список выученных слов, описание ошибок или уровень пользователя."}
                 },
                 "required": ["key", "value"]
             }
@@ -968,7 +997,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "Команда для выполнения в термиonле, onпример: 'curl -s https://api.linear.app/...' или 'python -c ...'"}
+                    "command": {"type": "string", "description": "Команда для выполнения в терминале, например: 'curl -s https://api.linear.app/...' или 'python -c ...'"}
                 },
                 "required": ["command"]
             }
@@ -979,8 +1008,8 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "search_obsidian",
             "description": (
-                "Семантический поиск по заметкам Obsidian через базу зonний (RAG). "
-                "Используйте когда Сэр спрашивает ‘onйди в заметках’, ‘что я писал о...’ или ‘посмотри в Obsidian’."
+                "Семантический поиск по заметкам Obsidian через базу знаний (RAG). "
+                "Используйте когда Сэр спрашивает ‘найди в заметках’, ‘что я писал о...’ или ‘посмотри в Obsidian’."
             ),
             "parameters": {
                 "type": "object",
@@ -999,7 +1028,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "note_path": {"type": "string", "description": "Относительный путь заметки в хранилище, onпример: 'Daily/2026-06-23.md' или 'Идеи.md'"}
+                    "note_path": {"type": "string", "description": "Относительный путь заметки в хранилище, например: 'Daily/2026-06-23.md' или 'Идеи.md'"}
                 },
                 "required": ["note_path"]
             }
@@ -1012,26 +1041,26 @@ TOOLS_SCHEMA = [
             "description": (
                 "Создать новую заметку в Obsidian. Используйте когда Сэр говорит 'запиши в Obsidian', 'сохрани заметку', 'зафиксируй' и т.п.\n"
                 "ВАЖНО: Вы — архивариус. Самостоятельно определяйте папку по смыслу контента, используя следующую таксономию:\n"
-                "  Research/<Тема> — onучные статьи, исследования, arxiv, аonлиз\n"
+                "  Research/<Тема> — научные статьи, исследования, arxiv, анализ\n"
                 "  Ideas — идеи, концепции, brainstorm\n"
                 "  Projects/<Название> — конкретные проекты и задачи\n"
                 "  People/<Имя> — заметки о людях\n"
                 "  Daily/<YYYY-MM-DD> — дневниковые записи, события дня\n"
-                "  Finance — фиonнсы, ставки, инвестиции, бюджет\n"
+                "  Finance — финансы, ставки, инвестиции, бюджет\n"
                 "  Health — здоровье, тренировки, питание\n"
                 "  Tech — технологии, инструменты, туториалы, код\n"
                 "  Books — книги, конспекты, цитаты\n"
                 "  Meetings — встречи, звонки, договорённости\n"
                 "  Jarvis — служебные заметки от Jarvis без чёткой категории\n"
-                "Выбирайте папку автоматически — НЕ спрашивайте Сэра. Можно создавать подпапки, onпример Research/AI или Projects/Jarvis."
+                "Выбирайте папку автоматически — НЕ спрашивайте Сэра. Можно создавать подпапки, например Research/AI или Projects/Jarvis."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Краткое, информативное onзвание заметки (имя файла без .md)"},
+                    "title": {"type": "string", "description": "Краткое, информативное название заметки (имя файла без .md)"},
                     "content": {"type": "string", "description": "Содержимое заметки в Markdown-формате. Структурируйте через заголовки, списки, ссылки."},
                     "folder": {"type": "string", "description": "Папка внутри хранилища. Определяйте по таксономии из описания. Можно вложенные: 'Research/AI'"},
-                    "source": {"type": "string", "description": "Исходный файл или ссылка, откуда взят контент (onпример, имя загруженного файла). Оставьте пустым если не применимо."}
+                    "source": {"type": "string", "description": "Исходный файл или ссылка, откуда взят контент (например, имя загруженного файла). Оставьте пустым если не применимо."}
                 },
                 "required": ["title", "content", "folder"]
             }
@@ -1041,55 +1070,109 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "sync_obsidian_vault",
-            "description": "Полonя синхронизация хранилища Obsidian в базу зonний (векторную БД). Используйте если Сэр добавил новые заметки и хочет обновить базу зonний.",
+            "description": "Полная синхронизация хранилища Obsidian в базу знаний (векторную БД). Используйте если Сэр добавил новые заметки и хочет обновить базу знаний.",
             "parameters": {"type": "object", "properties": {}}
         }
     }
 ]
 
-# Try to load private BCM tools if present locally
-try:
-    if os.path.exists(os.path.join(os.path.dirname(__file__), "bcm")):
-        from backend.bcm.tools import BCM_TOOLS
-        for tool in BCM_TOOLS:
-            TOOLS_SCHEMA.append({
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["inputSchema"]
-                }
-            })
-except Exception as e:
-    pass
+from backend.plugins import collect as _plugin_collect, hook as _plugin_hook
+for _schema in _plugin_collect("extra_tool_schemas"):
+    TOOLS_SCHEMA.append(_schema)
+
+def _clean_search_query(query: str) -> str:
+    """Clean verbose LLM instructions into focused search keywords."""
+    q = query.strip().strip("\"'")
+    patterns = [
+        r"^(search(\s+the\s+internet|\s+the\s+web|\s+online)?\s+(for|about)\s+)",
+        r"^(find(\s+the\s+latest|\s+recent|\s+online|\s+information\s+about|\s+news\s+about|\s+news\s+on)?\s+)",
+        r"^(look\s+up\s+)",
+        r"^(please\s+search\s+(for\s+)?)",
+    ]
+    for p in patterns:
+        q = re.sub(p, "", q, flags=re.IGNORECASE).strip()
+    return q
 
 async def _scrape_ddg(query: str) -> str:
-    url = "https://html.duckduckgo.com/html/"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Content-Type": "application/x-www-form-urlencoded",
     }
-    params = {"q": query}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url, params=params, headers=headers)
-            if r.status_code == 200:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(r.text, "html.parser")
-                results = []
-                items = soup.find_all("div", class_="result")
-                for item in items[:5]:
-                    title_el = item.find("a", class_="result__a")
-                    snippet_el = item.find("a", class_="result__snippet")
-                    if title_el:
-                        title = title_el.get_text(separator=" ").strip()
-                        link = title_el.get("href", "")
-                        snippet = snippet_el.get_text(separator=" ").strip() if snippet_el else ""
-                        results.append(f"\u2022 **{title}**\n  {snippet}\n  \U0001f517 {link}")
-                if results:
-                    return "\n\n".join(results)
-    except Exception as e:
-        logger.warning(f"DDG search scrape failed: {e}")
-    return "Не удалось получить результаты поиска."
+    clean_q = _clean_search_query(query)
+    queries_to_try = [query] if query == clean_q else [query, clean_q]
+
+    for current_q in queries_to_try:
+        # 1. Attempt DuckDuckGo HTML POST
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                r = await client.post("https://html.duckduckgo.com/html/", data={"q": current_q}, headers=headers)
+                if r.status_code == 200 and ("result" in r.text or "results" in r.text):
+                    from bs4 import BeautifulSoup
+                    import urllib.parse
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    results = []
+                    items = soup.find_all("div", class_="result")
+                    for item in items[:5]:
+                        title_el = item.find("a", class_="result__a") or item.find("a")
+                        snippet_el = item.find("a", class_="result__snippet") or item.find(class_="result__snippet")
+                        if title_el:
+                            title = title_el.get_text(separator=" ").strip()
+                            link = title_el.get("href", "")
+                            if "uddg=" in link:
+                                parsed = urllib.parse.urlparse(link)
+                                qs = urllib.parse.parse_qs(parsed.query)
+                                if qs.get("uddg"):
+                                    link = urllib.parse.unquote(qs["uddg"][0])
+                            elif link.startswith("//"):
+                                link = f"https:{link}"
+                            snippet = snippet_el.get_text(separator=" ").strip() if snippet_el else ""
+                            if title:
+                                results.append(f"• **{title}**\n  {snippet}\n  🔗 {link}")
+                    if results:
+                        return "\n\n".join(results)
+        except Exception as e:
+            logger.debug(f"DDG HTML search scrape attempt failed: {e}")
+
+        # 2. Attempt DuckDuckGo Lite POST as fallback
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                r = await client.post("https://lite.duckduckgo.com/lite/", data={"q": current_q}, headers=headers)
+                if r.status_code == 200:
+                    from bs4 import BeautifulSoup
+                    import urllib.parse
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    results = []
+                    rows = soup.find_all("tr")
+                    for i, tr in enumerate(rows):
+                        link_el = tr.find("a", class_="result-link")
+                        if link_el:
+                            title = link_el.get_text(separator=" ").strip()
+                            link = link_el.get("href", "")
+                            if "uddg=" in link:
+                                parsed = urllib.parse.urlparse(link)
+                                qs = urllib.parse.parse_qs(parsed.query)
+                                if qs.get("uddg"):
+                                    link = urllib.parse.unquote(qs["uddg"][0])
+                            elif link.startswith("//"):
+                                link = f"https:{link}"
+                            snippet = ""
+                            for next_tr in rows[i+1:i+3]:
+                                snip_td = next_tr.find("td", class_="result-snippet")
+                                if snip_td:
+                                    snippet = snip_td.get_text(separator=" ").strip()
+                                    break
+                            if title:
+                                results.append(f"• **{title}**\n  {snippet}\n  🔗 {link}")
+                        if len(results) >= 5:
+                            break
+                    if results:
+                        return "\n\n".join(results)
+        except Exception as e:
+            logger.debug(f"DDG Lite search scrape attempt failed: {e}")
+
+    return "No results found. Unable to retrieve search results at this time."
 
 
 async def _searxng_search(query: str, base_url: str) -> str:
@@ -1115,6 +1198,87 @@ async def _searxng_search(query: str, base_url: str) -> str:
     except Exception as e:
         logger.warning(f"SearXNG search failed: {e}")
     return ""
+
+
+async def _search_google_news_rss(query: str) -> str:
+    """Zero-key fallback: query Google News RSS feed for real-time news and macro headlines."""
+    try:
+        import urllib.parse
+        import xml.etree.ElementTree as ET
+        import html
+        import re
+
+        clean_q = _clean_search_query(query)
+        encoded = urllib.parse.quote(clean_q or query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=en-US&gl=US&ceid=US:en"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+        }
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 200 and r.text:
+                root = ET.fromstring(r.text)
+                items = root.findall(".//item")
+                results = []
+                for item in items[:5]:
+                    title_el = item.find("title")
+                    link_el = item.find("link")
+                    desc_el = item.find("description")
+                    pub_el = item.find("pubDate")
+
+                    title = html.unescape(title_el.text).strip() if title_el is not None and title_el.text else ""
+                    link = link_el.text.strip() if link_el is not None and link_el.text else ""
+                    desc = ""
+                    if desc_el is not None and desc_el.text:
+                        desc = re.sub(r"<[^>]+>", " ", desc_el.text)
+                        desc = html.unescape(desc).strip()
+                    pub = pub_el.text.strip() if pub_el is not None and pub_el.text else ""
+
+                    snippet_parts = []
+                    if pub:
+                        snippet_parts.append(f"[{pub}]")
+                    if desc and desc != title:
+                        snippet_parts.append(desc[:200])
+                    snippet = " ".join(snippet_parts)
+
+                    if title:
+                        results.append(f"• **{title}**\n  {snippet}\n  🔗 {link}")
+                if results:
+                    return "\n\n".join(results)
+    except Exception as e:
+        logger.debug(f"Google News RSS search failed: {e}")
+    return ""
+
+
+async def _search_wikipedia(query: str) -> str:
+    """Zero-key fallback: query Wikipedia OpenSearch API for encyclopedic/entity data."""
+    try:
+        import urllib.parse
+        clean_q = _clean_search_query(query)
+        encoded = urllib.parse.quote(clean_q or query)
+        url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={encoded}&limit=3&namespace=0&format=json"
+        headers = {
+            "User-Agent": "JarvisAssistant/1.0 (https://github.com/pauloberezini/jarvis)"
+        }
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list) and len(data) >= 4:
+                    titles = data[1]
+                    descriptions = data[2]
+                    links = data[3]
+                    results = []
+                    for t, d, l in zip(titles, descriptions, links):
+                        if t and l:
+                            results.append(f"• **{t}**\n  {d}\n  🔗 {l}")
+                    if results:
+                        return "\n\n".join(results)
+    except Exception as e:
+        logger.debug(f"Wikipedia OpenSearch failed: {e}")
+    return ""
+
 
 def web_search(query: str) -> str:
     # 1. Try SearXNG (Open-source self-hosted metasearch)
@@ -1151,9 +1315,25 @@ def web_search(query: str) -> str:
         except Exception as e:
             logger.warning(f"Tavily search failed: {e}")
 
-    # 3. Last resort: DuckDuckGo HTML scraping
+    # 3. DuckDuckGo HTML scraping
     logger.info(f"web_search: Falling back to DDG scraping for '{query}'")
-    return _run_async(_scrape_ddg(query))
+    res = _run_async(_scrape_ddg(query))
+    if isinstance(res, str) and res.strip() and not res.startswith("No results found"):
+        return res
+
+    # 4. Zero-key Google News RSS fallback (resilient to bot/captcha blocks on datacenter IPs)
+    logger.info(f"web_search: Falling back to Google News RSS for '{query}'")
+    news_res = _run_async(_search_google_news_rss(query))
+    if isinstance(news_res, str) and news_res.strip():
+        return news_res
+
+    # 5. Zero-key Wikipedia OpenSearch fallback
+    logger.info(f"web_search: Falling back to Wikipedia OpenSearch for '{query}'")
+    wiki_res = _run_async(_search_wikipedia(query))
+    if isinstance(wiki_res, str) and wiki_res.strip():
+        return wiki_res
+
+    return "No results found. Unable to retrieve search results at this time."
 
 def add_price_alert(symbol: str, target_price: float, condition: str, chat_id: str = "default") -> str:
     from backend.price_monitor import price_monitor
@@ -1307,7 +1487,7 @@ def read_rss_node_feed(node_id: Optional[str] = None, limit: Optional[int] = Non
                     all_outputs.append("\n\n".join(lines))
 
             if not all_outputs:
-                return "Активные RSS-ноды пока не onкопили сохраненных записей."
+                return "Активные RSS-ноды пока не накопили сохраненных записей."
 
             return "## Сводка активных RSS-нод:\n\n" + "\n\n---\n\n".join(all_outputs)
 
@@ -1357,7 +1537,7 @@ def call_subagent(subagent_id: str, query: str) -> str:
     clean_id = subagent_id.strip().lower()
     subagent = get_subagent(clean_id)
     if not subagent:
-        return json.dumps({"error": f"Субагент с id '{clean_id}' не onйден."}, ensure_ascii=False)
+        return json.dumps({"error": f"Субагент с id '{clean_id}' не найден."}, ensure_ascii=False)
     
     # Read parent_message_id from threading.local context (set by parent agent before tool dispatch)
     parent_msg_id = getattr(_call_context, "parent_message_id", None)
@@ -1427,7 +1607,7 @@ def save_subagent_memory(key: str, value: str, chat_id: Optional[str] = None) ->
     
     return json.dumps({
         "status": "success",
-        "message": f"Информация успешно сохранеon в базу данных и проиндексироваon в RAG (успех RAG: {success})."
+        "message": f"Информация успешно сохранена в базу данных и проиндексирована в RAG (успех RAG: {success})."
     }, ensure_ascii=False)
 
 def get_subagent_memory(key: Optional[str] = None, chat_id: Optional[str] = None) -> str:
@@ -1463,7 +1643,7 @@ def search_obsidian(query: str) -> str:
             for h in plugin_hits:
                 results.append(f"\U0001f4c4 **{h.get('filename', '')}**\n  {h.get('excerpt', '')}")
             return "\n\n".join(results)
-        return json.dumps({"results": [], "message": "Заметки по запросу '"+query+"' не onйдены. Попробуйте sync_obsidian_vault."},
+        return json.dumps({"results": [], "message": "Заметки по запросу '"+query+"' не найдены. Попробуйте sync_obsidian_vault."},
                 ensure_ascii=False)
     results = []
     for h in hits:
@@ -1482,7 +1662,7 @@ def read_obsidian_note(note_path: str) -> str:
         return await read_note(note_path)
     content = _run_async(_read())
     if content is None:
-        return json.dumps({"error": f"Заметка '{note_path}' не onйдеon. Проверьте путь и подключение Obsidian."},
+        return json.dumps({"error": f"Заметка '{note_path}' не найдена. Проверьте путь и подключение Obsidian."},
                 ensure_ascii=False)
     return json.dumps({"path": note_path, "content": content}, ensure_ascii=False)
 
@@ -1525,20 +1705,87 @@ def create_obsidian_note(title: str, content: str, folder: str = "Jarvis", sourc
         return await create_note(note_path, full_content)
 
     ok = _run_async(_create())
-    if not ok:
-        return json.dumps({"error": "Не удалось создать заметку. Obsidian запущен? Плагин Local REST API активен?"},
-                ensure_ascii=False)
-    # Also index the new note into RAG
     import hashlib
     doc_id = "obsidian_" + hashlib.sha1(note_path.encode()).hexdigest()
     from backend.rag import index_document
-    index_document(doc_id, title, full_content, source="obsidian", note_path=note_path)
+    indexed = index_document(doc_id, title, full_content, source="obsidian", note_path=note_path)
+    if not ok and not indexed:
+        return json.dumps({"error": "Не удалось создать заметку. Obsidian запущен? Плагин Local REST API активен?"},
+                ensure_ascii=False)
+    if not ok:
+        return json.dumps({
+            "status": "created",
+            "path": note_path,
+            "vault": False,
+            "message": f"Note '{title}' saved to knowledge base ({note_path}). Obsidian plugin is offline."
+        }, ensure_ascii=False)
 
     return json.dumps({
         "status": "created",
         "path": note_path,
+        "vault": True,
         "message": f"Note '{title}' created in Obsidian vault: {note_path}"
     }, ensure_ascii=False)
+
+
+_KB_WRITE = (
+    "база знаний", "в базу знаний", "запиши", "сохрани", "в заметки",
+    "obsidian", "knowledge base", "create a note", "save in obsidian",
+    "write in obsidian", "зафиксируй", "save the idea",
+)
+_KB_READ_ONLY = ("найди в", "что в заметк", "что я писал", "find in notes", "look in obsidian")
+
+
+def is_knowledge_save_request(text: str) -> bool:
+    """True when Sir is handing over content to archive, not asking a question."""
+    if not text or not isinstance(text, str):
+        return False
+    low = text.lower()
+    if not any(k in low for k in _KB_WRITE):
+        return False
+    if any(k in low for k in _KB_READ_ONLY):
+        return False
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return len(lines) >= 3 or len(text.strip()) >= 200
+
+
+def _guess_note_folder(text: str) -> str:
+    low = text.lower()
+    if any(k in low for k in ("рецепт", "ингредиент", "recipe", "питан", "тренир", "индейк")):
+        return "Health"
+    if any(k in low for k in ("торг", "акци", "forex", "budget", "ставк")):
+        return "Finance"
+    return "Jarvis"
+
+
+def _guess_note_title(text: str) -> str:
+    skip = re.compile(
+        r"(база знаний|запиши|сохрани|obsidian|knowledge base|хочу чтобы)",
+        re.IGNORECASE,
+    )
+    for raw in text.splitlines():
+        line = re.sub(r"^[•\-\d\.\)\s]+", "", raw).strip()
+        if len(line) < 8 or len(line) > 80 or skip.search(line):
+            continue
+        return line[:80]
+    return "Note"
+
+
+def try_direct_knowledge_save(user_message: str) -> Optional[str]:
+    """Write to Obsidian/RAG without waiting for the LLM to call a tool."""
+    if not is_knowledge_save_request(user_message):
+        return None
+    title = _guess_note_title(user_message)
+    folder = _guess_note_folder(user_message)
+    raw = create_obsidian_note(title, user_message.strip(), folder)
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if data.get("error"):
+        return f"Sir, I could not save the note: {data['error']}"
+    path = data.get("path", f"{folder}/{title}.md")
+    return f"Sir, the note is in the knowledge base: `{path}`."
 
 
 def sync_obsidian_vault() -> str:
@@ -1572,14 +1819,16 @@ def execute_command(command: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
+    generic_keywords = {"function", "tool", "call", "action", "method", "type", "tool_call", ""}
+    if not name or str(name).strip().lower() in generic_keywords:
+        logger.warning(f"execute_tool called with invalid generic tool name: '{name}', arguments: {arguments}. Skipping execution.")
+        return json.dumps({"error": f"Invalid tool name: '{name}'. Generic keywords cannot be executed as tools."}, ensure_ascii=False)
+
     logger.info(f"Executing tool '{name}' with args: {arguments}")
 
-    if name.startswith("bcm_") or name.startswith("bybit_"):
-        try:
-            from backend.bcm.tools import bcm_execute_tool
-            return bcm_execute_tool(name, arguments)
-        except ImportError:
-            return json.dumps({"error": f"Tool '{name}' is not configured locally."}, ensure_ascii=False)
+    plugin_result = _plugin_hook("execute_named_tool", name, arguments)
+    if plugin_result is not None:
+        return plugin_result
 
     if name == "get_system_stats":
         return get_system_stats()
@@ -1617,7 +1866,7 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         )
 
     elif name == "set_recurring_reminder":
-        label = arguments.get("label", "Напомиonние")
+        label = arguments.get("label", "Напоминание")
         interval_hours = float(arguments.get("interval_hours", 24))
         agent_id = arguments.get("agent_id")
         prompt = arguments.get("prompt")
@@ -1656,10 +1905,15 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
 
 
 
-    elif name == "web_search":
-        return web_search(
-            query=arguments.get("query", "")
+    elif name in ("web_search", "perform_search", "search", "google_search", "duckduckgo_search", "internet_search"):
+        query = (
+            arguments.get("query")
+            or arguments.get("q")
+            or arguments.get("search_query")
+            or arguments.get("keywords")
+            or ""
         )
+        return web_search(query=query)
 
     elif name == "add_price_alert":
         return add_price_alert(

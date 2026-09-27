@@ -4,6 +4,8 @@ import sys
 import uuid
 import random
 import logging
+import asyncio
+import socket
 import httpx
 import tempfile
 import subprocess
@@ -61,33 +63,251 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
     else:
         actual_payload = payload
         
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.post(
-            url,
-            json=actual_payload,
-            headers=headers
-        )
-        if response.status_code != 200:
-            raise Exception(f"LLM API error {response.status_code}: {response.text}")
-        
-        raw_data = response.json()
-        if is_openmodel:
-            from backend.agent import translate_to_openai_response
-            data = translate_to_openai_response(raw_data)
-        else:
-            data = raw_data
+    fallback_candidates = []
+    for m in [
+        os.getenv("LLM_FALLBACK_MODEL"),
+        os.getenv("LLM_MODEL"),
+        "google/gemini-2.5-flash",
+        "google/gemini-2.5-pro",
+        "deepseek/deepseek-chat",
+    ]:
+        if m and m.strip() and m not in fallback_candidates:
+            fallback_candidates.append(m)
+
+    from backend.llm_model_manager import prioritize_healthy_models, mark_model_rate_limited, is_model_rate_limited
+    fallback_candidates = prioritize_healthy_models(fallback_candidates)
+    if is_model_rate_limited(model) and fallback_candidates:
+        first_healthy = fallback_candidates[0]
+        if first_healthy != model:
+            logger.info(
+                f"call_llm model '{model}' is currently in rate-limit cooldown. Bypassing to healthy model '{first_healthy}'."
+            )
+            model = first_healthy
+            payload["model"] = model
+            if is_openmodel:
+                from backend.agent import translate_to_anthropic_payload
+                actual_payload = translate_to_anthropic_payload(payload)
+            else:
+                actual_payload = payload
+
+    attempted_models = set()
+    max_retries = max(4, len(fallback_candidates) + 1)
+    last_err = None
+    subagent_timeout = 90.0 if any(k in (model or "").lower() for k in ("deepseek-r1", "r1", "o1", "o3")) else 45.0
+    async with httpx.AsyncClient(timeout=subagent_timeout) as client:
+        for attempt in range(max_retries):
+            try:
+                response = await client.post(
+                    url,
+                    json=actual_payload,
+                    headers=headers
+                )
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError) as net_err:
+                last_err = net_err
+                err_desc = f"{type(net_err).__name__}: {net_err}".rstrip(": ")
+                logger.warning(f"call_llm transport/timeout error (attempt {attempt+1}/{max_retries}): {err_desc}")
+                is_dns_err = (
+                    isinstance(net_err, (httpx.ConnectError, socket.gaierror))
+                    or any(k in err_desc for k in ("-5", "-2", "-3", "No address associated with hostname", "Name or service not known", "Temporary failure in name resolution", "gaierror"))
+                )
+                if is_dns_err and len(attempted_models) >= 1:
+                    logger.warning(
+                        f"call_llm endpoint host DNS resolution failed across fallback models ({err_desc}). "
+                        f"Aborting further model fallbacks to avoid redundant connection attempts."
+                    )
+                    raise
+                current_m = payload.get("model")
+                if attempt >= 1 or current_m != model:
+                    attempted_models.add(current_m)
+                    next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
+                    if next_model:
+                        logger.warning(
+                            f"call_llm model '{current_m}' network/timeout error ({err_desc}). Falling back to model '{next_model}'..."
+                        )
+                        payload["model"] = next_model
+                        actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                        await asyncio.sleep(0.5)
+                        continue
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(1.0 * (attempt + 1))
+                continue
+
+            if response.status_code != 200:
+                if response.status_code in (429, 502, 503, 504, 408):
+                    last_err = Exception(f"LLM API error {response.status_code}: {response.text}")
+                    current_m = payload.get("model")
+                    if response.status_code == 429 or "rate-limit" in response.text.lower():
+                        retry_after = response.headers.get("retry-after")
+                        if retry_after and attempt == 0:
+                            try:
+                                delay = max(float(retry_after), 1.0)
+                            except (ValueError, TypeError):
+                                delay = 2.0
+                            if delay <= 5.0:
+                                await asyncio.sleep(delay)
+                                continue
+                        cooldown_secs = 60.0
+                        if retry_after:
+                            try:
+                                cooldown_secs = max(float(retry_after), 15.0)
+                            except (ValueError, TypeError):
+                                pass
+                        mark_model_rate_limited(current_m, cooldown_secs)
+
+                    if attempt >= 1 or current_m != model:
+                        attempted_models.add(current_m)
+                        next_model = next((m for m in fallback_candidates if m not in attempted_models and not is_model_rate_limited(m)), None)
+                        if not next_model:
+                            next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
+                        if next_model:
+                            logger.info(
+                                f"call_llm model '{current_m}' transient error ({response.status_code}). Falling back to model '{next_model}'..."
+                            )
+                            payload["model"] = next_model
+                            actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                            await asyncio.sleep(0.5)
+                            continue
+                    else:
+                        logger.warning(
+                            f"call_llm transient HTTP {response.status_code} (attempt {attempt+1}/{max_retries}): {response.text[:200]}"
+                        )
+
+                    if attempt == max_retries - 1:
+                        raise last_err
+
+                    retry_after = response.headers.get("retry-after")
+                    delay = 1.5 * (attempt + 1)
+                    if retry_after:
+                        try:
+                            delay = max(float(retry_after), 1.0)
+                        except (ValueError, TypeError):
+                            pass
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise Exception(f"LLM API error {response.status_code}: {response.text}")
+
+            raw_data = response.json()
+            if is_openmodel:
+                from backend.agent import translate_to_openai_response
+                data = translate_to_openai_response(raw_data)
+            else:
+                data = raw_data
+                
+            if not isinstance(data, dict):
+                raise Exception(f"LLM returned non-dict response: {data}")
+                
+            if "error" in data:
+                err_detail = data.get("error", {})
+                err_text = err_detail.get("message") if isinstance(err_detail, dict) else str(err_detail)
+                err_code = err_detail.get("code") if isinstance(err_detail, dict) else None
+                try:
+                    numeric_code = int(err_code) if err_code is not None else None
+                except (ValueError, TypeError):
+                    numeric_code = None
+
+                is_rate_limit = (
+                    numeric_code == 429
+                    or err_code in (429, "429")
+                    or any(ind in str(err_text).lower() for ind in ["rate-limited", "rate limit", "engine_overloaded", "quota"])
+                )
+                is_timeout_or_5xx = (
+                    numeric_code in (504, 502, 503, 500, 408)
+                    or err_code in (504, "504", 502, "502", 503, "503", 500, "500", 408, "408")
+                    or any(ind in str(err_text).lower() for ind in ["timeout", "timed out", "provider error", "temporarily unavailable", "overloaded", "bad gateway", "service unavailable"])
+                    or (isinstance(err_detail, dict) and isinstance(err_detail.get("metadata"), dict) and err_detail.get("metadata", {}).get("error_type") in ("timeout", "provider_error"))
+                )
+
+                if is_rate_limit or is_timeout_or_5xx:
+                    last_err = Exception(f"LLM API error: {err_text}")
+                    current_m = payload.get("model")
+                    if is_rate_limit:
+                        mark_model_rate_limited(current_m, 60.0)
+
+                    attempted_models.add(current_m)
+                    next_model = next((m for m in fallback_candidates if m not in attempted_models and not is_model_rate_limited(m)), None)
+                    if not next_model:
+                        next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
+                    if next_model:
+                        reason_desc = (
+                            "rate-limited in body"
+                            if is_rate_limit
+                            else ("provider error/timeout in body" if is_timeout_or_5xx else "API error in body")
+                        )
+                        log_fn = logger.info if is_rate_limit else logger.warning
+                        log_fn(
+                            f"call_llm model '{current_m}' {reason_desc} ({str(err_text)[:100]}). Falling back to model '{next_model}'..."
+                        )
+                        payload["model"] = next_model
+                        actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                        await asyncio.sleep(0.5)
+                        continue
+                    else:
+                        logger.warning(f"call_llm provider rate-limit/timeout in body (attempt {attempt+1}/{max_retries}): {err_text}")
+                    if attempt == max_retries - 1:
+                        raise last_err
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise Exception(f"LLM API error: {err_text or raw_data}")
+
+            if not data.get("choices") or not isinstance(data.get("choices"), list) or len(data["choices"]) == 0:
+                current_m = payload.get("model")
+                attempted_models.add(current_m)
+                logger.warning(
+                    f"call_llm model '{current_m}' returned empty choices in response (attempt {attempt+1}/{max_retries})."
+                )
+                last_err = Exception(f"LLM API error: Empty choices in response from model '{current_m}'")
+                next_model = next((m for m in fallback_candidates if m not in attempted_models and not is_model_rate_limited(m)), None)
+                if not next_model:
+                    next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
+                if next_model:
+                    logger.warning(
+                        f"call_llm falling back to model '{next_model}' after empty choices..."
+                    )
+                    payload["model"] = next_model
+                    actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                    await asyncio.sleep(0.5)
+                    continue
+                if attempt == max_retries - 1:
+                    raise last_err
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+                
+            choice_0 = data["choices"][0] if (isinstance(data.get("choices"), list) and len(data["choices"]) > 0) else {}
+            choice_msg = choice_0.get("message") if isinstance(choice_0, dict) else {}
             
-        if not isinstance(data, dict):
-            raise Exception(f"LLM returned non-dict response: {data}")
+            res_content = ""
+            if isinstance(choice_msg, dict):
+                res_content = choice_msg.get("content") or ""
+                if not str(res_content).strip():
+                    res_content = choice_msg.get("reasoning") or choice_msg.get("reasoning_content") or ""
+            if not str(res_content).strip() and isinstance(choice_0, dict):
+                res_content = choice_0.get("text") or ""
+                
+            if str(res_content).strip():
+                return str(res_content)
+
+            # Upstream returned empty or whitespace-only content
+            current_m = payload.get("model")
+            attempted_models.add(current_m)
+            logger.warning(
+                f"call_llm model '{current_m}' returned empty content (attempt {attempt+1}/{max_retries})."
+            )
+            last_err = Exception(f"LLM API returned empty content from model '{current_m}'")
+            next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
+            if next_model and attempt < max_retries - 1:
+                logger.warning(
+                    f"call_llm falling back to model '{next_model}' after empty response..."
+                )
+                payload["model"] = next_model
+                actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                await asyncio.sleep(0.5)
+                continue
             
-        if "error" in data or not data.get("choices"):
-            err_detail = data.get("error", {})
-            err_text = err_detail.get("message") if isinstance(err_detail, dict) else str(err_detail)
-            raise Exception(f"LLM API error: {err_text or raw_data}")
-            
-        choice_0 = data["choices"][0] if (isinstance(data.get("choices"), list) and len(data["choices"]) > 0) else {}
-        choice_msg = choice_0.get("message") if isinstance(choice_0, dict) else {}
-        return (choice_msg.get("content") or "") if isinstance(choice_msg, dict) else ""
+    if last_err:
+        raise last_err
+    raise Exception("call_llm failed without response")
 
 # ─── Safety guard ────────────────────────────────────────────────────────────
 
@@ -391,7 +611,17 @@ class ResearchAgent:
         for idx, query in enumerate(queries[:2], 1):
             logger.info(f"Research Agent: performing web search ({idx}/{len(queries)}) for '{query}'")
             search_results = web_search(query)
-            if search_results and "Не удалось получить результаты поиска." not in search_results:
+            
+            # If search failed on refined query, try a simplified fallback query
+            if not search_results or "Не удалось получить результаты поиска." in search_results or "error" in str(search_results).lower():
+                simplified_q = re.sub(r'[^\w\s\.\-]', ' ', query).strip()
+                if simplified_q and simplified_q != query:
+                    logger.info(f"Research Agent: attempting simplified fallback query: '{simplified_q}'")
+                    fallback_results = web_search(simplified_q)
+                    if fallback_results and "Не удалось получить результаты поиска." not in fallback_results:
+                        search_results = fallback_results
+
+            if search_results and "Не удалось получить результаты поиска." not in search_results and not search_results.strip().startswith('{"error":'):
                 results_parts.append(f"🌐 **Результаты веб-поиска по запросу '{query}':**\n" + search_results)
                 
                 # Extract and scrape top URLs to get actual page content

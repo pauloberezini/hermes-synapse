@@ -115,19 +115,21 @@ class TestGetProviderFactory:
         provider = get_provider()
         assert isinstance(provider, HttpProvider)
 
-    def test_ccxt_falls_back_to_http_when_not_installed(self, monkeypatch):
-        """When ccxt package is absent the factory must fall back gracefully."""
+    def test_plugin_provider_falls_back_to_http_when_no_plugin(self, monkeypatch):
+        """A non-http value with no plugin answering the hook must fall back gracefully."""
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "ccxt")
-        with patch("backend.market_data.CcxtProvider", None):
+        with patch("backend.plugins.hook", return_value=None):
             provider = get_provider()
         assert isinstance(provider, HttpProvider)
 
-    def test_alpaca_falls_back_to_http_when_not_installed(self, monkeypatch):
-        """When alpaca-py is absent the factory must fall back gracefully."""
-        monkeypatch.setenv("MARKET_DATA_PROVIDER", "alpaca")
-        with patch("backend.market_data.AlpacaProvider", None):
+    def test_plugin_provider_is_used_when_hook_answers(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "custom")
+        fake = MagicMock(spec=MarketDataProvider)
+        fake.name.return_value = "Fake"
+        with patch("backend.plugins.hook", return_value=fake) as h:
             provider = get_provider()
-        assert isinstance(provider, HttpProvider)
+        assert provider is fake
+        h.assert_called_once_with("market_data_provider", "custom")
 
 
 # ---------------------------------------------------------------------------

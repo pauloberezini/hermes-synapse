@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import App from './App';
 
 // Mock WebSockets
+let lastWs: MockWebSocket | null = null;
 class MockWebSocket {
   url: string;
   onopen: (() => void) | null = null;
@@ -13,6 +14,7 @@ class MockWebSocket {
 
   constructor(url: string) {
     this.url = url;
+    lastWs = this;
     setTimeout(() => {
       if (this.onopen) this.onopen();
     }, 10);
@@ -21,10 +23,32 @@ class MockWebSocket {
 
 vi.stubGlobal('WebSocket', MockWebSocket);
 
+function stubAuthenticatedFetch() {
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.includes('/api/config')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ system_prompt: 'System prompt', model: 'gpt-4' }),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+function fireWs(payload: Record<string, unknown>) {
+  lastWs?.onmessage?.({ data: JSON.stringify(payload) });
+}
+
 describe('App Component', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    lastWs = null;
   });
 
   it('renders login screen when unauthenticated', async () => {
@@ -114,5 +138,51 @@ describe('App Component', () => {
     fireEvent.click(voiceBtn);
 
     expect(localStorage.getItem('jarvis_tts_enabled')).toBe('true');
+  });
+
+  it('does not paint orchestrator traces from another session into the open chat', async () => {
+    localStorage.setItem('jarvis_auth_token', 'mock_token');
+    stubAuthenticatedFetch();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Greetings, Sir/)).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(typeof lastWs?.onmessage).toBe('function');
+    });
+
+    act(() => {
+      fireWs({
+        type: 'trace_update',
+        session_id: 'task_ops_cron',
+        trace: {
+          agent: 'Orchestrator',
+          action: 'Start',
+          message: "Received query for 'ops_orchestrator': 'Execute scheduled task: System Prompt: Nightly Ops Digest'",
+          status: 'success',
+        },
+      });
+    });
+
+    expect(
+      screen.queryByText(/Execute scheduled task: System Prompt: Nightly Ops Digest/)
+    ).not.toBeInTheDocument();
+
+    act(() => {
+      fireWs({
+        type: 'trace_update',
+        session_id: 'dashboard',
+        trace: {
+          agent: 'Orchestrator',
+          action: 'Planning',
+          message: 'Plan of 3 steps generated.',
+          status: 'success',
+        },
+      });
+    });
+
+    expect(screen.getByText(/Plan of 3 steps generated/)).toBeInTheDocument();
   });
 });

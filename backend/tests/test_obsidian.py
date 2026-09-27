@@ -9,6 +9,13 @@ from backend import rag
 from backend.main import app
 from backend.auth import active_sessions
 
+@pytest.fixture(autouse=True)
+def _obsidian_env(monkeypatch):
+    """Tests must not depend on a developer's .env: pretend the plugin is configured."""
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-key")
+    monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)
+
+
 # Setup mock Qdrant and Embedder just like in test_rag.py
 @pytest.fixture(autouse=True)
 def setup_mock_qdrant():
@@ -80,8 +87,9 @@ async def test_list_notes(mock_http):
     client_inst.get.return_value = mock_resp
     
     notes = await obsidian.list_notes()
-    # Should only return markdown files
-    assert notes == ["Daily/2026-06-23.md", "Ideas.md"]
+    # Plugin markdown files plus any RAG-only paths
+    assert "Daily/2026-06-23.md" in notes
+    assert "Ideas.md" in notes
     client_inst.get.assert_called_with(f"{obsidian._get_base_url()}/vault/")
 
 @pytest.mark.asyncio
@@ -181,6 +189,17 @@ def test_api_endpoints():
         resp = test_client.get("/api/obsidian/status")
         assert resp.status_code == 200
         assert resp.json()["reachable"] is True
+        assert "unavailable" not in resp.json()["message"].lower()
+
+    with patch("backend.obsidian.is_reachable", new_callable=AsyncMock) as mock_reach, \
+         patch("backend.rag.list_documents", return_value=[{"note_path": "Health/Индейка.md"}]):
+        mock_reach.return_value = False
+        resp = test_client.get("/api/obsidian/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["reachable"] is False
+        assert body["knowledge_ok"] is True
+        assert "unavailable" not in body["message"].lower()
         
     # 2. Test notes listing endpoint
     with patch("backend.obsidian.list_notes", new_callable=AsyncMock) as mock_list:

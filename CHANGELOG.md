@@ -4,6 +4,22 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ---
 
+## 🚀 [v1.4.0] - 2026-09-26
+
+### 🔌 Plugin Boundary (Open-Core Hygiene)
+- **Zero core imports of private plugins:** `backend/market_data.py` resolves non-`http` providers through the `market_data_provider(name)` hook; `backend/bot.py` routes Telegram fast commands through `handle_fast_command`. Core never imports `backend.<plugin>` by name.
+- **Private tests live with their plugin:** every test that imports or reproduces plugin behaviour moved out of `backend/tests/`, so `uv run pytest` in the OSS tree collects only core tests. Core `conftest.py` no longer references plugin modules.
+- **Publish script (`scripts/export_oss.sh`):** syncs the git-tracked core into a clone of the public repo, strips private env keys, aborts on any leaked private import/key/broker name, reports remaining tool-name coupling, and optionally pushes a release tag (`TAG=vX.Y.Z scripts/export_oss.sh --push`).
+- **Docs:** README/ROADMAP describe the plugin contract instead of a bundled trading engine; `.env.example` lists only core keys.
+
+### 🧠 Memory & Learning
+- Closed-trade outcomes are recorded with realised PnL/exit price and a deterministic post-mortem line (entry thesis + result) instead of zeros, so daily-loss limits and vector-memory paradigms reflect real results.
+
+### 🛠️ Stability
+- Scheduler, orchestrator planner JSON validation, session titles, MCP client resilience, WebSocket manager and Obsidian tab fixes accumulated from production log reviews (see commit history).
+
+---
+
 ## 🚀 [v1.3.0] - 2026-08-03
 
 ### 🐘 Infrastructure & Storage (PostgreSQL 16 Transition)

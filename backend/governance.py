@@ -314,3 +314,141 @@ class ApprovalQueue:
             cursor.execute(sql, (ApprovalQueue.STATUS_PENDING,))
             row = cursor.fetchone()
         return row[0] if row else 0
+
+
+# ── Local PII Guard ───────────────────────────────────────────────────────────────
+
+import re
+from typing import Tuple, List, Dict, Any
+
+
+class PIIGuard:
+    """
+    Local Open-Source PII (Personally Identifiable Information) Redaction & Masking Guard.
+    Redacts sensitive credentials, tokens, emails, phone numbers, and payment details locally
+    without routing data to external commercial third-party cloud APIs.
+    """
+
+    PATTERNS = {
+        "EMAIL": re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
+        "PHONE": re.compile(r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'),
+        "API_KEY_OPENAI": re.compile(r'\bsk-[a-zA-Z0-9_-]{20,}\b'),
+        "API_KEY_GITHUB": re.compile(r'\bgh[pousr]_[a-zA-Z0-9]{36,}\b'),
+        "API_KEY_GENERIC": re.compile(r'(?i)(?:api_key|access_token|secret_key|private_key)\s*[:=]\s*["\']?([a-zA-Z0-9_\-\.]{16,})["\']?'),
+        "BEARER_TOKEN": re.compile(r'(?i)bearer\s+[a-zA-Z0-9_\-\.]{20,}'),
+        "CREDIT_CARD": re.compile(r'\b(?:\d{4}[-\s]?){3}\d{4}\b'),
+        "SSN_US": re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),
+    }
+
+    @classmethod
+    def mask_pii(cls, text: str) -> Tuple[str, Dict[str, int]]:
+        """
+        Masks all detected PII entities with standard tokens: [EMAIL_REDACTED], [KEY_REDACTED], etc.
+        Returns:
+            Tuple of (redacted_text, detection_counts_dict)
+        """
+        if not text or not isinstance(text, str):
+            return text or "", {}
+
+        redacted = text
+        detections: Dict[str, int] = {}
+
+        for pii_type, pattern in cls.PATTERNS.items():
+            matches = pattern.findall(redacted)
+            if matches:
+                detections[pii_type] = len(matches)
+                tag = f"[{pii_type}_REDACTED]"
+                redacted = pattern.sub(tag, redacted)
+
+        return redacted, detections
+
+    @classmethod
+    def contains_pii(cls, text: str) -> bool:
+        """Returns True if any sensitive PII pattern matches."""
+        if not text or not isinstance(text, str):
+            return False
+        return any(pattern.search(text) for pattern in cls.PATTERNS.values())
+
+
+# ── OWASP Memory Poisoning & Prompt Injection Guard ────────────────────────────────
+
+class MemoryGuard:
+    """
+    OWASP ASI06 / LLM01 Memory Poisoning & Indirect Prompt Injection Guard.
+    Audits documents, web scrapes, and external context before indexing into
+    the vector database (Qdrant / PostgresGraph) to prevent memory corruption.
+    """
+
+    INJECTION_PATTERNS = [
+        re.compile(r'(?i)ignore\s+(all\s+)?(previous|prior)\s+(instructions|directives|commands)'),
+        re.compile(r'(?i)you\s+are\s+now\s+in\s+(developer|dan|jailbreak|unrestricted)\s+mode'),
+        re.compile(r'(?i)system\s+prompt\s+override'),
+        re.compile(r'(?i)disregard\s+(the\s+)?above\s+and'),
+        re.compile(r'(?i)<\s*system\s*>'),
+        re.compile(r'(?i)\[\s*INST\s*\]'),
+        re.compile(r'(?i)\[\s*SYS\s*\]'),
+        re.compile(r'(?i)!\[.*?\]\((https?:\/\/[^\s\)]+[\?&](?:token|key|secret|cookie|pass|pwd)=)'), # Image exfiltration
+    ]
+
+    ZERO_WIDTH_CHARS = re.compile(r'[\u200B\u200C\u200D\u200E\u200F\uFEFF\u202A-\u202E]')
+
+    @classmethod
+    def audit_text(cls, text: str, source: str = "manual") -> Dict[str, Any]:
+        """
+        Audits input text for prompt injection markers, hidden unicode channels, and PII.
+        """
+        if not text or not isinstance(text, str):
+            return {
+                "is_safe": True,
+                "threat_level": "CLEAN",
+                "threats": [],
+                "clean_text": text or "",
+                "pii_detected": False
+            }
+
+        threats = []
+        # 1. Strip invisible zero-width unicode injection channels
+        clean_text = cls.ZERO_WIDTH_CHARS.sub("", text)
+        if len(clean_text) < len(text):
+            threats.append(f"Stripped {len(text) - len(clean_text)} invisible zero-width unicode characters.")
+
+        # 2. Check for Prompt Injection / Jailbreak Patterns
+        for pat in cls.INJECTION_PATTERNS:
+            if pat.search(clean_text):
+                threats.append(f"Prompt injection marker detected: '{pat.pattern}'")
+
+        # 3. PII Redaction
+        clean_text, pii_counts = PIIGuard.mask_pii(clean_text)
+        if pii_counts:
+            threats.append(f"Redacted sensitive PII entities: {list(pii_counts.keys())}")
+
+        threat_level = "CLEAN"
+        if any("Prompt injection" in t for t in threats):
+            threat_level = "BLOCKED" if source in ["upload", "web_search", "untrusted"] else "HIGH"
+        elif threats:
+            threat_level = "LOW"
+
+        return {
+            "is_safe": (threat_level != "BLOCKED"),
+            "threat_level": threat_level,
+            "threats": threats,
+            "clean_text": clean_text,
+            "pii_detected": len(pii_counts) > 0
+        }
+
+    @classmethod
+    def sanitize_for_indexing(cls, text: str, source: str = "manual") -> Tuple[bool, str, List[str]]:
+        """
+        Gatekeeper for vector memory indexing.
+        Returns:
+            Tuple of (allow_indexing: bool, clean_text: str, warnings: List[str])
+        """
+        audit = cls.audit_text(text, source=source)
+        if not audit["is_safe"]:
+            logger.warning(
+                f"[MemoryGuard] BLOCKED poisoned document from source='{source}'. "
+                f"Threats: {audit['threats']}"
+            )
+            return False, "", audit["threats"]
+        return True, audit["clean_text"], audit["threats"]
+

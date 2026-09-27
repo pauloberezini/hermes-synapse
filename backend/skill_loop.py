@@ -44,8 +44,64 @@ class SkillDistiller:
         user_msg = log_entry.get("user_message", "")
         assistant_resp = log_entry.get("assistant_response", "")
         err_msg = str(log_entry.get("error") or "").lower()
-        if err_msg or "ошибка исполнения" in assistant_resp.lower() or "170140" in assistant_resp:
+        success = log_entry.get("success")
+
+        # 1. Check explicit success flag
+        if success is False or success == 0:
+            raise ValueError(f"Log entry #{log_entry.get('id')} marked as unsuccessful, skipping skill distillation.")
+
+        # 2. Check error messages or known failure signatures
+        failure_markers = [
+            "ошибка исполнения", "170140", "order value exceeded",
+            "autonomous execution cycle: failed", "compliance verdict: failed",
+            "execution cycle: failed", "execution halted", "cycle failed",
+            "apologies, sir.", "rate limit exceeded", "too many requests",
+            "trading paused", "tool seems to be unavailable", "tool unavailable",
+            "blocked gate", "trades blocked", "compliance check: rejected",
+            "ch_access_token_invalid", "critical authentication failure",
+            "critical authentication", "authentication failure",
+            "authentication expired", "authentication required",
+            "re-authentication required", "trading execution blocked",
+            "execution blocked", "trade execution: blocked", "trade execution blocked",
+            "cannot perform a comprehensive", "api offline", "not authorized",
+            "invalid access token", "failed to connect to ctrader",
+            "i need to know which symbol", "please provide the symbol",
+            "which symbol to run", "what symbol to run", "what instrument are you planning",
+            "await the proposed trade", "awaiting proposed trade",
+            "without proper input confirmation"
+        ]
+        if err_msg or any(marker in assistant_resp.lower() for marker in failure_markers):
             raise ValueError(f"Log entry #{log_entry.get('id')} contains error or execution failure, skipping skill distillation.")
+
+        # 3. Check traces for error status or failure text
+        traces = log_entry.get("traces", [])
+        if isinstance(traces, list):
+            for t in traces:
+                if isinstance(t, dict):
+                    if t.get("status") in ("error", "failed"):
+                        raise ValueError(f"Log entry #{log_entry.get('id')} contains error status in traces, skipping skill distillation.")
+                    t_msg = str(t.get("message") or "").lower()
+                    if any(marker in t_msg for marker in (
+                        "tool seems to be unavailable", "tool unavailable", "trading paused",
+                        "ch_access_token_invalid", "trades blocked", "authentication required",
+                        "authentication failure", "re-authentication required", "trading execution blocked",
+                        "execution blocked", "trade execution: blocked", "not authorized",
+                        "cannot perform a comprehensive", "i need to know which symbol",
+                        "please provide the symbol", "which symbol to run", "what symbol to run",
+                        "await the proposed trade", "awaiting proposed trade"
+                    )):
+                        raise ValueError(f"Log entry #{log_entry.get('id')} contains tool failure, parameter stall, or trading paused in trace messages, skipping skill distillation.")
+
+        # 4. Check for minimum worker execution steps (avoid distilling 0-worker scaffolding runs)
+        worker_traces = [
+            t for t in traces
+            if isinstance(t, dict) and (
+                t.get("agent") not in ("Orchestrator", "Router") or
+                t.get("action") in ("Execute", "Tool", "Search", "Plot")
+            )
+        ]
+        if not worker_traces:
+            raise ValueError(f"Log entry #{log_entry.get('id')} has 0 worker execution steps, skipping skill distillation.")
 
         if not self.api_key:
             logger.info("No LLM API key provided. Using heuristic skill distiller.")
@@ -100,7 +156,8 @@ class SkillDistiller:
                             content = re.sub(r"\n```$", "", content)
                         return self._parse_skill_markdown(content, log_entry)
         except Exception as err:
-            logger.warning(f"LLM skill distillation failed: {err}. Falling back to heuristic distiller.")
+            err_desc = f"{type(err).__name__}: {err}".rstrip(": .") if str(err) else type(err).__name__
+            logger.warning(f"LLM skill distillation failed: {err_desc}. Falling back to heuristic distiller.")
 
         return self._heuristic_distillation(log_entry)
 
@@ -177,14 +234,18 @@ class SkillDistiller:
         skill_name = skill_dict["skill_name"]
         filename = f"{skill_name}.md"
         filepath = os.path.join(SKILLS_DIR, filename)
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(skill_dict["content"])
-
         skill_dict["file_path"] = filepath
 
         from backend.database import db_save_distilled_skill
         skill_id = db_save_distilled_skill(skill_dict)
+        if skill_id == -1:
+            logger.warning(f"Skill '{skill_name}' rejected by database (invalid/failure markers), skipping file save and indexing.")
+            skill_dict["id"] = -1
+            return skill_dict
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(skill_dict["content"])
+
         skill_dict["id"] = skill_id
 
         # Index into RAG memory (Qdrant & GraphRAG)

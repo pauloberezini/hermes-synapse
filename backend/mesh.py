@@ -198,6 +198,98 @@ class AgentMeshRouter:
         logger.info(f"Escalating task {payload.task_id} (count={payload.escalation_count}) -> Supervisor {supervisor_id}")
         return self.dispatch_mesh_task(payload)
 
+    # ── P2P Task Bidding (Contract Net Protocol) ──────────────────────────────
+
+    def _init_bidding_tables(self):
+        """Ensure RFP and Bidding tables exist."""
+        _execute("""
+            CREATE TABLE IF NOT EXISTS mesh_rfps (
+                rfp_id TEXT PRIMARY KEY,
+                task_action TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT DEFAULT 'OPEN',
+                created_at REAL NOT NULL,
+                awarded_node_id TEXT
+            )
+        """)
+        _execute("""
+            CREATE TABLE IF NOT EXISTS mesh_bids (
+                bid_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rfp_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                capability_score REAL NOT NULL,
+                load_score REAL NOT NULL,
+                created_at REAL NOT NULL,
+                UNIQUE(rfp_id, node_id)
+            )
+        """)
+
+    def publish_rfp(self, action: str, payload: Dict[str, Any]) -> str:
+        """Publish a Request For Proposal to the mesh."""
+        self._init_bidding_tables()
+        import uuid
+        rfp_id = str(uuid.uuid4())
+        now = time.time()
+        _execute(
+            "INSERT INTO mesh_rfps (rfp_id, task_action, payload_json, status, created_at) VALUES (?, ?, ?, ?, ?)",
+            (rfp_id, action, json.dumps(payload), 'OPEN', now)
+        )
+        logger.info(f"[AgentMeshRouter] Published RFP {rfp_id} for action '{action}'")
+        return rfp_id
+
+    def submit_bid(self, rfp_id: str, node_id: str, capability_score: float, load_score: float) -> bool:
+        """Submit a bid for a specific RFP."""
+        self._init_bidding_tables()
+        now = time.time()
+        try:
+            _execute(
+                """
+                INSERT INTO mesh_bids (rfp_id, node_id, capability_score, load_score, created_at) 
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(rfp_id, node_id) DO UPDATE SET 
+                    capability_score=EXCLUDED.capability_score, load_score=EXCLUDED.load_score, created_at=EXCLUDED.created_at
+                """,
+                (rfp_id, node_id, capability_score, load_score, now)
+            )
+            logger.info(f"[AgentMeshRouter] Node {node_id} submitted bid for RFP {rfp_id} (cap={capability_score}, load={load_score})")
+            return True
+        except Exception as e:
+            logger.error(f"[AgentMeshRouter] Failed to submit bid: {e}")
+            return False
+
+    def award_task(self, rfp_id: str) -> Optional[Dict[str, Any]]:
+        """Close bidding and award task to the highest scoring bidder (Capability - Load)."""
+        self._init_bidding_tables()
+        bids = _execute("SELECT node_id, capability_score, load_score FROM mesh_bids WHERE rfp_id = ?", (rfp_id,))
+        if not bids:
+            logger.warning(f"[AgentMeshRouter] No bids received for RFP {rfp_id}")
+            return None
+        
+        best_node = None
+        best_score = -float('inf')
+
+        for row in bids:
+            r = dict(row) if isinstance(row, dict) else {"node_id": row[0], "capability_score": row[1], "load_score": row[2]}
+            net_score = r["capability_score"] - r["load_score"]
+            if net_score > best_score:
+                best_score = net_score
+                best_node = r["node_id"]
+
+        if best_node:
+            _execute("UPDATE mesh_rfps SET status = 'AWARDED', awarded_node_id = ? WHERE rfp_id = ?", (best_node, rfp_id))
+            logger.info(f"[AgentMeshRouter] Awarded RFP {rfp_id} to Node {best_node} (Score: {best_score:.2f})")
+            
+            rfp_data = _execute("SELECT task_action, payload_json FROM mesh_rfps WHERE rfp_id = ?", (rfp_id,))
+            if rfp_data:
+                r_rfp = dict(rfp_data[0]) if isinstance(rfp_data[0], dict) else {"task_action": rfp_data[0][0], "payload_json": rfp_data[0][1]}
+                return {
+                    "rfp_id": rfp_id,
+                    "awarded_node_id": best_node,
+                    "action": r_rfp["task_action"],
+                    "payload": json.loads(r_rfp["payload_json"])
+                }
+        return None
+
 
 # Global Mesh Router Singleton
 _global_mesh_router: Optional[AgentMeshRouter] = None
@@ -207,3 +299,4 @@ def get_mesh_router() -> AgentMeshRouter:
     if _global_mesh_router is None:
         _global_mesh_router = AgentMeshRouter()
     return _global_mesh_router
+

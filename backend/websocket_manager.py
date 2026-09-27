@@ -2,7 +2,10 @@ import json
 import logging
 from datetime import datetime, date
 from typing import Set, Dict, Any
-from fastapi import WebSocket
+try:
+    from fastapi import WebSocket
+except ImportError:
+    WebSocket = Any  # type: ignore
 
 logger = logging.getLogger("hermes.ws")
 

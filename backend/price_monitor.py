@@ -89,13 +89,20 @@ class PriceMonitor:
         if not self.alerts:
             return
 
-        logger.info(f"Checking {len(self.alerts)} active price alerts...")
-        from backend.activity_logger import log_activity
-        log_activity(
-            activity_type="idle",
-            source="PriceMonitor",
-            message=f"Сканирование рынка: проверка {len(self.alerts)} активных оповещений цен котировок (затраты: $0.00)"
-        )
+        logger.debug(f"Checking {len(self.alerts)} active price alerts...")
+        now = time.time()
+        last_logged = getattr(self, "_last_idle_log_time", 0.0)
+        last_count = getattr(self, "_last_alert_count", None)
+        idle_interval = getattr(self, "_idle_log_interval", 900.0)
+        if (now - last_logged >= idle_interval) or (last_count != len(self.alerts)):
+            self._last_idle_log_time = now
+            self._last_alert_count = len(self.alerts)
+            from backend.activity_logger import log_activity
+            log_activity(
+                activity_type="idle",
+                source="PriceMonitor",
+                message=f"Market scan: checking {len(self.alerts)} active quote price alerts (cost: $0.00)"
+            )
         # Group unique symbols to fetch them efficiently
         unique_cryptos = set()
         unique_stocks = set()
@@ -106,15 +113,24 @@ class PriceMonitor:
                 unique_stocks.add(a["symbol"])
 
         current_prices = {}
+        tasks = []
+        task_symbols = []
+
         for coin_id in unique_cryptos:
-            p = await self.provider.get_price(coin_id, is_crypto=True)
-            if p is not None:
-                current_prices[coin_id] = p
+            tasks.append(self.provider.get_price(coin_id, is_crypto=True))
+            task_symbols.append(coin_id)
 
         for ticker in unique_stocks:
-            p = await self.provider.get_price(ticker, is_crypto=False)
-            if p is not None:
-                current_prices[ticker] = p
+            tasks.append(self.provider.get_price(ticker, is_crypto=False))
+            task_symbols.append(ticker)
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for sym, res in zip(task_symbols, results):
+                if isinstance(res, (int, float)) and res > 0:
+                    current_prices[sym] = float(res)
+                elif isinstance(res, Exception):
+                    logger.debug("Price fetch exception for %s: %s", sym, res)
 
         triggered = []
         for a in list(self.alerts):
@@ -148,16 +164,16 @@ class PriceMonitor:
         log_activity(
             activity_type="idle",
             source="PriceMonitor",
-            message=f"🔔 Оповещение сработало! Цеon {alert['display_name']} стала ${current_price:.2f} (цель: {cond_ru} ${alert['target_price']:.2f})"
+            message=f"🔔 Alert triggered! {alert['display_name']} price reached ${current_price:.2f} (target: {alert['condition']} ${alert['target_price']:.2f})"
         )
         
         # Format text and send Telegram notification
         cond_str = "поднялась выше" if alert["condition"] == "above" else "опустилась ниже"
         msg = (
             f"📈 **ОПОВЕЩЕНИЕ О ЦЕНЕ, СЭР**\n\n"
-            f"Рыночonя цеon **{alert['display_name']}** {cond_str} целевого зonчения!\n"
-            f"• Целевая цеon: **${alert['target_price']:,.2f}**\n"
-            f"• Текущая цеon: **${current_price:,.2f}**\n"
+            f"Рыночная цена **{alert['display_name']}** {cond_str} целевого значения!\n"
+            f"• Целевая Цена: **${alert['target_price']:,.2f}**\n"
+            f"• Текущая цена: **${current_price:,.2f}**\n"
             f"• Статус: 🔔 Сработало"
         )
         

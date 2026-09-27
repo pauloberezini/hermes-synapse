@@ -1,3 +1,5 @@
+import os
+import sys
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
@@ -66,6 +68,7 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("websockets.server").setLevel(logging.WARNING)
 logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
 class EndpointLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -143,13 +146,7 @@ async def lifespan(app: FastAPI):
         start_rss_poller_loop(interval_seconds=300)
         start_watcher_loop(interval_seconds=300)
 
-        # Start BCM Session Scheduler in background (non-blocking, opt-in via ENABLE_BCM_AUTO_TRADER)
-        if os.environ.get("ENABLE_BCM_AUTO_TRADER", "false").lower() == "true":
-            loaded = _load_private_plugins(scheduler)
-            if not loaded:
-                logger.warning("ENABLE_BCM_AUTO_TRADER is true, but no private BCM plugin was found.")
-        else:
-            logger.info("BCM Session Scheduler is disabled (set ENABLE_BCM_AUTO_TRADER=true in .env to enable).")
+        _load_private_plugins(scheduler)
     except Exception as e:
         logger.warning(f"Failed to start scheduler or skill distillation loop: {e}")
 
@@ -947,9 +944,10 @@ async def get_skills_api():
         "shell_execution":  ["get_system_stats", "execute_command"],
         "python_sandbox":   ["execute_command"],
         "read_rss_node_feed": ["read_rss_node_feed"],
-        "bcm":              ["bcm tools (crypto trading)"],
         "mcp_all":          ["all connected MCP server tools"],
     }
+    from backend.plugins import hook
+    skill_to_tools.update(hook("extra_skills", default={}) or {})
     # Append any live MCP servers as selectable skills
     from backend.mcp_client import mcp_clients
     for name in mcp_clients:
@@ -1132,13 +1130,18 @@ async def get_billing_usage_api(user_id: str = "default_user"):
 @app.post("/api/marketplace/developer/onboard")
 async def developer_onboard_api(developer_id: str = "default_user", redirect_url: str = "http://localhost:9119"):
     """Initiates Stripe Connect onboarding for a developer."""
-    import stripe
+    try:
+        import stripe
+    except ImportError:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=501, content={"status": "error", "message": "Stripe is not installed in this environment."})
     import os
+    from fastapi.responses import JSONResponse
     from backend.database import db_get_developer_stripe_account, db_set_developer_stripe_account
     
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
     if not stripe.api_key:
-        return {"status": "error", "message": "Stripe is not configured on this server."}
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Stripe is not configured on this server."})
         
     account_id = db_get_developer_stripe_account(developer_id)
     if not account_id:
@@ -1163,9 +1166,12 @@ async def developer_onboard_api(developer_id: str = "default_user", redirect_url
 @app.post("/api/marketplace/stripe/webhook")
 async def stripe_webhook_api(request: Request):
     """Handles Stripe Webhooks to update ledger and developer onboarding status."""
-    import stripe
-    import os
     from fastapi import HTTPException
+    try:
+        import stripe
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Stripe is not installed in this environment.")
+    import os
     from backend.database import _execute
     
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
@@ -1444,8 +1450,8 @@ async def get_mcp_servers():
             "command": cfg.get("command", ""),
             "args": cfg.get("args", []),
             "env": {k: v for k, v in cfg.get("env", {}).items() if "key" not in k.lower() and "secret" not in k.lower() and "token" not in k.lower()},
-            "connected": name in mcp_clients,
-            "tools_count": len(mcp_clients[name].tools) if name in mcp_clients else 0,
+            "connected": bool(getattr(mcp_clients.get(name), "is_connected", False)),
+            "tools_count": len(mcp_clients[name].tools) if (name in mcp_clients and getattr(mcp_clients[name], "is_connected", False)) else 0,
         })
     return result
 
@@ -1539,6 +1545,15 @@ async def cancel_market_alert(alert_id: str):
     from backend.price_monitor import price_monitor
     ok = price_monitor.cancel_alert(alert_id)
     return {"status": "cancelled" if ok else "not_found"}
+
+@app.get("/api/activity/logs")
+async def get_activity_logs_api(limit: int = 100):
+    from backend.database import get_activity_logs
+    from backend.activity_logger import ACTIVITY_LOGS
+    logs = get_activity_logs(limit=limit)
+    if not logs:
+        logs = list(ACTIVITY_LOGS)[-limit:]
+    return logs
 
 @app.delete("/api/activity/logs")
 async def clear_activity_logs_api():
@@ -1780,13 +1795,24 @@ class ObsidianNoteCreate(BaseModel):
 
 @app.get("/api/obsidian/status")
 async def obsidian_status():
-    """Check if the Obsidian Local REST API plugin is reachable."""
+    """Plugin reachability plus RAG note count. Offline Obsidian is not an error."""
     from backend.obsidian import is_reachable, _get_api_key
-    reachable = await is_reachable()
+    from backend.rag import list_documents
+    plugin = await is_reachable()
+    indexed = sum(1 for d in list_documents(source_filter="obsidian") if d.get("note_path"))
+    if plugin:
+        message = "Obsidian connected"
+    elif indexed:
+        message = f"Knowledge base online · {indexed} notes"
+    else:
+        message = "Knowledge base ready · Obsidian app optional"
     return {
-        "reachable": reachable,
+        "reachable": plugin,
+        "plugin": plugin,
+        "indexed_count": indexed,
+        "knowledge_ok": plugin or indexed > 0,
         "api_key_configured": bool(_get_api_key()),
-        "message": "✅ Obsidian connected" if reachable else "❌ Obsidian is unavailable. Start Obsidian and enable the Local REST API plugin."
+        "message": message,
     }
 
 @app.get("/api/obsidian/notes")

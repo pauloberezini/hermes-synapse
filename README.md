@@ -103,7 +103,7 @@ Hermes goes beyond simple chat agents. It is designed for complex, autonomous op
 - 🏢 **2.5D Pixel Office & Telemetry**: Visualize your agent workforce in real-time. Watch tasks route through intelligent office zones (Meeting Rooms, Desks, Lounge).
 - 🛡️ **Paperclip Governance (Control Plane)**: Enforce hard limits with **BudgetGuard** token/dollar spend tracking, and require **Human-in-the-loop** approvals for high-stakes tool executions. Tasks are managed on an atomic Kanban ticket board.
 - 🕸️ **Autonomous Agent Mesh**: P2P protocol for inter-agent capability matching, discovery, and task delegation.
-- 📈 **BCM Trading Engine**: Autonomous financial engine integrated with CCXT (100+ exchanges) and a built-in Compliance Officer.
+- 🔌 **Private Plugins**: Drop a `backend/<name>/plugin.py` into the tree to add agents, tools, schema, presets, cron jobs, or a market-data provider. Core only calls hooks; it never imports a plugin by name, so proprietary extensions stay out of the OSS tree.
 - 🗣️ **Voice & Speech**: Integrated local Whisper STT (Speech-to-Text) and TTS for seamless voice interactions.
 - 🏢 **Enterprise Ready**: Full OIDC / OAuth2 support, Role-Based Access Control (RBAC), and PostgreSQL database.
 
@@ -199,6 +199,7 @@ hermes-synapse/
 │   ├── database.py       # PostgreSQL backend
 │   ├── rag.py            # Qdrant vector memory
 │   ├── tools.py          # All skill tool implementations
+│   ├── plugins.py        # Optional-plugin loader (backend/<name>/plugin.py hooks)
 │   └── subagents.py      # Specialized agent classes
 ├── frontend/             # React + Vite dashboard
 ├── k8s/                  # Kubernetes Deployment Manifests
@@ -224,6 +225,7 @@ hermes-synapse/
 - [x] **Enterprise SSO & SaaS mode** — OIDC/OAuth2, RBAC, namespace isolation
 - [x] **Paperclip Governance** — BudgetGuard, Kanban board, Human-in-the-loop approvals
 - [x] **Autonomous P2P Agent Mesh** — Decentralized agent communication
+- [x] **Plugin boundary** — private extensions via `backend/<name>/plugin.py` hooks, zero core imports
 - [ ] **Production Multi-Cluster Agent Mesh** — Cross-cloud distributed execution
 - [ ] **Real-Time WebRTC Voice & Multimodal Gateway**
 - [ ] **Skills Marketplace Monetization & Billing Engine**
