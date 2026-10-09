@@ -286,7 +286,8 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
         orch_skills = orch_meta["skills"]
         o_list = orch_skills if isinstance(orch_skills, list) else str(orch_skills).split(",")
         o_set = set(str(s).strip() for s in o_list if str(s).strip())
-        if parent_skills:
+        if parent_skills is not None:
+            # "" is an empty cap, not "no restriction".
             p_list = parent_skills if isinstance(parent_skills, list) else str(parent_skills).split(",")
             p_set = set(str(s).strip() for s in p_list if str(s).strip())
             active_skills = ",".join(o_set.intersection(p_set))
@@ -531,7 +532,9 @@ Rules:
                 try:
                     # Recursive dynamic orchestration call!
                     logger.info(f"Triggering recursive sub-orchestration for '{agent_type}'")
-                    sub_orch_res = await run_orchestration(contextual_instructions, api_key, model, chat_id=agent_type, parent_skills=parent_skills, _stack=_stack)
+                    # Cap the child by this orchestrator's intersection. None only when there is no ceiling.
+                    nested_skills = None if parent_skills is None and not active_skills else active_skills
+                    sub_orch_res = await run_orchestration(contextual_instructions, api_key, model, chat_id=agent_type, parent_skills=nested_skills, _stack=_stack)
                     state.results.append({"step": state.current_step_idx, "agent": agent_type, "output": sub_orch_res["response"]})
                     # Add child traces to parent traces
                     for trace in sub_orch_res.get("traces", []):
@@ -581,7 +584,9 @@ Rules:
                 try:
                     scoped_subagent_session_id = f"{state.chat_id}_{child_agent['id']}"
                     subagent_kwargs = {
-                        "parent_skills": parent_skills,
+                        # Top-level (parent_skills is None) leaves keep their own skills.
+                        # Under a cap, pass the intersection so a nested tree cannot widen it.
+                        "parent_skills": None if parent_skills is None else active_skills,
                         "chat_id": scoped_subagent_session_id,
                     }
                     try:

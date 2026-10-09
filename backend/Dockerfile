@@ -13,51 +13,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies directly
+# ponytail: quote specs — /bin/sh redirects on unquoted >=
+# SQLAlchemy 2.1's default postgres driver is psycopg v3, not psycopg2.
 RUN pip install --no-cache-dir \
-    fastapi>=0.100.0 \
-    uvicorn>=0.22.0 \
-    python-telegram-bot>=20.3 \
-    httpx>=0.24.1 \
-    python-dotenv>=1.0.0 \
-    pydantic>=2.0 \
-    websockets>=11.0 \
-    psutil>=5.9.0 \
-    fastembed>=0.2.0 \
-    qdrant-client>=1.13.2 \
-    matplotlib>=3.7.0 \
-    docker>=6.1.0 \
-    pandas>=2.0.0 \
-    openpyxl>=3.1.0 \
-    beautifulsoup4>=4.12.0 \
-    python-multipart>=0.0.7 \
-    google-auth>=2.20.0 \
-    google-auth-oauthlib>=1.0.0 \
-    google-auth-httplib2>=0.2.0 \
-    google-api-python-client>=2.95.0 \
-    todoist-api-python>=2.1.3 \
-    pypdf>=4.0.0 \
-    apscheduler>=3.10.0 \
-    sqlalchemy>=2.0.0 \
-    psycopg2-binary>=2.9.0 \
-    simplefix>=1.0.17 \
-    twisted>=24.0.0 \
-    service_identity>=24.0.0 \
-    pyopenssl>=24.0.0 \
-    pytest>=7.0.0 \
+    "fastapi>=0.100.0" \
+    "uvicorn>=0.22.0" \
+    "python-telegram-bot>=20.3" \
+    "httpx>=0.24.1" \
+    "python-dotenv>=1.0.0" \
+    "pydantic>=2.0" \
+    "websockets>=11.0" \
+    "psutil>=5.9.0" \
+    "fastembed>=0.2.0" \
+    "qdrant-client>=1.13.2" \
+    "matplotlib>=3.7.0" \
+    "docker>=6.1.0" \
+    "pandas>=2.0.0" \
+    "openpyxl>=3.1.0" \
+    "beautifulsoup4>=4.12.0" \
+    "python-multipart>=0.0.7" \
+    "google-auth>=2.20.0" \
+    "google-auth-oauthlib>=1.0.0" \
+    "google-auth-httplib2>=0.2.0" \
+    "google-api-python-client>=2.95.0" \
+    "todoist-api-python>=2.1.3" \
+    "pypdf>=4.0.0" \
+    "apscheduler>=3.10.0" \
+    "sqlalchemy>=2.0.0" \
+    "psycopg[binary]>=3.1.0" \
+    "simplefix>=1.0.17" \
+    "twisted>=24.0.0" \
+    "service_identity>=24.0.0" \
+    "pyopenssl>=24.0.0" \
+    "pytest>=7.0.0" \
     pytest-asyncio \
-    yfinance>=0.2.54 \
+    "yfinance>=0.2.54" \
     protobuf \
     grpcio-tools \
     scipy \
     mplfinance \
     plotly \
     fredapi
-
-
-
-# Explicitly install PostgreSQL driver
-RUN pip install --no-cache-dir psycopg2-binary>=2.9.0
 
 # Copy source code and environment configuration
 COPY backend/ /app/backend/

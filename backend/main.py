@@ -869,12 +869,25 @@ async def get_budget_api(session_id: str):
 
 @app.post("/api/governance/budget/{session_id}")
 async def update_budget_api(session_id: str, body: BudgetUpdateRequest):
-    from backend.database import _rowcount
-    _rowcount(
-        "UPDATE session_metadata SET daily_budget_usd = ?, monthly_budget_usd = ? WHERE session_id = ?",
-        (body.daily_budget_usd, body.monthly_budget_usd, session_id)
+    from backend.database import _execute
+    # UPDATE alone is a no-op when the session has no metadata row yet.
+    _execute(
+        """
+        INSERT INTO session_metadata (session_id, title, daily_budget_usd, monthly_budget_usd, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(session_id) DO UPDATE SET
+            daily_budget_usd = excluded.daily_budget_usd,
+            monthly_budget_usd = excluded.monthly_budget_usd,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (session_id, session_id, body.daily_budget_usd, body.monthly_budget_usd),
     )
-    return {"status": "success", "session_id": session_id}
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "daily_budget_usd": body.daily_budget_usd,
+        "monthly_budget_usd": body.monthly_budget_usd,
+    }
 
 @app.get("/api/subagents/presets")
 async def get_presets_api():
@@ -1422,12 +1435,12 @@ async def get_models_api():
                     rec_models = [
                         "google/gemini-2.5-flash",
                         "google/gemini-2.5-pro",
-                        "anthropic/claude-sonnet-4-5",
-                        "anthropic/claude-opus-4",
+                        "anthropic/claude-sonnet-4.5",
+                        "anthropic/claude-opus-4.1",
                         "openai/gpt-4o",
                         "openai/gpt-4o-mini",
                         "deepseek/deepseek-r1",
-                        "deepseek/deepseek-v3-0324",
+                        "deepseek/deepseek-chat-v3-0324",
                         "meta-llama/llama-3.3-70b-instruct"
                     ]
                     
@@ -1454,12 +1467,12 @@ async def get_models_api():
     return [
         {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash (default)"},
         {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
-        {"id": "anthropic/claude-sonnet-4-5", "name": "Anthropic: Claude Sonnet 4.5"},
-        {"id": "anthropic/claude-opus-4", "name": "Anthropic: Claude Opus 4"},
+        {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
+        {"id": "anthropic/claude-opus-4.1", "name": "Anthropic: Claude Opus 4.1"},
         {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},
         {"id": "openai/gpt-4o-mini", "name": "OpenAI: GPT-4o-Mini"},
         {"id": "deepseek/deepseek-r1", "name": "DeepSeek: R1"},
-        {"id": "deepseek/deepseek-v3-0324", "name": "DeepSeek: V3"},
+        {"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
         {"id": "meta-llama/llama-3.3-70b-instruct", "name": "Meta Llama 3.3 70B"},
     ]
 

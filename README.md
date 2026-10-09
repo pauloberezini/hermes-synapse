@@ -63,6 +63,8 @@ docker compose up -d --build
 
 # 4. Open dashboard
 open http://localhost:9119
+# Login code is sent to Telegram and printed in the backend log:
+# docker logs jarvis-backend | grep "Generated OTP Code"
 ```
 
 **Want to use a local model (Ollama)?** Set in `.env`:

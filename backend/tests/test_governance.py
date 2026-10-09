@@ -56,6 +56,48 @@ class TestGovernanceModule(unittest.TestCase):
         with self.assertRaises(BudgetExceededError):
             BudgetGuard.check(session_id, estimated_cost_usd=0.02)
 
+    def test_budget_endpoint_persists_without_existing_row(self):
+        """POST /budget used to UPDATE a missing session_metadata row and report success."""
+        from fastapi.testclient import TestClient
+        from backend.auth import active_sessions
+        from backend.main import app
+
+        session_id = "test_session_budget_upsert"
+        db._execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
+        token = "test-token-budget"
+        active_sessions.add(token)
+        client = TestClient(app)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            f"/api/governance/budget/{session_id}",
+            json={"daily_budget_usd": 1.5, "monthly_budget_usd": 9.0},
+            headers=headers,
+        )
+        self.assertEqual(created.status_code, 200)
+        summary = client.get(f"/api/governance/budget/{session_id}", headers=headers)
+        body = summary.json()
+        self.assertEqual(body["daily_budget_usd"], 1.5)
+        self.assertEqual(body["monthly_budget_usd"], 9.0)
+
+        db._execute(
+            "UPDATE session_metadata SET title = ? WHERE session_id = ?",
+            ("Keep me", session_id),
+        )
+        updated = client.post(
+            f"/api/governance/budget/{session_id}",
+            json={"daily_budget_usd": 2.0, "monthly_budget_usd": 4.0},
+            headers=headers,
+        )
+        self.assertEqual(updated.status_code, 200)
+        rows = db._execute(
+            "SELECT title, daily_budget_usd, monthly_budget_usd FROM session_metadata WHERE session_id = ?",
+            (session_id,),
+        )
+        self.assertEqual(rows[0][0], "Keep me")
+        self.assertEqual(rows[0][1], 2.0)
+        self.assertEqual(rows[0][2], 4.0)
+
     def test_approval_queue_lifecycle(self):
         """Verify requesting, counting, and resolving human approval requests."""
         req_id = ApprovalQueue.request_approval(

@@ -1774,8 +1774,9 @@ class JarvisAgent:
             child_allowed.update(mcp_tool_to_server.keys())
             child_allowed.update(hook("all_plugin_tool_names", default=[]) or [])
 
-        # Intersect with parent_skills if the parent orchestrator has specified restrictions
-        if parent_skills:
+        # Intersect with parent_skills if the parent orchestrator has specified restrictions.
+        # "" is an empty cap (disjoint skills), not an absent one.
+        if parent_skills is not None:
             if isinstance(parent_skills, list):
                 enabled_parent_skills = [str(s).strip() for s in parent_skills if str(s).strip()]
             else:
