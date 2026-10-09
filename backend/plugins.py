@@ -60,6 +60,10 @@ async def hook_async(name: str, *args: Any, default: Any = None, **kwargs: Any) 
     return default
 
 
+def tool_hints() -> dict:
+    return hook("tool_name_hints", default=None) or {}
+
+
 def collect(name: str, *args: Any, **kwargs: Any) -> List[Any]:
     items: List[Any] = []
     for mod in iter_plugins():

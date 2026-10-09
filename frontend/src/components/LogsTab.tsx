@@ -81,7 +81,7 @@ export function LogsTab({
           <div style={styles.logsList}>
             {activeSubTab === 'decision' ? (
               logs.length === 0 ? (
-                <div style={styles.emptyLogs}>No decision logs found, Sir.</div>
+                <div style={styles.emptyLogs}>No decision logs found.</div>
               ) : (
                 logs.map((log, index) => (
                   <div 
@@ -110,7 +110,7 @@ export function LogsTab({
               )
             ) : (
               activityLogs.length === 0 ? (
-                <div style={styles.emptyLogs}>No activity recorded, Sir.</div>
+                <div style={styles.emptyLogs}>No activity recorded.</div>
               ) : (
                 activityLogs.map((log, index) => (
                   <div key={index} style={styles.logCard}>
@@ -162,7 +162,7 @@ export function LogsTab({
           ) : (
             <div style={styles.emptyDetail}>
               <Layers size={48} style={{ color: 'var(--text-dim)', marginBottom: 16 }} />
-              <span>Select an item to view details, Sir.</span>
+              <span>Select an item to view details.</span>
             </div>
           )}
         </div>

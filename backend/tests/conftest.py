@@ -35,7 +35,7 @@ def clean_test_database():
     db_mod.init_db()
     with backend.connect() as conn:
         cur = conn.cursor()
-        for table in ["trade_traces", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents"]:
+        for table in ["trade_traces", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_requests"]:
             try:
                 cur.execute(f"DELETE FROM {table}")
             except Exception:

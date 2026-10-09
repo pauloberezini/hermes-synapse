@@ -225,7 +225,8 @@ class PostgresGraphMemoryEngine(MemoryEngine):
     def _extract_graph_elements(self, text: str) -> Dict[str, Any]:
         api_key = os.getenv("OPENROUTER_API_KEY")
         api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
-        model = os.getenv("LLM_MODEL", "google/gemini-2.5-flash")
+        from backend.llm_model_manager import resolve_provider_model
+        model = resolve_provider_model(os.getenv("LLM_MODEL", "google/gemini-2.5-flash"), api_base)
         
         if not api_key:
             return self._heuristic_extractor(text)

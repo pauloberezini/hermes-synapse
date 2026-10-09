@@ -39,8 +39,13 @@ def get_agent_model(agent_role: str, fallback_model: str) -> str:
     return fallback_model
 
 
-async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> str:
+async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str, session_id: Optional[str] = None) -> str:
+    from backend.governance import BudgetGuard, LLM_CALL_ESTIMATE_USD, budget_session
+    BudgetGuard.check(session_id or budget_session.get(), LLM_CALL_ESTIMATE_USD)
+
     api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
+    from backend.llm_model_manager import resolve_provider_model
+    model = resolve_provider_model(model, api_base) or model
     is_openmodel = "openmodel.ai" in api_base
     
     headers = {
@@ -71,6 +76,7 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
         "google/gemini-2.5-pro",
         "deepseek/deepseek-chat",
     ]:
+        m = resolve_provider_model(m, api_base) if m else m
         if m and m.strip() and m not in fallback_candidates:
             fallback_candidates.append(m)
 
@@ -137,7 +143,8 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
                 if response.status_code in (429, 502, 503, 504, 408):
                     last_err = Exception(f"LLM API error {response.status_code}: {response.text}")
                     current_m = payload.get("model")
-                    if response.status_code == 429 or "rate-limit" in response.text.lower():
+                    is_rate_limit = response.status_code == 429 or "rate-limit" in response.text.lower()
+                    if is_rate_limit:
                         retry_after = response.headers.get("retry-after")
                         if retry_after and attempt == 0:
                             try:
@@ -155,23 +162,29 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str) -> 
                                 pass
                         mark_model_rate_limited(current_m, cooldown_secs)
 
-                    if attempt >= 1 or current_m != model:
-                        attempted_models.add(current_m)
+                    attempted_models.add(current_m)
+                    next_model = None
+                    if is_rate_limit or attempt >= 1 or current_m != model:
                         next_model = next((m for m in fallback_candidates if m not in attempted_models and not is_model_rate_limited(m)), None)
                         if not next_model:
                             next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
-                        if next_model:
-                            logger.info(
-                                f"call_llm model '{current_m}' transient error ({response.status_code}). Falling back to model '{next_model}'..."
-                            )
-                            payload["model"] = next_model
-                            actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
-                            await asyncio.sleep(0.5)
-                            continue
-                    else:
-                        logger.warning(
-                            f"call_llm transient HTTP {response.status_code} (attempt {attempt+1}/{max_retries}): {response.text[:200]}"
+                    if next_model:
+                        logger.info(
+                            f"call_llm model '{current_m}' transient error ({response.status_code}). Falling back to model '{next_model}'..."
                         )
+                        payload["model"] = next_model
+                        actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                        await asyncio.sleep(0.5)
+                        continue
+                    else:
+                        if attempt < max_retries - 1 and not is_rate_limit:
+                            logger.info(
+                                f"call_llm transient HTTP {response.status_code} (attempt {attempt+1}/{max_retries}): {response.text[:200]}"
+                            )
+                        else:
+                            logger.warning(
+                                f"call_llm transient HTTP {response.status_code} (attempt {attempt+1}/{max_retries}): {response.text[:200]}"
+                            )
 
                     if attempt == max_retries - 1:
                         raise last_err

@@ -316,7 +316,7 @@ def get_note_text_by_path(note_path: str) -> Optional[str]:
         return None
 
 def raw_index_vector(doc_id: Any, vector: List[float], payload: Dict[str, Any], collection_name: str) -> bool:
-    """Index a raw vector directly to Qdrant (used by BCM trading memory)."""
+    """Index a raw vector directly to Qdrant."""
     try:
         client = get_qdrant_client()
         point_id = doc_id

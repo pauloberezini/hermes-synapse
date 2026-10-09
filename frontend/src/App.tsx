@@ -108,7 +108,7 @@ export default function App() {
   const [authStatus, setAuthStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'error' | 'success'>('idle');
   const [authError, setAuthError] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: 'Greetings, Sir. Connection to the Synapse network is complete. Awaiting your instructions.' }
+    { role: 'assistant', content: 'Greetings. Connection to the Synapse network is complete. Awaiting your instructions.' }
   ]);
   const [logs, setLogs] = useState<DecisionLog[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
@@ -740,7 +740,7 @@ export default function App() {
             }
             if (timerSoundEnabled) {
               playAlarmSound();
-              speakText(`Sir, the timer "${data.timer.label}" is complete.`);
+              speakText(`The timer "${data.timer.label}" is complete.`);
             }
           } else if (data.type === 'alarm_fired') {
             setTimers((prev) => {
@@ -760,7 +760,7 @@ export default function App() {
             }
             if (timerSoundEnabled) {
               playAlarmSound();
-              speakText(`Sir, the alarm "${data.alarm.label}" has gone off.`);
+              speakText(`The alarm "${data.alarm.label}" has gone off.`);
             }
 
           } else if (data.type === 'reminder_fired') {
@@ -958,17 +958,17 @@ export default function App() {
           setMessages(data);
         } else {
           if (chatId === 'dashboard') {
-            setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Synapse network is complete. Awaiting your instructions.' }]);
+            setMessages([{ role: 'assistant', content: 'Greetings. Connection to the Synapse network is complete. Awaiting your instructions.' }]);
           } else {
             const agent = listToSearch.find((a: any) => a.id === chatId);
             if (chatId.startsWith('chat_')) {
-              setMessages([{ role: 'assistant', content: 'Conversation initialized, Sir. How can I assist you today?' }]);
+              setMessages([{ role: 'assistant', content: 'Conversation initialized. How can I assist you today?' }]);
             } else if (chatId.startsWith('task_')) {
               const label = getSessionLabel(chatId);
               const displayTitle = (label && label !== chatId) ? label : 'Scheduled Automation Task';
-              setMessages([{ role: 'assistant', content: `Scheduled task session "${displayTitle}" initialized, Sir. Ready for work.` }]);
+              setMessages([{ role: 'assistant', content: `Scheduled task session "${displayTitle}" initialized. Ready for work.` }]);
             } else {
-              setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || getSessionLabel(chatId)}" initialized, Sir. Ready for work.` }]);
+              setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || getSessionLabel(chatId)}" initialized. Ready for work.` }]);
             }
           }
         }
@@ -1265,7 +1265,7 @@ export default function App() {
       if (res.ok) {
         setNoteTitle('');
         setNoteContent('');
-        alert('Document indexed, Sir.');
+        alert('Document indexed.');
         fetchDocuments();
       } else {
         alert('Index error.');
@@ -1430,7 +1430,7 @@ export default function App() {
   };
 
   const handleClearChat = async () => {
-    if (!window.confirm('Sir, are you sure you want to completely clear the history of this session?')) return;
+    if (!window.confirm('Are you sure you want to completely clear the history of this session?')) return;
     
     setMessages([]);
     try {
@@ -1440,10 +1440,10 @@ export default function App() {
       if (res.ok) {
         fetchChatSessions();
         if (currentChatId === 'dashboard') {
-          setMessages([{ role: 'assistant', content: 'Greetings, Sir. Connection to the Synapse network is complete. Awaiting your instructions.' }]);
+          setMessages([{ role: 'assistant', content: 'Greetings. Connection to the Synapse network is complete. Awaiting your instructions.' }]);
         } else {
           const agent = subagents.find((a: any) => a.id === currentChatId);
-          setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || currentChatId}" cleared, Sir. Ready for work.` }]);
+          setMessages([{ role: 'assistant', content: `Sub-agent session "${agent?.name || currentChatId}" cleared. Ready for work.` }]);
         }
       }
     } catch(e) {
@@ -1466,7 +1466,7 @@ export default function App() {
       if (response.ok) {
         const data = await response.json();
         setConfig(data.config);
-        alert('System configuration updated, Sir.');
+        alert('System configuration updated.');
       } else {
         alert('Error updating configuration.');
       }
@@ -1498,7 +1498,7 @@ export default function App() {
           </div>
 
           <div className="cyber-description">
-            Sir, identity confirmation is required to access the management console.
+            Identity confirmation is required to access the management console.
           </div>
 
           {authStatus === 'idle' && (

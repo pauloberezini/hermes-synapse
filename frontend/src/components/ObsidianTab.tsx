@@ -59,7 +59,7 @@ export function ObsidianTab({ authToken }: ObsidianTabProps) {
   };
 
   const handleDeleteNote = async (notePath: string) => {
-    if (!window.confirm(`Sir, are you sure you want to delete the note "${notePath}"?`)) return;
+    if (!window.confirm(`Are you sure you want to delete the note "${notePath}"?`)) return;
     try {
       const r = await fetch(`/api/obsidian/note?path=${encodeURIComponent(notePath)}`, {
         method: 'DELETE',

@@ -19,7 +19,7 @@ fi
 
 # Only files git would track (respects .gitignore: no .env, DBs, venvs, node_modules),
 # minus the private tree.
-PRIVATE_PATHS='^(backend/bcm/|backend/openapi/|scripts/ctrader_lookup\.py$|docs/specs/bcm-|docs/specs/plugin-boundary-plan\.md$|\.cursor/|[^/]*_TRADE_AUDIT_[^/]*\.md$)'
+PRIVATE_PATHS='^(backend/bcm/|\.github/workflows/private-ci\.yml$|backend/openapi/|scripts/ctrader_lookup\.py$|docs/specs/bcm-|docs/specs/plugin-boundary-plan\.md$|\.cursor/|[^/]*_TRADE_AUDIT_[^/]*\.md$)'
 FILES="$(mktemp)"
 git -C "$SRC" ls-files -co --exclude-standard | grep -vE "$PRIVATE_PATHS" > "$FILES"
 
@@ -34,13 +34,14 @@ if [ -f "$DEST/docker-compose.yml" ]; then
 fi
 
 # Leak gate: private imports / env keys / broker names abort the publish.
-if leaks=$(grep -rIl -E 'backend\.bcm|from bcm|BCM_[A-Z]|CTRADER_[A-Z]|[Pp]epperstone' "$DEST" --exclude-dir=.git --exclude-dir=node_modules --exclude=export_oss.sh); then
+leaks=$(grep -rIl -E 'backend\.bcm|from bcm|BCM_[A-Z]|CTRADER_[A-Z]|[Pp]epperstone' "$DEST" --exclude-dir=.git --exclude-dir=node_modules --exclude=export_oss.sh || true)
+if [ -n "$leaks" ]; then
     echo "LEAK: private references found in export:" >&2
     echo "$leaks" >&2
     exit 1
 fi
 # Coupling smell (tool names hardcoded in core) is reported, not blocking. Track it down to zero.
-smell=$(grep -rIoiE '\b(bcm_|ctrader_)[a-z_]+' "$DEST/backend" --include='*.py' --exclude-dir=tests | wc -l | tr -d ' ')
+smell=$({ grep -rIoiE '\b(bcm_|ctrader_)[a-z_]+' "$DEST/backend" --include='*.py' --exclude-dir=tests || true; } | wc -l | tr -d ' ')
 echo "Coupling smell: $smell hardcoded plugin tool-name references in backend/*.py (target: 0)."
 
 cd "$DEST"

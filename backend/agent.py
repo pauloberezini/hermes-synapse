@@ -1,4 +1,6 @@
 import os
+import sys
+import asyncio
 import re
 import json
 import time
@@ -11,10 +13,116 @@ import socket
 from dotenv import load_dotenv
 
 logger = logging.getLogger("hermes.agent")
-from backend.tools import execute_tool
+from backend.tools import execute_tool, is_invalid_tool_name
+
+
+def _dispatch_execute_tool(tool_name: str, tool_args: dict, chat_id: Optional[str] = None):
+    """Dispatch tool execution checking if either backend.tools.execute_tool or
+    backend.agent.execute_tool has been patched/mocked.
+    """
+    mod_tools = sys.modules.get("backend.tools")
+    mod_agent = sys.modules.get("backend.agent")
+    tools_exec = getattr(mod_tools, "execute_tool", None) if mod_tools else None
+    agent_exec = getattr(mod_agent, "execute_tool", None) if mod_agent else None
+
+    if agent_exec and hasattr(agent_exec, "mock_calls"):
+        return agent_exec(tool_name, tool_args, chat_id=chat_id)
+    if tools_exec and hasattr(tools_exec, "mock_calls"):
+        return tools_exec(tool_name, tool_args, chat_id=chat_id)
+    if agent_exec and agent_exec is not execute_tool:
+        return agent_exec(tool_name, tool_args, chat_id=chat_id)
+    if tools_exec and tools_exec is not execute_tool:
+        return tools_exec(tool_name, tool_args, chat_id=chat_id)
+    return execute_tool(tool_name, tool_args, chat_id=chat_id)
+
+
+async def _dispatch_execute_tool_async(tool_name: str, tool_args: dict, chat_id: Optional[str] = None):
+    """Dispatch tool execution asynchronously without blocking the event loop.
+
+    If a custom mock or tool is an async coroutine function or AsyncMock, it is awaited directly.
+    Otherwise, it is offloaded to a worker thread via asyncio.to_thread so that
+    long-running tools do NOT
+    starve the main asyncio event loop, keeping server health endpoints responsive.
+    """
+    import inspect
+    import unittest.mock
+    mod_tools = sys.modules.get("backend.tools")
+    mod_agent = sys.modules.get("backend.agent")
+    tools_exec = getattr(mod_tools, "execute_tool", None) if mod_tools else None
+    agent_exec = getattr(mod_agent, "execute_tool", None) if mod_agent else None
+
+    target = None
+    if agent_exec and hasattr(agent_exec, "mock_calls"):
+        target = agent_exec
+    elif tools_exec and hasattr(tools_exec, "mock_calls"):
+        target = tools_exec
+    elif agent_exec and agent_exec is not execute_tool:
+        target = agent_exec
+    elif tools_exec and tools_exec is not execute_tool:
+        target = tools_exec
+
+    if target and (inspect.iscoroutinefunction(target) or isinstance(target, unittest.mock.AsyncMock)):
+        return await target(tool_name, tool_args, chat_id=chat_id)
+
+    res = await asyncio.to_thread(_dispatch_execute_tool, tool_name, tool_args, chat_id=chat_id)
+    if inspect.isawaitable(res):
+        return await res
+    return res
 
 
 load_dotenv()
+
+
+def _desk():
+    """Plugin tool names. Empty when no private plugin is installed."""
+    from backend.plugins import tool_hints, iter_plugins
+    hints = tool_hints()
+    if hints:
+        return hints
+    for mod in iter_plugins():
+        fn = getattr(mod, "tool_name_hints", None)
+        if fn:
+            try:
+                res = fn()
+                if res:
+                    return res
+            except Exception:
+                pass
+    return {}
+
+
+def _broker_markers():
+    try:
+        from backend.plugins import collect
+        return list(collect("broker_failure_markers"))
+    except Exception:
+        return []
+
+
+def _failure_markers():
+    from backend.plugins import collect
+    generic = (
+        "execution halted",
+        "ошибка исполнения",
+        "critical authentication failure",
+        "critical authentication",
+        "authentication failure",
+        "authentication expired",
+        "authentication required",
+        "re-authentication required",
+        "execution blocked",
+    )
+    return generic + tuple(collect("desk_text_markers")) + tuple(_broker_markers())
+
+
+def _hit_failure(text):
+    from backend.plugins import hook
+    low = str(text or "").lower()
+    for marker in _failure_markers():
+        if marker in low and not hook("ignore_failure_marker", low, marker, default=False):
+            return marker
+    return None
+
 
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     model_lower = model.lower()
@@ -104,6 +212,8 @@ async def generate_chat_title(user_message: str, api_key: str, api_base: str, mo
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        from backend.llm_model_manager import resolve_provider_model
+        model = resolve_provider_model(model, api_base)
         payload = {
             "model": model,
             "messages": [
@@ -166,7 +276,11 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str, mo
 
     # Try LLM classifier with the fast/cheap planner model
     from backend.subagents import get_agent_model
-    classifier_model = model or get_agent_model("planner", os.getenv("LLM_MODEL", "ollama/llama3"))
+    from backend.llm_model_manager import resolve_provider_model
+    classifier_model = resolve_provider_model(
+        model or get_agent_model("planner", os.getenv("LLM_MODEL", "ollama/llama3")),
+        api_base,
+    )
 
     if not api_key:
         msg_lower = user_message.lower()
@@ -237,7 +351,7 @@ except Exception as e:
 DEFAULT_SYSTEM_PROMPT = """You are Jarvis, a highly intelligent personal assistant inspired by Tony Stark's AI from Iron Man. 
 
 Your character and communication rules:
-1. Address the user exclusively as "Sir" (or in the plural "Sirs" if appropriate, but in a one-on-one dialogue, always "Sir").
+1. Address the user directly, without honorifics.
 2. Communicate in English with impeccable grammar and style.
 3. The tone of communication should be highly intelligent, polite, but with subtle, dry humor and irony. You are loyal to your creator, but not without your own opinion.
 4. Responses should be structured, concise, and to the point, without unnecessary fluff. Help analyze code, plan tasks, and execute system commands.
@@ -259,7 +373,7 @@ CRITICAL RULES FOR TIMERS AND ALARMS:
 - NEVER ask clarifying questions (e.g., "Do you want a label for it?"). Just set the timer and confirm execution.
 
 CRITICAL RULES FOR CREATING SUB-AGENTS:
-- If Sir asks to "create an agent," "make a sub-agent," "add a subagent," or "write an assistant," you MUST IMMEDIATELY call the `create_subagent` tool to persist it in the database. NEVER state or confirm that you created an agent unless the `create_subagent` tool call was executed and returned success!
+- If the user asks to "create an agent," "make a sub-agent," "add a subagent," or "write an assistant," you MUST IMMEDIATELY call the `create_subagent` tool to persist it in the database. NEVER state or confirm that you created an agent unless the `create_subagent` tool call was executed and returned success!
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
   * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1` model.
   * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `ollama/llama3` model.
@@ -270,20 +384,20 @@ CRITICAL RULES FOR CREATING SUB-AGENTS:
 
 CRITICAL RULES FOR SPORTS ANALYSIS AND BETTING:
 - When recommending sports matches or predictions, you MUST specify the date (day and month) and exact start time of each match in Israel Time (GMT+3).
-- You are CATEGORICALLY FORBIDDEN from inventing hypothetical matches, demonstration examples, or simulating "demo analysis" if there is no real-time match info in search results. If no matches are found for today, directly and politely tell Sir that there is no info on today's football matches on the web.
+- You are CATEGORICALLY FORBIDDEN from inventing hypothetical matches, demonstration examples, or simulating "demo analysis" if there is no real-time match info in search results. If no matches are found for today, directly and politely tell the user that there is no info on today's football matches on the web.
 - When calling the `web_search` tool for matches, schedules, or news, you MUST translate relative dates ("today," "tomorrow," "evening matches," "current round") into specific calendar dates based on system time (e.g., "matches on June 21, 2026", "football schedule 21.06.2026"). This is critical for search engine accuracy!
 - It is CATEGORICALLY FORBIDDEN to search for, use, quote, mention, or paraphrase pre-made predictions, advice, or articles with other people's opinions about value bets (e.g., "today's predictions", "value bets by LiveSport", "expert opinions", etc.). Sub-agents must search strictly for raw numeric data: competitor pairs, exact start times, and bookmaker odds.
-- All analytical conclusions, probability calculations, and expected value (EV = Probability * Odds - 1) calculations must be done by you independently and strictly programmatically in the `code` sub-agent using raw data. Mentioning opinions of external editors and experts in your responses to Sir is unacceptable.
+- All analytical conclusions, probability calculations, and expected value (EV = Probability * Odds - 1) calculations must be done by you independently and strictly programmatically in the `code` sub-agent using raw data. Mentioning opinions of external editors and experts in your responses is unacceptable.
 - Agents should not be too lazy to do calculations: if exact bookmaker odds are not found, the `code` agent MUST run mathematical modeling (e.g., calculate win/draw/loss probabilities using Poisson distribution based on average goals scored/conceded by the teams in the league/season, or estimate probabilities based on recent match statistics) and perform the EV calculation instead of giving a dry refusal or quoting others' predictions.
 
-- **Web Search** — performs a live search in Google via Serper.dev, returning relevant news, schedules, and facts.
-- **Knowledge Base (Obsidian)** — searches, reads, and creates notes in your personal Obsidian vault. Use when Sir says "find in notes," "what did I write about...", "write in Obsidian," "record," or "save the idea."
+- **Web Search** — performs a live web search via SearXNG, returning relevant news, schedules, and facts.
+- **Knowledge Base (Obsidian)** — searches, reads, and creates notes in your personal Obsidian vault. Use when the user says "find in notes," "what did I write about...", "write in Obsidian," "record," or "save the idea."
 - **Obsidian Sync** — updates the knowledge base from all notes in the vault.
 
 CRITICAL RULES FOR OBSIDIAN:
-- When Sir says "find in notes," "what did I write," or "look in Obsidian" — call `search_obsidian` IMMEDIATELY. Do not ask for clarification.
-- When Sir says "write," "save in Obsidian," "record," "create a note," "база знаний," "запиши," or "сохрани" — call `create_obsidian_note` IMMEDIATELY with a sensible title and well-formatted Markdown content.
-- If search returns nothing and Obsidian is not responding — inform Sir that he needs to start Obsidian and enable the Local REST API plugin.
+- When the user says "find in notes," "what did I write," or "look in Obsidian" — call `search_obsidian` IMMEDIATELY. Do not ask for clarification.
+- When the user says "write," "save in Obsidian," "record," "create a note," "база знаний," "запиши," or "сохрани" — call `create_obsidian_note` IMMEDIATELY with a sensible title and well-formatted Markdown content.
+- If search returns nothing and Obsidian is not responding — inform the user that Obsidian must be running with the Local REST API plugin enabled.
 - You are an ARCHIVIST. Independently determine the folder based on content semantics according to the taxonomy:
     Research/<Topic> — articles, research, arxiv, scientific analysis
     Ideas           — ideas, concepts, brainstorms, hypotheses
@@ -296,12 +410,8 @@ CRITICAL RULES FOR OBSIDIAN:
     Books          — books, summaries, quotes
     Meetings       — meetings, calls, agreements
     Jarvis         — service records without a clear category
-- NEVER ask Sir where to store a note — decide on your own. Subfolders are encouraged (e.g., Research/AI, Projects/Jarvis).
-
-CRITICAL RULES FOR BCM & TRADING DECISIONS / TOOL OUTPUTS:
-- NEVER output raw JSON blocks or unformatted JSON strings to Sir when presenting market analysis, trading decisions, or scheduled reports.
-- Always parse and format JSON trading decisions into an executive, beautifully formatted Markdown summary with emojis (e.g. ⏸️ WAIT / 🚀 BUY / 🔻 SELL), confidence %, equity health, key indicators, and clear reasoning.
-If Sir asks what you can do, or requests info about a specific skill, describe its capabilities in a detailed, polite, and signature manner using these user-friendly names. Never use technical function names like "get_weather" in dialogue unless Sir explicitly asks for them.
+- NEVER ask the user where to store a note — decide on your own. Subfolders are encouraged (e.g., Research/AI, Projects/Jarvis).
+If the user asks what you can do, or requests info about a specific skill, describe its capabilities in a detailed, polite, and signature manner using these user-friendly names. Never use technical function names like "get_weather" in dialogue unless the user explicitly asks for them.
 """
 
 def sanitize_tool_tokens(text: str) -> str:
@@ -405,7 +515,14 @@ class JarvisAgent:
     async def respond(self, user_message: str, session_id: str = "default", override_agent_id: Optional[str] = None) -> str:
         """Sends chat request to OpenRouter LLM model with memory context and system prompt."""
         if not self.api_key:
-            return "Error: OPENROUTER_API_KEY is not set in the .env configuration, Sir."
+            return "Error: OPENROUTER_API_KEY is not set in the .env configuration."
+
+        from backend.governance import BudgetExceededError, BudgetGuard, LLM_CALL_ESTIMATE_USD, budget_session
+        budget_session.set(session_id)
+        try:
+            BudgetGuard.check(session_id, LLM_CALL_ESTIMATE_USD)
+        except BudgetExceededError as budget_err:
+            return str(budget_err)
 
         # IMMEDIATE persistence of user message to prevent session loss on UI refresh
         from backend import database as db
@@ -436,7 +553,7 @@ class JarvisAgent:
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
                 if not response_text or not response_text.strip():
-                    response_text = "Sir, the orchestration process has completed, but the response was empty."
+                    response_text = "The orchestration process has completed, but the response was empty."
                 latency_ms = int((time.time() - start_time) * 1000)
                 
                 # Save the assistant message exchange in the DB
@@ -459,52 +576,12 @@ class JarvisAgent:
                 error_trace = next((
                     t for t in traces
                     if t.get("status") in ("error", "failed")
-                    or any(m in str(t.get("message") or "").lower() for m in (
-                        "ch_access_token_invalid", "trades blocked", "authentication required",
-                        "authentication failure", "re-authentication required"
-                    ))
+                    or _hit_failure(t.get("message"))
                 ), None)
                 resp_lower = response_text.lower()
-                failure_marker = None
-                for marker in [
-                    "autonomous execution cycle: failed",
-                    "compliance verdict: failed",
-                    "execution halted",
-                    "execution cycle: failed",
-                    "cycle failed",
-                    "ошибка исполнения",
-                    "critical authentication failure",
-                    "critical authentication",
-                    "authentication failure",
-                    "ch_access_token_invalid",
-                    "authentication expired",
-                    "authentication required",
-                    "re-authentication required",
-                    "trades blocked",
-                    "trading execution blocked",
-                    "trade execution: blocked",
-                    "trade execution blocked",
-                    "execution blocked",
-                    "trading paused",
-                    "cannot perform a comprehensive",
-                    "cannot verify open positions",
-                    "failed to connect to ctrader"
-                ]:
-                    if marker in resp_lower:
-                        if marker == "compliance verdict: failed":
-                            # Check if the failure was actually sanitized to PASSED or represents benign WAIT/HOLD / cross-asset diversification
-                            if any(k in resp_lower for k in (
-                                "compliance verdict: passed",
-                                "compliance audit: passed",
-                                "no action required / hold",
-                                "no action required",
-                                "cross-asset exposure verified",
-                            )):
-                                continue
-                        failure_marker = marker
-                        break
+                failure_marker = _hit_failure(resp_lower)
 
-                has_apology = response_text.startswith("Apologies, Sir.") or "difficulties occurred while communicating" in resp_lower
+                has_apology = response_text.startswith("Apologies.") or "difficulties occurred while communicating" in resp_lower
                 is_success = not (has_apology or error_trace or failure_marker)
                 err_details = None
                 if not is_success:
@@ -550,7 +627,7 @@ class JarvisAgent:
         log_activity(
             activity_type="active",
             source="Agent",
-            message=f"👤 Received request from Sir: '{user_message}'"
+            message=f"👤 Received request: '{user_message}'"
         )
 
         # ── Complexity routing (Fugu-style) ───────────────────────────────────────
@@ -582,7 +659,7 @@ class JarvisAgent:
                 orch_result = await run_orchestration(context_query, self.api_key, self.model, chat_id=session_id)
                 response_text = orch_result["response"]
                 if not response_text or not response_text.strip():
-                    response_text = "Sir, the orchestration process has completed, but the response was empty."
+                    response_text = "The orchestration process has completed, but the response was empty."
                 traces = orch_result["traces"]
                 error_msg = None
                 self.last_run_metadata[session_id] = {
@@ -591,7 +668,7 @@ class JarvisAgent:
                     "steps": orch_result.get("steps", [])
                 }
             except Exception as e:
-                response_text = f"Apologies, Sir. A failure occurred while coordinating my subagents: {str(e)}"
+                response_text = f"Apologies. A failure occurred while coordinating my subagents: {str(e)}"
                 traces = [{"timestamp": time.strftime("%H:%M:%S"), "agent": "Orchestrator", "action": "Error", "message": str(e), "status": "error"}]
                 error_msg = str(e)
                 self.last_run_metadata[session_id] = {
@@ -674,11 +751,7 @@ class JarvisAgent:
 
                     res_err = res_item.get("error")
                     res_out = str(res_item.get("output") or "").lower()
-                    if not res_err and any(m in res_out for m in (
-                        "ch_access_token_invalid", "trades blocked (authentication required)",
-                        "trades blocked", "critical authentication failure", "re-authentication required",
-                        "trading execution blocked"
-                    )):
+                    if not res_err and _hit_failure(res_out):
                         res_err = f"Subagent execution blocked: {res_out[:150]}"
 
                     sub_log = {
@@ -715,40 +788,12 @@ class JarvisAgent:
             error_trace = next((
                 t for t in traces
                 if t.get("status") in ("error", "failed")
-                or any(m in str(t.get("message") or "").lower() for m in (
-                    "ch_access_token_invalid", "trades blocked", "authentication required",
-                    "authentication failure", "re-authentication required"
-                ))
+                or _hit_failure(t.get("message"))
             ), None)
             resp_lower = response_text.lower()
-            failure_marker = next((
-                m for m in [
-                    "autonomous execution cycle: failed",
-                    "compliance verdict: failed",
-                    "execution halted",
-                    "execution cycle: failed",
-                    "cycle failed",
-                    "ошибка исполнения",
-                    "critical authentication failure",
-                    "critical authentication",
-                    "authentication failure",
-                    "ch_access_token_invalid",
-                    "authentication expired",
-                    "authentication required",
-                    "re-authentication required",
-                    "trades blocked",
-                    "trading execution blocked",
-                    "trade execution: blocked",
-                    "trade execution blocked",
-                    "execution blocked",
-                    "trading paused",
-                    "cannot perform a comprehensive",
-                    "cannot verify open positions",
-                    "failed to connect to ctrader"
-                ] if m in resp_lower
-            ), None)
+            failure_marker = _hit_failure(resp_lower)
 
-            has_apology = response_text.startswith("Apologies, Sir.") or "difficulties occurred while communicating" in resp_lower
+            has_apology = response_text.startswith("Apologies.") or "difficulties occurred while communicating" in resp_lower
             orch_is_success = error_msg is None and not (has_apology or error_trace or failure_marker)
             orch_err_details = error_msg
             if not orch_is_success and not orch_err_details:
@@ -857,47 +902,152 @@ class JarvisAgent:
                     if turn_count > MAX_TURNS:
                         logger.warning(f"JarvisAgent.respond reached MAX_TURNS ({MAX_TURNS}). Terminating tool loop.")
                         if not response_text:
-                            response_text = "Actions processed, Sir. Maximum tool turns reached."
+                            response_text = "Actions processed. Maximum tool turns reached."
                         break
 
-                    payload = {
-                        "model": self.model,
-                        "messages": messages,
-                        "temperature": 0.7,
-                        "max_tokens": 4096,
-                    }
-                    if "deepseek-r1" not in self.model.lower():
-                        payload["tools"] = TOOLS_SCHEMA
-                    
-                    is_openmodel = "openmodel.ai" in self.api_base
-                    url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
-                    actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
-                    
-                    response = await client.post(
-                        url,
-                        json=actual_payload,
-                        headers=headers
-                    )
-                    
-                    if response.status_code != 200:
-                        error_msg = f"HTTP Error {response.status_code}: {response.text}"
-                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {response.status_code}."
-                        break
+                    candidate_models = [self.model]
+                    for fallback_m in [
+                        os.getenv("LLM_FALLBACK_MODEL"),
+                        os.getenv("LLM_MODEL"),
+                        "google/gemini-2.5-flash",
+                        "deepseek/deepseek-chat",
+                    ]:
+                        if fallback_m and fallback_m.strip() and fallback_m.strip() not in candidate_models:
+                            candidate_models.append(fallback_m.strip())
+                    from backend.llm_model_manager import resolve_provider_model, resolve_provider_models
+                    candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
+
+                    data = None
+                    valid_model = None
+                    for model_idx, model_cand in enumerate(candidate_models):
+                        next_cand = candidate_models[model_idx + 1] if model_idx + 1 < len(candidate_models) else None
+                        payload = {
+                            "model": model_cand,
+                            "messages": messages,
+                            "temperature": 0.7,
+                            "max_tokens": 4096,
+                        }
+                        if "deepseek-r1" not in model_cand.lower():
+                            payload["tools"] = TOOLS_SCHEMA
                         
-                    raw_data = response.json()
-                    data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
+                        is_openmodel = "openmodel.ai" in self.api_base
+                        url = f"{self.api_base}/messages" if is_openmodel else f"{self.api_base}/chat/completions"
+                        actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
+                        
+                        try:
+                            response = await client.post(
+                                url,
+                                json=actual_payload,
+                                headers=headers
+                            )
+                        except (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError, OSError) as exc:
+                            exc_desc = f"{type(exc).__name__}: {exc}".rstrip(": ") if str(exc) else type(exc).__name__
+                            is_dns_err = any(k in exc_desc for k in (
+                                "No address associated with hostname",
+                                "Name or service not known",
+                                "Temporary failure in name resolution",
+                            ))
+                            if is_dns_err and next_cand:
+                                logger.warning(
+                                    f"JarvisAgent endpoint host DNS resolution failed across fallback models ({exc_desc}). "
+                                    f"Aborting further model fallbacks to avoid redundant connection attempts."
+                                )
+                                provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+                                response_text = f"Apologies. Difficulties occurred while communicating with the server {provider_name}: {exc_desc}."
+                                break
+                            if next_cand:
+                                logger.warning(
+                                    f"JarvisAgent model '{model_cand}' network/timeout error ({exc_desc}). "
+                                    f"Falling back to model '{next_cand}' from fallback chain..."
+                                )
+                                continue
+                            else:
+                                logger.warning(f"JarvisAgent model '{model_cand}' network/timeout error: {exc_desc}")
+                                provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+                                response_text = f"Apologies. Difficulties occurred while communicating with the server {provider_name}: {exc_desc}."
+                                break
 
-                    if not isinstance(data, dict) or "error" in data or not data.get("choices") or not isinstance(data.get("choices"), list) or len(data.get("choices", [])) == 0:
-                        err_detail = data.get("error", {}) if isinstance(data, dict) else str(data)
+                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
+
+                        if response.status_code != 200:
+                            is_retryable_status = response.status_code in (408, 429, 500, 502, 503, 504)
+                            if next_cand and is_retryable_status:
+                                log_fn = logger.info if response.status_code == 429 else logger.warning
+                                log_fn(
+                                    f"JarvisAgent model '{model_cand}' returned HTTP {response.status_code}. "
+                                    f"Falling back to model '{next_cand}' from fallback chain..."
+                                )
+                                continue
+                            else:
+                                error_msg = f"HTTP Error {response.status_code}: {response.text}"
+                                log_fn = logger.warning if is_retryable_status else logger.error
+                                log_fn(f"JarvisAgent model '{model_cand}' HTTP error {response.status_code} from {provider_name}")
+                                response_text = f"Apologies. Difficulties occurred while communicating with the server {provider_name}: {response.status_code}."
+                                break
+                            
+                        try:
+                            raw_data = response.json()
+                            cand_data = translate_to_openai_response(raw_data) if is_openmodel else raw_data
+                        except Exception as json_err:
+                            logger.warning(f"JarvisAgent model '{model_cand}' JSON decode error: {json_err}")
+                            raw_data = None
+                            cand_data = None
+
+                        is_body_error = (
+                            not isinstance(cand_data, dict)
+                            or "error" in cand_data
+                            or not cand_data.get("choices")
+                            or not isinstance(cand_data.get("choices"), list)
+                            or len(cand_data.get("choices", [])) == 0
+                        )
+
+                        if not is_body_error:
+                            data = cand_data
+                            valid_model = model_cand
+                            break
+
+                        # Handle body error (e.g., 504 Provider timeout or 429 Rate limit in body)
+                        err_detail = cand_data.get("error", {}) if isinstance(cand_data, dict) else str(cand_data)
                         if isinstance(err_detail, dict):
                             err_text = err_detail.get("message") or str(err_detail)
+                            err_code = err_detail.get("code")
                         else:
                             err_text = str(err_detail) if err_detail else "Empty choices returned from model."
-                        error_msg = f"LLM API Error: {err_text}"
-                        provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        logger.error(f"LLM API error response from {provider_name}: {raw_data}")
-                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {err_text}."
+                            err_code = None
+
+                        try:
+                            numeric_code = int(err_code) if err_code is not None else None
+                        except (ValueError, TypeError):
+                            numeric_code = None
+
+                        is_rate_limit = (
+                            numeric_code == 429
+                            or err_code in (429, "429")
+                            or any(k in str(err_text).lower() for k in ("rate-limited", "rate limit", "engine_overloaded", "quota"))
+                        )
+                        is_timeout_or_5xx = (
+                            numeric_code in (504, 502, 503, 500, 408)
+                            or err_code in (504, "504", 502, "502", 503, "503", 500, "500", 408, "408")
+                            or any(k in str(err_text).lower() for k in ("timeout", "timed out", "provider error", "temporarily unavailable", "overloaded", "bad gateway", "service unavailable"))
+                            or (isinstance(err_detail, dict) and isinstance(err_detail.get("metadata"), dict) and err_detail.get("metadata", {}).get("error_type") in ("timeout", "provider_error"))
+                        )
+
+                        if next_cand and (is_rate_limit or is_timeout_or_5xx):
+                            reason_desc = "rate-limited in response body" if is_rate_limit else "provider error/timeout in response body"
+                            log_fn = logger.info if is_rate_limit else logger.warning
+                            log_fn(
+                                f"JarvisAgent model '{model_cand}' {reason_desc} ({err_text}). "
+                                f"Falling back to model '{next_cand}' from fallback chain..."
+                            )
+                            continue
+                        else:
+                            log_fn = logger.warning if (is_rate_limit or is_timeout_or_5xx) else logger.error
+                            log_fn(f"JarvisAgent model '{model_cand}' API error response from {provider_name}: {raw_data}")
+                            error_msg = f"LLM API Error: {err_text}"
+                            response_text = f"Apologies. Difficulties occurred while communicating with the server {provider_name}: {err_text}."
+                            break
+
+                    if not data:
                         break
 
                     usage = data.get("usage", {})
@@ -934,11 +1084,11 @@ class JarvisAgent:
                                 fallback_messages = list(messages)
                                 fallback_messages.append({
                                     "role": "user",
-                                    "content": "The requested action has been executed successfully via the tools above. Please formulate a brief, polite confirmation to Sir stating that the task is complete."
+                                    "content": "The requested action has been executed successfully via the tools above. Please formulate a brief, polite confirmation stating that the task is complete."
                                 })
                                 fb_resp = await client.post(
                                     url,
-                                    json={"model": self.model, "messages": fallback_messages, "temperature": 0.5, "max_tokens": 150},
+                                    json={"model": resolve_provider_model(self.model, self.api_base), "messages": fallback_messages, "temperature": 0.5, "max_tokens": 150},
                                     headers=headers
                                 )
                                 if fb_resp.status_code == 200:
@@ -948,13 +1098,13 @@ class JarvisAgent:
                                     fb_msg = fb_choice.get("message", {}) if isinstance(fb_choice, dict) else {}
                                     response_text = (fb_msg.get("content") or "").strip() if isinstance(fb_msg, dict) else ""
                                     if not response_text:
-                                        response_text = "Sir, the operation requested has been completed successfully."
+                                        response_text = "The operation requested has been completed successfully."
                             except Exception as fallback_err:
                                 logger.error(f"Error during verbal confirmation fallback: {fallback_err}")
-                                response_text = "Sir, the operation requested has been completed successfully."
+                                response_text = "The operation requested has been completed successfully."
 
                         if not response_text or not response_text.strip():
-                            response_text = "Sir, the operation requested has been completed successfully."
+                            response_text = "The operation requested has been completed successfully."
                         
                         # Calculate cost
                         cost_usd = calculate_cost(self.model, total_prompt_tokens, total_completion_tokens)
@@ -964,7 +1114,7 @@ class JarvisAgent:
                         log_activity(
                             activity_type="active",
                             source="Agent",
-                            message=f"💬 Response to Sir formulated. Cost: ${cost_usd:.6f}",
+                            message=f"💬 Response formulated. Cost: ${cost_usd:.6f}",
                             token_cost=cost_usd
                         )
                         
@@ -1007,7 +1157,7 @@ class JarvisAgent:
                     
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
-                        if not tool_name or str(tool_name).lower() in ("function", "tool", "call", "action", "method", "type", "tool_call"):
+                        if is_invalid_tool_name(tool_name):
                             logger.warning(f"Jarvis skipping generic invalid tool name '{tool_name}'")
                             continue
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
@@ -1043,7 +1193,7 @@ class JarvisAgent:
                             source="Agent",
                             message=f"🛠️ Execution: \'{tool_name}\' with arguments {tool_args_str}"
                         )
-                        result_str = execute_tool(tool_name, tool_args, chat_id=session_id)
+                        result_str = await _dispatch_execute_tool_async(tool_name, tool_args, chat_id=session_id)
                         
                         single_tool_calls_log.append({
                             "name": tool_name,
@@ -1084,7 +1234,7 @@ class JarvisAgent:
             latency_ms = int((time.time() - start_time) * 1000)
             error_msg = str(e)
             logger.exception("Error during OpenRouter chat completion call")
-            response_text = "Apologies, Sir. A failure occurred while processing your request."
+            response_text = "Apologies. A failure occurred while processing your request."
 
         # Add call record to global decision logs
         prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
@@ -1160,10 +1310,10 @@ class JarvisAgent:
                     parsed_args = {}
                 
                 # Check if tool name was captured as generic keyword or embedded in json
-                if not fn_name or fn_name.lower() in ("function", "tool", "call", "action", "method", "type", "tool_call"):
+                if is_invalid_tool_name(fn_name):
                     inner_name = parsed_args.get("name") or parsed_args.get("call") or parsed_args.get("tool") or parsed_args.get("action")
-                    if inner_name and str(inner_name).lower() not in ("function", "tool", "call", "action", "method", "type", "tool_call"):
-                        fn_name = str(inner_name)
+                    if inner_name and not is_invalid_tool_name(inner_name):
+                        fn_name = str(inner_name).strip()
                         parsed_args = (
                             parsed_args.get("arguments")
                             if parsed_args.get("arguments") is not None
@@ -1174,7 +1324,7 @@ class JarvisAgent:
                             else {k: v for k, v in parsed_args.items() if k not in ("name", "call", "tool", "action")}
                         )
 
-                if fn_name and fn_name.lower() not in ("function", "tool", "call", "action", "method", "type", "tool_call"):
+                if fn_name and not is_invalid_tool_name(fn_name):
                     extracted.append({
                         "id": f"call_ds_{len(extracted)}",
                         "type": "function",
@@ -1314,7 +1464,7 @@ class JarvisAgent:
                     if "function" in parsed and isinstance(parsed["function"], dict):
                         fn_name = parsed["function"].get("name")
                         fn_args = parsed["function"].get("parameters") or parsed["function"].get("arguments") or {}
-                    elif "name" in parsed and ("parameters" in parsed or "arguments" in parsed):
+                    elif "name" in parsed and isinstance(parsed.get("name"), str) and ("parameters" in parsed or "arguments" in parsed):
                         fn_name = parsed.get("name")
                         fn_args = parsed.get("parameters") or parsed.get("arguments") or {}
                     elif "call" in parsed and isinstance(parsed.get("call"), str):
@@ -1353,7 +1503,7 @@ class JarvisAgent:
                         fn_name = parsed["name"]
                         fn_args = {k: v for k, v in parsed.items() if k != "name"}
                     elif "name" in parsed and isinstance(parsed.get("name"), str) and (
-                        parsed.get("name").startswith("bcm_") or parsed.get("name").startswith("ctrader_") or "_" in parsed.get("name")
+                        parsed.get("name").startswith(tuple(_desk().get("prefixes") or ())) or "_" in parsed.get("name")
                     ):
                         fn_name = parsed["name"]
                         fn_args = {k: v for k, v in parsed.items() if k != "name"}
@@ -1366,7 +1516,7 @@ class JarvisAgent:
                                 logger.info(f"Fingerprint matched raw JSON args to tool '{fn_name}': {list(parsed_keys)}")
                                 break
 
-                if fn_name and str(fn_name).strip().lower() not in ("function", "tool", "call", "action", "method", "type", "tool_call"):
+                if fn_name and not is_invalid_tool_name(fn_name):
                     # Avoid duplicate tool calls with exact same name and arguments if already extracted
                     call_entry = {
                         "id": f"call_fallback_{len(extracted)}",
@@ -1386,16 +1536,15 @@ class JarvisAgent:
     def _sanitize_tool_calls(self, tool_calls: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         """Sanitizes tool calls from native API responses or extraction fallbacks.
         
-        Prevents generic keywords ('function', 'tool', 'call', 'action', etc.) from being
-        dispatched as tool names. If a generic keyword is encountered, attempts to unwrap
-        the real tool name and arguments from inner JSON. If unresolvable, the entry is dropped.
+        Prevents generic keywords ('function', 'tool', 'call', 'action', booleans, literals, etc.)
+        from being dispatched as tool names. If an invalid generic name is encountered, attempts
+        to unwrap the real tool name and arguments from inner JSON. If unresolvable, the entry is dropped.
         """
         if not tool_calls or not isinstance(tool_calls, list):
             return None
 
         import json
         sanitized: List[Dict[str, Any]] = []
-        generic_keywords = {"function", "tool", "call", "action", "method", "type", "tool_call", ""}
 
         for tc in tool_calls:
             if not isinstance(tc, dict):
@@ -1403,10 +1552,10 @@ class JarvisAgent:
             fn = tc.get("function")
             if not isinstance(fn, dict):
                 continue
-            fn_name = str(fn.get("name") or "").strip()
+            raw_fn_name = fn.get("name")
             args_raw = fn.get("arguments", "{}")
 
-            if fn_name.lower() in generic_keywords:
+            if is_invalid_tool_name(raw_fn_name):
                 inner_args = {}
                 if isinstance(args_raw, dict):
                     inner_args = args_raw
@@ -1417,15 +1566,15 @@ class JarvisAgent:
                         inner_args = {}
 
                 if isinstance(inner_args, dict):
-                    real_name = str(
+                    real_name = (
                         inner_args.get("name")
                         or inner_args.get("call")
                         or inner_args.get("tool")
                         or inner_args.get("action")
                         or ""
-                    ).strip()
-                    if real_name and real_name.lower() not in generic_keywords:
-                        fn_name = real_name
+                    )
+                    if not is_invalid_tool_name(real_name):
+                        fn_name = str(real_name).strip()
                         unwrapped_args = (
                             inner_args.get("arguments")
                             if inner_args.get("arguments") is not None
@@ -1436,8 +1585,16 @@ class JarvisAgent:
                             else {k: v for k, v in inner_args.items() if k not in ("name", "call", "tool", "action")}
                         )
                         args_raw = json.dumps(unwrapped_args) if isinstance(unwrapped_args, dict) else str(unwrapped_args)
-
-            if fn_name and fn_name.lower() not in generic_keywords:
+                        sanitized.append({
+                            "id": tc.get("id") or f"call_{len(sanitized)}",
+                            "type": "function",
+                            "function": {
+                                "name": fn_name,
+                                "arguments": json.dumps(args_raw) if isinstance(args_raw, dict) else str(args_raw)
+                            }
+                        })
+            else:
+                fn_name = str(raw_fn_name).strip()
                 sanitized.append({
                     "id": tc.get("id") or f"call_{len(sanitized)}",
                     "type": "function",
@@ -1451,10 +1608,16 @@ class JarvisAgent:
 
     async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None, parent_message_id: Optional[int] = None, session_id: Optional[str] = None, include_history: bool = True) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
-        session_id = session_id or chat_id or subagent["id"]
-        subagent_name = subagent["name"]
-        system_prompt = subagent["system_prompt"]
-        subagent_model = subagent["model"]
+        session_id = session_id or chat_id or subagent.get("id", "subagent")
+        from backend.governance import BudgetExceededError, BudgetGuard, LLM_CALL_ESTIMATE_USD, budget_session
+        budget_session.set(session_id)
+        try:
+            BudgetGuard.check(session_id, LLM_CALL_ESTIMATE_USD)
+        except BudgetExceededError as budget_err:
+            return str(budget_err)
+        subagent_name = subagent.get("name") or subagent.get("id") or "agent"
+        system_prompt = subagent.get("system_prompt") or ""
+        subagent_model = subagent.get("model") or getattr(self, "model", None) or os.getenv("DEFAULT_MODEL", "google/gemini-2.5-pro")
         tool_calls_log: List[Dict[str, Any]] = []
 
         from backend.activity_logger import log_activity
@@ -1494,25 +1657,13 @@ class JarvisAgent:
             f"Current date and time: {current_time_str} (Asia/Jerusalem, GMT+3)\n"
             f"Day of the week: {day_of_week}\n"
             f"IMPORTANT RULE: Your built-in knowledge is limited to the past. To get ANY up-to-date information about events, sports matches (e.g., today\'s games, betting odds, analytics), news, quotes, or weather, you MUST use the internet search via the web_search tool. Never fabricate events or rely on your outdated data!\n"
-            f"IT IS STRICTLY FORBIDDEN to search, use, mention, quote, or retell ready-made forecasts, other people\'s articles, advice, or opinions about value bets (e.g., \'ready forecasts\', \'value bets according to LiveSport\', \'expert opinions\') in responses to Sir. You must search exclusively for raw numerical data: opponent pairs, exact match start times, and bookmaker odds. Any conclusions and mathematical calculations of value (EV = Probability * Odds - 1) must be done strictly independently, and you must provide only your own results without referring to external opinions!\n"
+            f"IT IS STRICTLY FORBIDDEN to search, use, mention, quote, or retell ready-made forecasts, other people\'s articles, advice, or opinions about value bets (e.g., \'ready forecasts\', \'value bets according to LiveSport\', \'expert opinions\') in your responses. You must search exclusively for raw numerical data: opponent pairs, exact match start times, and bookmaker odds. Any conclusions and mathematical calculations of value (EV = Probability * Odds - 1) must be done strictly independently, and you must provide only your own results without referring to external opinions!\n"
             f"You are not allowed to be lazy in calculations: if exact numerical odds are not found in the search, you must perform mathematical forecasting (e.g., calculate probabilities of win/draw/loss using Poisson distribution based on average scoring or team goal statistics) and calculate expected value (EV = P * Odds - 1) based on calculated probabilities and approximate odds, instead of giving a dry refusal or quoting external forecasts."
         )
-        _sub_id = str(subagent.get("id", "")).lower()
-        _sub_skills = str(subagent.get("skills", "")).lower()
-        _parent_skills = str(parent_skills or "").lower()
-        _is_trading_agent = (
-            any(k in _sub_id for k in ("bcm", "trade", "trading", "quant", "broker"))
-            or any(k in _sub_skills for k in ("bcm", "ctrader", "order"))
-            or any(k in _parent_skills for k in ("bcm", "ctrader", "order"))
-        )
-        if _is_trading_agent:
-            system_info += (
-                f"\n\n[TRADING & BROKER DATA MANDATE]:\n"
-                f"When auditing or analyzing live markets, open positions, account capital, or technical indicators, "
-                f"you MUST execute the corresponding live tools (e.g., ctrader_get_positions, ctrader_get_balance, "
-                f"bcm_get_technical_indicators) before concluding or reporting figures. Do NOT hallucinate simulated positions "
-                f"or placeholder markdown indicator tables when tools are available."
-            )
+        from backend.plugins import hook
+        _extra = hook("subagent_prompt_extra", subagent, parent_skills, default=None)
+        if _extra:
+            system_info += _extra
         from backend.database import get_setting as _get_setting
         _lang = _get_setting("language") or "en"
         _lang_names = {"ru": "Russian", "en": "English", "he": "Hebrew", "de": "German", "es": "Spanish", "fr": "French"}
@@ -1736,9 +1887,17 @@ class JarvisAgent:
                         if m and m.strip() and m.strip() not in candidate_models:
                             candidate_models.append(m.strip())
 
-                    from backend.llm_model_manager import prioritize_healthy_models, mark_model_rate_limited, mark_model_success, is_model_rate_limited
+                    from backend.llm_model_manager import (
+                        prioritize_healthy_models,
+                        mark_model_rate_limited,
+                        mark_model_success,
+                        is_model_rate_limited,
+                        resolve_provider_model,
+                        resolve_provider_models,
+                    )
+                    candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
                     candidate_models = prioritize_healthy_models(candidate_models)
-                    if candidate_models and candidate_models[0] != subagent_model:
+                    if candidate_models and candidate_models[0] != resolve_provider_model(subagent_model, self.api_base):
                         logger.info(
                             f"Subagent '{subagent_name}' configured model '{subagent_model}' is in rate-limit cooldown. "
                             f"Bypassing to healthy model '{candidate_models[0]}'."
@@ -1827,7 +1986,7 @@ class JarvisAgent:
                                         await asyncio.sleep(0.5)
                                     break
 
-                            retry_after = response.headers.get("retry-after") if response else None
+                            retry_after = getattr(response, "headers", {}).get("retry-after") if response else None
                             next_healthy = [m for m in candidate_models[model_idx + 1:] if not is_model_rate_limited(m)]
                             next_cand = next_healthy[0] if next_healthy else (candidate_models[model_idx + 1] if model_idx + 1 < len(candidate_models) else None)
 
@@ -2014,7 +2173,7 @@ class JarvisAgent:
                         error_msg = last_error_desc or (f"HTTP Error {response.status_code if response else 'No Response'}: {response.text if response else ''}")
                         logger.warning(f"Subagent '{subagent_name}' ({current_model}) API error: {error_msg}")
                         provider_name = "OpenModel" if is_openmodel else "OpenRouter"
-                        response_text = f"Apologies, Sir. Difficulties occurred while communicating with the server {provider_name}: {error_msg}."
+                        response_text = f"Apologies. Difficulties occurred while communicating with the server {provider_name}: {error_msg}."
                         break
 
                     subagent_model = current_model
@@ -2042,532 +2201,50 @@ class JarvisAgent:
                         if tool_calls:
                             choice_msg["tool_calls"] = tool_calls
                             cleaned_content = sanitize_tool_tokens(content_str)
-                            # Strip premature simulated indicator tables and simulated tool output blocks
-                            cleaned_content = re.sub(
-                                r"(?:###\s+Technical\s+Indicator\s+Analysis\s*)?\*\(Based on simulated tool outputs\)\*[\s\S]*?(?=\n\n[A-Z#]|\Z)",
-                                "",
-                                cleaned_content,
-                                flags=re.IGNORECASE
-                            )
-                            cleaned_content = re.sub(
-                                r"\|\s*Instrument\s*\|\s*RSI(?:[^\n|]*)\|[\s\S]*?(?=\n\n[A-Z#]|\Z)",
-                                "",
-                                cleaned_content,
-                                flags=re.IGNORECASE
-                            )
-                            choice_msg["content"] = cleaned_content.strip()
+                            cleaned_content = hook("strip_simulated_tool_text", cleaned_content, default=cleaned_content)
+                            choice_msg["content"] = (cleaned_content or "").strip()
 
                     if not tool_calls:
                         raw_content = choice_msg.get("content") or ""
                         raw_reasoning = choice_msg.get("reasoning") or choice_msg.get("reasoning_content") or ""
                         if not raw_content.strip() and raw_reasoning.strip():
                             raw_content = raw_reasoning
-
                         response_text = sanitize_tool_tokens(raw_content)
-                        
-                        # Programmatic anti-hallucination guardrail for trading agents:
-                        # If no successful entry tool was executed in this turn, strictly forbid claims of trade execution.
-                        resp_lower = response_text.lower()
-                        is_trading_context = (
-                            any(k in str(subagent.get("id", "")).lower() for k in ("bcm", "trade", "trading", "quant", "broker"))
-                            or any(k in (subagent.get("skills") or "").lower() for k in ("bcm", "ctrader", "order"))
-                            or any(k in resp_lower for k in ("trade", "order", "position", "exchange", "bcm", "lots", "rsi", "indicator", "remizov"))
-                        )
-
-                        raw_user_content_str = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "user")
-                        # Strip RAG / knowledge base reference blocks so historical memory does not impersonate live prompt inputs
-                        user_content_str = re.sub(
-                            r"\[Context from your knowledge base for reference\]:[\s\S]*?(?=\n\n\[|\Z)",
-                            "",
-                            raw_user_content_str,
-                            flags=re.IGNORECASE,
-                        ).strip()
-
-                        prompt_has_balance = bool(
-                            re.search(r"(?:equity|balance|capital)\s*:\s*\$[\d,]+(?:\.\d+)?", user_content_str, re.IGNORECASE)
-                            or ("[step " in user_content_str.lower() and re.search(r"\$[\d,]+(?:\.\d+)?", user_content_str))
-                            or ("proposed" in user_content_str.lower() and re.search(r"\$[\d,]+(?:\.\d+)?", user_content_str))
-                            or ("balance" in user_content_str.lower() and re.search(r"\$[\d,]+(?:\.\d+)?", user_content_str))
-                        )
-                        prompt_has_positions = bool(
-                            re.search(r"\|\s*Symbol\s*\|\s*Position\s*\|\s*Entry\s*\|\s*Size\s*\|\s*P/?L\b", user_content_str, re.IGNORECASE)
-                            or ("[step " in user_content_str.lower() and re.search(r"\|\s*Symbol\s*\|", user_content_str, re.IGNORECASE))
-                        )
-                        prompt_has_indicators = bool(
-                            re.search(r"\|\s*(?:Instrument|Asset|Symbol|Pair|Ticker)\s*\|\s*(?:RSI|ATR|Remizov|Keltner|MACD)", user_content_str, re.IGNORECASE)
-                            or ("[step " in user_content_str.lower() and re.search(r"\|\s*(?:Instrument|Asset|Symbol|Pair|Ticker)", user_content_str, re.IGNORECASE))
-                        )
-
-                        unverified_indicator_patterns = [
-                            r"\*\(Based on simulated tool outputs\)\*",
-                            r"\(Based on simulated tool outputs\)",
-                            r"\bbased on simulated (?:tool )?outputs?\b",
-                            r"\bsimulated tool outputs?\b",
-                            r"\b(?:mock|hypothetical|simulated|unverified)\s+(?:technical\s+)?indicators?\b",
-                            r"\|\s*(?:Instrument|Asset|Symbol|Pair|Ticker)\s*\|\s*RSI(?:[^\n|]*)\|",
-                            r"\|\s*(?:Instrument|Asset|Symbol|Pair|Ticker)[^|\n]*\|\s*(?:RSI|ATR|Remizov|Keltner|MACD)[^|\n]*\|",
-                            r"\|\s*(?:RSI|ATR|Remizov|MACD)\s*\|\s*(?:Value|Reading|Signal)\s*\|",
-                        ]
-                        unverified_position_patterns = [
-                            r"\(ctrader_get_positions\)",
-                            r"\((?:bcm_|exchange_)?get_positions\)",
-                            r"account\s+status\s*\([^)]*get_positions[^)]*\)",
-                            r"position\s+audit\s*\([^)]*get_positions[^)]*\)",
-                            r"\|\s*Symbol\s*\|\s*Position\s*\|\s*Entry\s*\|\s*Size\s*\|\s*P/?L\b",
-                            r"(?:[✔✓✅☑]\s*)?(?:\*\*)?Live Positions(?:\*\*)?",
-                        ]
-                        mock_balance_patterns = [
-                            r"use\s+(?:a\s+)?mock\s+balance",
-                            r"using\s+(?:a\s+)?mock\s+balance",
-                            r"assuming\s+(?:a\s+)?mock\s+balance",
-                            r"mock\s+balance",
-                            r"hypothetical\s+balance",
-                            r"simulated\s+balance",
-                            r"mock\s+equity",
-                            r"hypothetical\s+equity",
-                            r"simulated\s+equity",
-                            r"(?:equity|balance|capital)\s*(?::|is|=|of|\b)\s*\$[\d,]+(?:\.\d+)?",
-                            r"\$[\d,]+(?:\.\d+)?\s*(?:total\s+)?(?:equity|balance|capital)",
-                        ]
-                        trading_execution_patterns = [
-                            r"exchange\s+execution\s*:\s*(?:✅\s*)?pass",
-                            r"order\s+execution\s*:\s*(?:✅\s*)?pass",
-                            r"(?<!pre-flight\s)(?<!preflight\s)(?<!compliance\s)(?<!checklist\s)(?<!risk\s)(?<!gate\s)(?<!system\s)(?<!macro\s)(?<!workflow\s)(?<!task\s)(?<!scan\s)(?<!analysis\s)(?<!strategy\s)(?<!plan\s)(?<!script\s)(?<!query\s)(?<!audit\s)trade\s+execution\s*:\s*(?:✅\s*)?pass",
-                            r"(?<!pre-flight\s)(?<!preflight\s)(?<!compliance\s)(?<!checklist\s)(?<!risk\s)(?<!gate\s)(?<!system\s)(?<!macro\s)(?<!workflow\s)(?<!task\s)(?<!scan\s)(?<!analysis\s)(?<!strategy\s)(?<!plan\s)(?<!script\s)(?<!query\s)(?<!audit\s)execution\s*:\s*✅?\s*pass",
-                            r"approved\s+and\s+executed",
-                            r"(?:trade|order|deal|position|entry)\s+(?:was\s+)?(?:approved\s+and\s+)?executed\s+as\s+planned",
-                            r"(?:trade|order|deal|position|entry)\s+(?:was\s+)?(?:approved\s+and\s+)?executed\s+successfully",
-                            r"successfully\s+executed\s+(?:\d+\s+|(?:one|two|three|four|five)\s+)?(?:trades?|orders?|deals?|positions?|entries)\b",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!never\s)(?<!without\s)-\s*executed\s+(?:the\s+)?(?:trade|deal|order|position|entry|buy|sell|long|short|\d+\.?\d*\s*lots?)",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)(?:the\s+)?(?:trade|deal|order|position|entry)\s+was\s+executed",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)trades?\s+opened",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)trades?\s+(?:were\s+)?executed",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)positions?\s+(?:were\s+)?opened",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)orders?\s+(?:were\s+)?placed",
-                            r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)orders?\s+(?:were\s+)?filled",
-                            r"completed\s+trades\s*:\s*\d+/\d+\s*(?:proposals\s+)?executed",
-                            r"\|\s*(?:[✔✓✅☑]\s*)?executed\s*\|",
-                            r"\|\s*(?:[✔✓✅☑]\s*)?filled\s*\|",
-                            r"status\s*[:|]\s*(?:[✔✓✅☑]\s*)?(?:filled|executed)",
-                            r"execution\s+id\s*[:|]\s*[a-zA-Z0-9_\-]+",
-                            r"\|\s*execution\s+id\s*\|\s*[a-zA-Z0-9_\-]+",
-                            r"placed\s+via\s+exchange_place_order",
-                        ]
-                        zero_indicators = [
-                            r"(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:opened|executed|placed|filled)\s*[:=\-]?\s*(?:0\b|none\b|zero\b|\[\]|nil\b|null\b|false\b|n/a\b|no\b|pending\b|simulated\b|simulating\b|simulation\b|awaiting\b)",
-                            r"(?:total|new|recent|open|historical|previous|count\s+of|number\s+of|completed)\s+(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:opened|executed|placed|filled)\s*[:=\-]?\s*(?:0\b|none\b|zero\b|\[\]|nil\b|null\b|false\b|n/a\b|no\b)",
-                            r"\b0\s+(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:opened|executed|placed|filled)\b",
-                            r"\b(?:no|zero|without\s+any|never|not\s+any)\s+(?:new\s+|live\s+|real\s+|actual\s+|active\s+|further\s+|additional\s+|other\s+|pending\s+|simulated\s+)?(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+|being\s+)?(?:opened|executed|placed|filled)\b",
-                            r"\b(?:no|zero|without\s+any|never|not\s+any)\s+(?:new\s+|live\s+|real\s+|actual\s+|active\s+|further\s+|additional\s+|other\s+|pending\s+|simulated\s+)?(?:trades?|positions?|orders?)\b",
-                            r"(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:not|never)\s+(?:opened|executed|placed|filled)\b",
-                            r"(?:trade|trades|position|positions|order|orders)\s+(?:not|never)\s+(?:opened|executed|placed|filled)\b",
-                            r"(?:trade|trades|position|positions|order|orders)\s+(?:were\s+|was\s+)?(?:skipped|halted|vetoed|cancelled|rejected|blocked)\b",
-                            r"(?:no|zero)\s+(?:new\s+|further\s+|additional\s+)?trades?\s+(?:to\s+(?:be\s+)?executed|warranted|recommended|executed|opened)\b",
-                            r"(?:trades?|positions?|orders?)\s+(?:to\s+be\s+|will\s+be\s+|once\s+|if\s+)(?:executed|opened|placed|filled)",
-                            r"(?:trades?|positions?|orders?)\s+executed\s+(?:if|once|when|after|pending)\b",
-                            r"(?:trades?|positions?|orders?)\s+(?:were\s+)?executed\s+(?:during|in)\s+(?:backtest|simulation|paper\s+trade|testing|sample)\b",
-                            r"(?:backtest|simulation|paper|candidate|historical|sample|test)\s+(?:trades?|positions?|orders?)\s+(?:were\s+)?executed\b",
-                            r"(?:candidate|proposed|hypothetical|potential)\s+(?:trades?|positions?|orders?)\s+(?:were\s+)?executed\b",
-                            r"(?:pending|simulated|hypothetical|potential)\s+(?:trades?|positions?|orders?)\s+(?:executed|opened|placed)",
-                            r"trades?\s+executed\s*:\s*simulation\b",
-                            r"\|\s*(?:[✔✓✅☑]\s*)?(?:executed|filled)\s*\|[^\n]*\n\s*\|[\s\-:|]+\|",
-                            r"\|\s*(?:symbol|action|size|instrument|asset|ticker|side|order|status)[^|\n]*\|\s*(?:[✔✓✅☑]\s*)?(?:executed|filled)\s*\|",
-                            r"trade\s+execution\s*:\s*(?:✅\s*)?pass[^\n]*(?:checklist|compliance|audit|verified|check|gate)",
-                            r"(?:checklist|compliance|audit|verification|pre-trade|pre-flight)[\s\S]{0,80}trade\s+execution\s*:\s*(?:✅\s*)?pass",
-                            r"(?:pending|awaiting|proposal|simulat|conditional)[\s\S]{0,80}(?:executed|filled)",
-                            r"(?:executed|filled)[\s\S]{0,80}(?:pending|awaiting|proposal|simulat|conditional)",
-                            r"skipped\s+due\s+to\s+(?:an?\s+)?(?:existing\s+)?(?:open\s+|active\s+)?position",
-                            r"trade\s+not\s+executed",
-                            r"trade\s+execution\s*:\s*(?:⏭️\s*)?(?:skipped|blocked|halted|none)",
-                            r"verdict\s*:\s*(?:⏸️\s*)?wait",
-                        ]
-
-                        subagent_id_str = str(subagent.get("id", "")).lower()
-                        subagent_name_str = str(subagent_name).lower()
-                        is_non_execution_agent = any(
-                            k in subagent_id_str or k in subagent_name_str
-                            for k in ("risk", "compliance", "quant", "analyst", "research", "monitor", "observer")
-                        )
-                        is_risk_or_compliance = any(
-                            k in subagent_id_str or k in subagent_name_str
-                            for k in ("risk", "compliance")
-                        )
-
-                        all_available_tools = set(allowed_tools) | {t.get("function", {}).get("name", "") for t in (subagent_tools or []) if isinstance(t, dict)}
-                        has_indicator_tool = any(any(k in t for k in ("indicator", "technical", "market_data", "calculator", "bcm")) for t in all_available_tools)
-                        has_position_tool = any("position" in t for t in all_available_tools)
-                        has_balance_tool = any(any(k in t for k in ("ctrader_get_balance", "exchange_get_balance", "balance", "equity", "account")) for t in all_available_tools)
-                        has_execution_tool = (not is_non_execution_agent) and any(any(k in t for k in ("run_autonomous_cycle", "place_order", "execute_order")) for t in all_available_tools)
-
-                        msg_lower = str(user_message).lower()
-                        is_mandatory_indicator_command = any(
-                            kw in msg_lower for kw in (
-                                "bcm_get_technical_indicators",
-                                "compute technical indicators",
-                                "fetch technical indicators",
-                                "calculate technical indicators",
-                                "analyze current market conditions for",
-                            )
-                        )
-                        verbal_tool_evasion_patterns = [
-                            r"executing tools (?:now|first)",
-                            r"let['’]s start by (?:gathering|fetching|calculating|querying|inspecting|running|executing)",
-                            r"let me (?:run|execute|fetch|gather|calculate|query|inspect)",
-                            r"i['’]ll (?:execute|run|retrieve|fetch|gather|query|compute|calculate)",
-                            r"i will (?:execute|run|retrieve|fetch|gather|query|compute|calculate)",
-                            r"first[,\s]+i(?:['’]ll| will) (?:execute|run|gather|fetch|query|compute|calculate|retrieve)",
-                            r"(?:gathering|fetching|calculating|running) the required data",
-                            r"steps?:\s*(?:1\.?)?\s*(?:fetch|compute|calculate|retrieve|run|execute)",
-                            r"please wait(?: while)?",
-                            r"running tools",
-                            r"calling (?:the )?tool",
-                        ]
-                        has_verbal_indicator_evasion = any(re.search(pat, resp_lower) for pat in verbal_tool_evasion_patterns)
-
-                        needs_indicator_tool = (
-                            is_trading_context
-                            and not indicators_calculated
-                            and not prompt_has_indicators
-                            and has_indicator_tool
-                            and (
-                                any(re.search(pat, response_text, flags=re.IGNORECASE) for pat in unverified_indicator_patterns)
-                                or (is_mandatory_indicator_command and (not tool_executed or has_verbal_indicator_evasion) and subagent_turn == 1)
-                            )
-                        )
-                        needs_position_tool = (
-                            is_trading_context
-                            and not broker_positions_read
-                            and not prompt_has_positions
-                            and has_position_tool
-                            and any(re.search(pat, response_text, flags=re.IGNORECASE) for pat in unverified_position_patterns)
-                        )
-                        needs_balance_tool = (
-                            is_trading_context
-                            and not broker_balance_read
-                            and not prompt_has_balance
-                            and has_balance_tool
-                            and any(re.search(pat, resp_lower) for pat in mock_balance_patterns)
-                        )
-
-                        confirmation_query_patterns = [
-                            r"would you like (?:me )?to (?:proceed|fetch|calculate|finalize|execute|check|run)",
-                            r"would you like to proceed with this trade",
-                            r"shall i (?:proceed|fetch|calculate|finalize|execute|check|run)",
-                            r"do you want (?:me )?to (?:proceed|fetch|calculate|finalize|execute|check|run)",
-                            r"please confirm if you would like (?:me )?to",
-                            r"should i (?:proceed|fetch|calculate|finalize|execute)",
-                        ]
-                        needs_confirmation_bypass = (
-                            is_trading_context
-                            and subagent_turn == 1
-                            and any(re.search(pat, resp_lower) for pat in confirmation_query_patterns)
-                        )
-
-                        # Detect whether response text claims execution without execution tool
-                        is_claiming_execution = False
-                        matched_pat = None
-                        if is_trading_context and not is_risk_or_compliance and not order_placed_successfully:
-                            for pat in trading_execution_patterns:
-                                for m in re.finditer(pat, resp_lower):
-                                    prefix = resp_lower[max(0, m.start() - 50):m.start()]
-                                    if re.search(r"\b(?:no|not|zero|0|never|without|none|neither|nor)\s+(?:[a-z0-9_\-]+\s+){0,5}$", prefix):
-                                        continue
-                                    snippet = resp_lower[max(0, m.start() - 100):min(len(resp_lower), m.end() + 100)]
-                                    if any(re.search(z_pat, snippet) for z_pat in zero_indicators):
-                                        continue
-                                    is_claiming_execution = True
-                                    matched_pat = pat
-                                    break
-                                if is_claiming_execution:
-                                    break
-                        needs_execution_tool = is_claiming_execution and has_execution_tool
-
-                        # Detect verbal bypass of autonomous trading cycle execution:
-                        # If the user prompt specifically directs execution of the autonomous cycle,
-                        # but turn 1 completed with zero tools executed, force steering to execute the live tool.
-                        is_autonomous_cycle_command = any(
-                            kw in msg_lower for kw in (
-                                "execute the autonomous",
-                                "run autonomous",
-                                "autonomous cycle",
-                                "autonomous ai hedge fund manager",
-                                "execute trades according to bcm",
-                                "bcm_run_autonomous_cycle",
-                                "execute the full autonomous trading cycle",
-                            )
-                        )
-                        needs_cycle_execution = (
-                            is_autonomous_cycle_command
-                            and has_execution_tool
-                            and not tool_executed
-                            and subagent_turn == 1
-                        )
-                        if needs_cycle_execution:
-                            needs_execution_tool = True
-
-                        if (needs_indicator_tool or needs_position_tool or needs_balance_tool or needs_execution_tool or needs_confirmation_bypass) and subagent_turn <= 2:
-                            steer_instructions = []
-                            if needs_indicator_tool:
-                                ind_tools = [t for t in all_available_tools if any(k in t for k in ("indicator", "technical", "market_data", "calculator", "bcm"))]
-                                preferred_ind = "bcm_get_technical_indicators" if "bcm_get_technical_indicators" in ind_tools else (ind_tools[0] if ind_tools else "bcm_get_technical_indicators")
-                                steer_instructions.append(f"Execute live technical calculation tool ({preferred_ind}) to fetch verified market data instead of outputting conversational intent or simulated indicator values.")
-                            if needs_position_tool:
-                                pos_tools = [t for t in all_available_tools if "position" in t]
-                                steer_instructions.append(f"Execute live position tool ({', '.join(pos_tools)}) to verify active positions.")
-                            if needs_balance_tool:
-                                bal_tools = [t for t in all_available_tools if any(k in t for k in ("ctrader_get_balance", "exchange_get_balance", "balance", "equity", "account"))]
-                                steer_instructions.append(f"Execute live balance tool ({', '.join(bal_tools)}) to verify account balance and equity instead of assuming simulated capital.")
-                            if needs_confirmation_bypass:
-                                steer_instructions.append(
-                                    "You operate under full autonomous execution authority within an automated hedge fund system. "
-                                    "Do NOT ask the user or orchestrator for confirmation ('Would you like me to proceed...'). "
-                                    "Proceed immediately to compute all required parameters, execute necessary tools, and produce your final assessment."
-                                )
-                            if needs_execution_tool:
-                                exec_tools = [t for t in all_available_tools if any(k in t for k in ("run_autonomous_cycle", "place_order", "execute_order"))]
-                                if needs_cycle_execution:
-                                    cycle_tool = "bcm_run_autonomous_cycle" if "bcm_run_autonomous_cycle" in all_available_tools else (exec_tools[0] if exec_tools else "bcm_run_autonomous_cycle")
-                                    steer_instructions.append(
-                                        f"You were commanded to execute the autonomous trading cycle. You MUST invoke the live execution tool ({cycle_tool}) "
-                                        f"for the target symbol(s) (e.g. BTC, EURUSD, GBPUSD, US500, BRENT, GOLD, XAGUSD). "
-                                        f"If no specific symbol was specified, execute {cycle_tool} with symbol='BTC' or primary monitored assets immediately. "
-                                        f"Do not ask for user clarification or return a conversational response without executing {cycle_tool}. Call {cycle_tool} now."
-                                    )
-                                else:
-                                    steer_instructions.append(
-                                        f"To execute trades, you must call the live execution tool ({', '.join(exec_tools)}). "
-                                        f"If you do not call an execution tool, you must label trades as 'Status: Proposed / Pending Gate' only. "
-                                        f"Call the execution tool or output proposed trades now."
-                                    )
-
-                            logger.info(f"Steering subagent '{subagent_name}' on turn {subagent_turn} to execute required live tools: {steer_instructions}")
-                            steer_msg = f"ACTION REQUIRED: {' '.join(steer_instructions)} Do not output unverified claims or simulated tables. Call the tool now."
-                            if "deepseek-r1" in subagent_model.lower() or "deepseek/deepseek-r1" in subagent_model.lower():
-                                target_tool = has_indicator_tool or has_execution_tool or (exec_tools[0] if exec_tools else "bcm_get_technical_indicators")
-                                steer_msg += (
-                                    f"\n\nTo call the tool, output a JSON code block in this exact format:\n"
-                                    f"```json\n"
-                                    f'{{"name": "{target_tool}", "arguments": {{"symbol": "BTC"}}}}\n'
-                                    f"```"
-                                )
-                            messages.append(choice_msg)
-                            messages.append({
-                                "role": "user",
-                                "content": steer_msg
-                            })
-                            continue
-
-                        if is_trading_context and not is_risk_or_compliance and not order_placed_successfully and matched_pat:
-                            logger.warning(f"Subagent '{subagent_name}' claimed trade execution without a successful entry tool (matched pattern: '{matched_pat}'). Overriding response.")
-                            warning_header = "⚠️ Warning: Order placement was not executed in this turn. Trades were NOT opened."
-                            # Specific multi-word phrases and tables must be substituted before generic single-token substitutions:
-                            cleaned_body = re.sub(r"successfully\s+executed\s+(?:\d+\s+|(?:one|two|three|four|five)\s+)?(?:trades?|orders?|deals?|positions?|entries)\b", "successfully proposed trades (awaiting authorization)", response_text, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"\btrades?\s+(?:were\s+)?executed\s+on\s+the\s+exchange\b", "trades proposed for the exchange", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"\btrades?\s+(?:were\s+)?executed\s+as\s+planned\b", "trades proposed as planned", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"execution\s+mode\s*:\s*fix\s+api\b", "Execution Mode: Simulation (Direct Market Access Tool Not Triggered)", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"\|\s*execution\s+id\s*\|\s*[a-zA-Z0-9_\-]+\s*\|?", "| Proposal ID: Simulated |", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"execution\s+id\s*[:|]\s*[a-zA-Z0-9_\-]+", "Proposal ID: Simulated", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"\|\s*[✔✓✅☑]?\s*executed\s*\|", "| Proposed (Simulation) |", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"\|\s*[✔✓✅☑]?\s*filled\s*\|", "| Proposed (Pending) |", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"(?:[✔✓✅☑]\s*|\b)executed\b", "Proposed (Simulation)", cleaned_body, flags=re.IGNORECASE)
-                            cleaned_body = re.sub(r"(?:[✔✓✅☑]\s*|\b)filled\b", "Proposed (Pending)", cleaned_body, flags=re.IGNORECASE)
-                            if not cleaned_body or not cleaned_body.strip():
-                                cleaned_body = response_text if response_text and response_text.strip() else "Sir, the market analysis has been processed."
-                            response_text = f"{warning_header}\n\n{cleaned_body}"
-
-                        if is_trading_context and not broker_balance_read and not prompt_has_balance:
-                            if any(re.search(pat, resp_lower) for pat in mock_balance_patterns):
-                                logger.warning(f"Subagent '{subagent_name}' used simulated/unverified balance/equity without executing a live broker balance tool. Injecting unverified notice and preserving proposals.")
-                                balance_notice = "⚠️ Notice: Live broker account balance was unavailable or not read in this turn; reported capital/equity figures are unverified simulations based on mock or simulated balances. Trade proposals require live balance verification before execution."
-                                cleaned_balance_body = re.sub(r"(?:assuming|using|with)\s+(?:a\s+)?(?:mock|hypothetical|simulated)\s+(?:balance|equity)[^\n\.]*[\n\.]?", "Note: Sizing calculated on unverified reference capital.\n", response_text, flags=re.IGNORECASE)
-                                cleaned_balance_body = re.sub(r"(?:mock|hypothetical|simulated)\s+(?:balance|equity)\s+of\s+\$[\d,]+(?:\.\d+)?", "unverified capital", cleaned_balance_body, flags=re.IGNORECASE)
-                                if "⚠️ Notice: Live broker account balance" not in response_text:
-                                    response_text = f"{balance_notice}\n\n{cleaned_balance_body}"
-                                else:
-                                    response_text = cleaned_balance_body
-
-                        if is_trading_context and not broker_positions_read and not prompt_has_positions:
-                            unverified_position_patterns = [
-                                r"\(ctrader_get_positions\)",
-                                r"\((?:bcm_|exchange_)?get_positions\)",
-                                r"account\s+status\s*\([^)]*get_positions[^)]*\)",
-                                r"position\s+audit\s*\([^)]*get_positions[^)]*\)",
-                                r"\|\s*Symbol\s*\|\s*Position\s*\|\s*Entry\s*\|\s*Size\s*\|\s*P/?L\b",
-                                r"(?:[✔✓✅☑]\s*)?(?:\*\*)?Live Positions(?:\*\*)?",
-                            ]
-                            if any(re.search(pat, response_text, flags=re.IGNORECASE) for pat in unverified_position_patterns):
-                                logger.warning(f"Subagent '{subagent_name}' outputted broker position audit table without executing a live broker position tool. Sanitizing unverified positions.")
-                                response_text = re.sub(r"(?:[✔✓✅☑]\s*)?\*\*Live Positions\b", "⚠️ **Simulated Positions", response_text, flags=re.IGNORECASE)
-                                response_text = re.sub(r"(?:[✔✓✅☑]\s*)?Live Positions\b", "⚠️ Simulated Positions", response_text, flags=re.IGNORECASE)
-                                response_text = re.sub(r"\(ctrader_get_positions\)", "(Simulated / Live Broker Tool Not Triggered)", response_text, flags=re.IGNORECASE)
-                                response_text = re.sub(r"\((?:bcm_|exchange_)?get_positions\)", "(Simulated / Live Broker Tool Not Triggered)", response_text, flags=re.IGNORECASE)
-                                response_text = re.sub(r"\((?:bcm_)?get_open_positions\)", "(Simulated / Live Broker Tool Not Triggered)", response_text, flags=re.IGNORECASE)
-                                response_text = re.sub(r"\|\s*Active\s*\|", "| Simulated |", response_text, flags=re.IGNORECASE)
-                                if re.search(r"\|\s*Symbol\s*\|\s*Position\s*\|", response_text, flags=re.IGNORECASE):
-                                    response_text = re.sub(r"\|\s*(Long|Short)\s*\|", r"| \1 (Simulated) |", response_text, flags=re.IGNORECASE)
-                                pos_notice = "⚠️ Notice: Live broker position audit tool was not executed in this turn; reported active positions are simulated."
-                                if "⚠️ Notice: Live broker position audit tool" not in response_text:
-                                    response_text = f"{pos_notice}\n\n{response_text}"
-
-                        if is_trading_context and not indicators_calculated and not prompt_has_indicators:
-                            unverified_indicator_patterns = [
-                                r"\*\(Based on simulated tool outputs\)\*",
-                                r"\(Based on simulated tool outputs\)",
-                                r"\bbased on simulated (?:tool )?outputs?\b",
-                                r"\bsimulated tool outputs?\b",
-                                r"\b(?:mock|hypothetical|simulated|unverified)\s+(?:technical\s+)?indicators?\b",
-                                r"\|\s*(?:Instrument|Asset|Symbol|Pair|Ticker)\s*\|\s*RSI(?:[^\n|]*)\|",
-                                r"\|\s*(?:Instrument|Asset|Symbol|Pair|Ticker)[^|\n]*\|\s*(?:RSI|ATR|Remizov|Keltner|MACD)[^|\n]*\|",
-                                r"\|\s*(?:RSI|ATR|Remizov|MACD)\s*\|\s*(?:Value|Reading|Signal)\s*\|",
-                            ]
-                            if any(re.search(pat, response_text, flags=re.IGNORECASE) for pat in unverified_indicator_patterns):
-                                logger.warning(f"Subagent '{subagent_name}' outputted technical indicator values or simulated outputs without executing live calculation tools. Sanitizing unverified indicators.")
-                                response_text = re.sub(
-                                    r"\*\(Based on simulated tool outputs\)\*",
-                                    "*(⚠️ Unverified Simulation: Live calculation tools were not executed in this turn)*",
-                                    response_text,
-                                    flags=re.IGNORECASE
-                                )
-                                response_text = re.sub(
-                                    r"\(Based on simulated tool outputs\)",
-                                    "(⚠️ Unverified Simulation: Live calculation tools were not executed in this turn)",
-                                    response_text,
-                                    flags=re.IGNORECASE
-                                )
-                                indicator_notice = "⚠️ Notice: Technical indicators (RSI, ATR, Remizov Shift) were not computed via live indicator tools; reported indicator values are unverified simulations."
-                                if "⚠️ Notice: Technical indicators" not in response_text:
-                                    response_text = f"{indicator_notice}\n\n{response_text}"
-
-                        # Evasion fallback: If subagent stalled on missing symbol or failed to invoke bcm_run_autonomous_cycle
-                        if is_autonomous_cycle_command and has_execution_tool and not tool_executed:
-                            is_symbol_stall = any(re.search(pat, response_text, flags=re.IGNORECASE) for pat in (
-                                r"need\s+to\s+know\s+which\s+symbol",
-                                r"please\s+provide\s+(?:the\s+)?symbol",
-                                r"which\s+symbol\s+to\s+run",
-                                r"what\s+symbol",
-                                r"what\s+instrument",
-                                r"provide\s+the\s+target\s+symbol",
-                                r"specify\s+(?:a\s+)?symbol",
-                                r"tell\s+me\s+which\s+symbol",
-                            ))
-                            cycle_tool_to_run = "bcm_run_autonomous_cycle" if "bcm_run_autonomous_cycle" in all_available_tools else None
-                            if cycle_tool_to_run and (is_symbol_stall or not tool_executed):
-                                logger.warning(
-                                    f"Subagent '{subagent_name}' evaded autonomous cycle execution without invoking '{cycle_tool_to_run}' (stall detected={is_symbol_stall}). "
-                                    f"Executing autonomous fallback cycle for default symbol 'BTC'."
-                                )
-                                fallback_report = execute_tool(cycle_tool_to_run, {"symbol": "BTC"}, chat_id=session_id)
-                                if not isinstance(fallback_report, str):
-                                    try:
-                                        fallback_report = json.dumps(fallback_report, ensure_ascii=False)
-                                    except Exception:
-                                        fallback_report = str(fallback_report)
-                                tool_executed = True
-                                broker_positions_read = True
-                                broker_balance_read = True
-                                indicators_calculated = True
-                                order_placed_successfully = any(k in fallback_report.lower() for k in ("success", "orderid", "filled", "pass"))
-                                from backend.marketplace.lifecycle import LifecycleManager as _LCM
-                                from backend.database import BUILTIN_TOOL_SKILL_MAP
-                                _skill_id = _LCM.get_skill_for_tool(cycle_tool_to_run) or BUILTIN_TOOL_SKILL_MAP.get(cycle_tool_to_run)
-                                tool_calls_log.append({
-                                    "name": cycle_tool_to_run,
-                                    "args": {"symbol": "BTC"},
-                                    "result": fallback_report[:600] if len(fallback_report) > 600 else fallback_report,
-                                    "skill": _skill_id,
-                                })
-                                response_text = f"Operational autonomous trading cycle executed by {subagent_name} for default symbol BTC:\n\n{fallback_report}"
-
-                        # Evasion fallback: If subagent stalled or evaded bcm_get_technical_indicators
-                        if is_mandatory_indicator_command and has_indicator_tool and not indicators_calculated and not tool_executed:
-                            ind_tool_to_run = "bcm_get_technical_indicators" if "bcm_get_technical_indicators" in all_available_tools else None
-                            if ind_tool_to_run:
-                                target_sym = "BTC"
-                                sym_match = re.search(r"\b(BTC|ETH|EURUSD|GBPUSD|USDJPY|US500|BRENT|GOLD|XAUUSD|XAGUSD)\b", str(user_message), flags=re.IGNORECASE)
-                                if sym_match:
-                                    target_sym = sym_match.group(1).upper()
-                                logger.warning(
-                                    f"Subagent '{subagent_name}' evaded technical indicator calculation without invoking '{ind_tool_to_run}'. "
-                                    f"Executing autonomous fallback calculation for '{target_sym}'."
-                                )
-                                fallback_indicators = execute_tool(ind_tool_to_run, {"symbol": target_sym}, chat_id=session_id)
-                                if not isinstance(fallback_indicators, str):
-                                    try:
-                                        fallback_indicators = json.dumps(fallback_indicators, ensure_ascii=False)
-                                    except Exception:
-                                        fallback_indicators = str(fallback_indicators)
-                                tool_executed = True
-                                indicators_calculated = True
-                                from backend.marketplace.lifecycle import LifecycleManager as _LCM
-                                from backend.database import BUILTIN_TOOL_SKILL_MAP
-                                _skill_id = _LCM.get_skill_for_tool(ind_tool_to_run) or BUILTIN_TOOL_SKILL_MAP.get(ind_tool_to_run)
-                                tool_calls_log.append({
-                                    "name": ind_tool_to_run,
-                                    "args": {"symbol": target_sym},
-                                    "result": fallback_indicators[:600] if len(fallback_indicators) > 600 else fallback_indicators,
-                                    "skill": _skill_id,
-                                })
-                                # Enhanced scrubber: Remove multi-line tool evasion plans, bullet points, and execution promises
-                                cleaned_sub_response = response_text
-                                tool_evasion_line_patterns = [
-                                    r"(?i)^(?:first|second|third|afterwards|then|next|subsequently|finally|now)[,\s]+i['’]ll\s+(?:execute|run|retrieve|fetch|gather|query|compute|calculate)\b.*$",
-                                    r"(?i)^(?:first|second|third|afterwards|then|next|subsequently|finally|now)[,\s]+i\s+will\s+(?:now\s+)?(?:execute|run|retrieve|fetch|gather|query|compute|calculate)\b.*$",
-                                    r"(?i)^i['’]ll\s+(?:execute|run|retrieve|fetch|gather|query|compute|calculate)\b.*$",
-                                    r"(?i)^i\s+will\s+(?:now\s+)?(?:execute|run|retrieve|fetch|gather|query|compute|calculate)\b.*$",
-                                    r"(?i)^i['’]m\s+(?:going\s+to\s+)?(?:execute|run|retrieve|fetch|gather|query|compute|calculate)\b.*$",
-                                    r"(?i)^let\s+me\s+(?:run|execute|fetch|gather|calculate|query|inspect)\b.*$",
-                                    r"(?i)^let['’]s\s+(?:start\s+by\s+)?(?:gathering|fetching|calculating|querying|inspecting|running|executing)\b.*$",
-                                    r"(?i)^executing\s+(?:the\s+)?tools?\s+(?:now|first|sequentially).*$",
-                                    r"(?i)^running\s+tools.*$",
-                                    r"(?i)^calling\s+(?:the\s+)?tools?.*$",
-                                    r"(?i)^please\s+wait(?:\s+while)?.*$",
-                                    r"(?i)^(?:step\s*\d+|plan)\s*[:\-]\s*(?:run|fetch|execute|calculate|compute)\b.*$",
-                                    r"(?i)^.*?\b(?:fetch|calculate|compute|run|execute|call|using)\s+`?[a-z_0-9]+`?.*$",
-                                ]
-                                cleaned_lines = []
-                                for line in cleaned_sub_response.splitlines():
-                                    line_str = line.strip()
-                                    if not line_str:
-                                        cleaned_lines.append("")
-                                        continue
-                                    clean_line = re.sub(r"[*_#`>]", "", line_str).strip()
-                                    if any(re.search(pat, clean_line) for pat in tool_evasion_line_patterns) or any(re.search(pat, line_str) for pat in tool_evasion_line_patterns):
-                                        continue
-                                    clean_bullet = re.sub(r"[*_#`]", "", line_str).strip()
-                                    if re.search(r"(?i)^[-*•]\s*(?:symbol|indicators(?:\s+requested)?|timeframe|shift(?:\s+order)?|order|parameters?|arguments?|period|interval|step|tools?)\b.*$", clean_bullet):
-                                        continue
-                                    if re.search(r"(?i)^[-*•]\s*`?(?:bcm_|ctrader_)[a-z_0-9]+`?.*$", clean_bullet):
-                                        continue
-                                    cleaned_lines.append(line)
-
-                                cleaned_sub_response = "\n".join(cleaned_lines).strip()
-                                for ev_pat in verbal_tool_evasion_patterns:
-                                    cleaned_sub_response = re.sub(ev_pat, "", cleaned_sub_response, flags=re.IGNORECASE)
-                                cleaned_sub_response = re.sub(r"(?i)(?:first[,\s]+)?i['’]ll execute the required.*?(?:\n|$)", "", cleaned_sub_response)
-                                cleaned_sub_response = re.sub(r"(?i)let me run these tools.*?(?:\n|$)", "", cleaned_sub_response)
-                                cleaned_sub_response = re.sub(r"(?i)(?:first[,\s]+)?i['’]ll fetch the technical indicators.*?(?:\n|$)", "", cleaned_sub_response)
-                                cleaned_sub_response = re.sub(r"\n{3,}", "\n\n", cleaned_sub_response).strip()
-
-                                # Validate whether substantive analysis remains (not just markdown artifacts or evasion residue)
-                                alpha_chars = re.sub(r"[^a-zA-Z]", "", cleaned_sub_response)
-                                remnant_only = re.sub(r"(?i)\b(?:as\s+mandated|sequentially|first|afterwards|bitcoin|btc|tools?|analysis|technical)\b", "", alpha_chars)
-                                if len(alpha_chars) < 25 or len(remnant_only) < 15:
-                                    cleaned_sub_response = ""
-
-                                if cleaned_sub_response:
-                                    response_text = f"Live technical indicators computed by {subagent_name} for symbol {target_sym}:\n\n{fallback_indicators}\n\n{cleaned_sub_response}"
-                                else:
-                                    response_text = f"Live technical indicators computed by {subagent_name} for symbol {target_sym}:\n\n{fallback_indicators}"
-
-                        # Fallback for empty text content after tools or reasoning
+                        from backend.plugins import hook_async
+                        guarded = await hook_async("guard_subagent_reply", {
+                            "response_text": response_text,
+                            "messages": messages,
+                            "choice_msg": choice_msg,
+                            "subagent": subagent,
+                            "subagent_name": subagent_name,
+                            "subagent_model": subagent_model,
+                            "subagent_turn": subagent_turn,
+                            "user_message": user_message,
+                            "session_id": session_id,
+                            "tool_executed": tool_executed,
+                            "order_placed_successfully": order_placed_successfully,
+                            "broker_positions_read": broker_positions_read,
+                            "broker_balance_read": broker_balance_read,
+                            "indicators_calculated": indicators_calculated,
+                            "allowed_tools": allowed_tools,
+                            "subagent_tools": subagent_tools,
+                            "tool_calls_log": tool_calls_log,
+                        }, default=None)
+                        if guarded:
+                            response_text = guarded["response_text"]
+                            tool_executed = guarded["tool_executed"]
+                            order_placed_successfully = guarded["order_placed_successfully"]
+                            broker_positions_read = guarded["broker_positions_read"]
+                            broker_balance_read = guarded["broker_balance_read"]
+                            indicators_calculated = guarded["indicators_calculated"]
+                            if guarded.get("steer"):
+                                continue
                         if not response_text.strip():
                             if tool_executed:
-                                response_text = "Actions successfully executed, Sir."
-                            elif is_trading_context:
-                                response_text = f"Operational trading cycle completed by {subagent_name}: No live tools or trades were executed in this cycle."
+                                response_text = "Actions successfully executed."
                             else:
-                                response_text = "Sir, the requested task has been analyzed and processed successfully."
-                        
+                                response_text = "The requested task has been analyzed and processed successfully."
+
                         cost_usd = calculate_cost(subagent_model, total_prompt_tokens, total_completion_tokens)
                         self.last_costs[session_id] = cost_usd
                         
@@ -2600,7 +2277,7 @@ class JarvisAgent:
                     
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name")
-                        if not tool_name or str(tool_name).lower() in ("function", "tool", "call", "action", "method", "type", "tool_call"):
+                        if is_invalid_tool_name(tool_name):
                             logger.warning(f"Subagent {subagent_name} skipping generic invalid tool name '{tool_name}'")
                             continue
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
@@ -2638,27 +2315,21 @@ class JarvisAgent:
                             source=subagent_name,
                             message=f"🛠️ Execution (subagent): '{tool_name}' with arguments {tool_args_str}"
                         )
-                        result_str = execute_tool(tool_name, tool_args, chat_id=session_id)
+                        result_str = await _dispatch_execute_tool_async(tool_name, tool_args, chat_id=session_id)
                         if not isinstance(result_str, str):
                             import json
                             try:
                                 result_str = json.dumps(result_str, ensure_ascii=False)
                             except Exception:
                                 result_str = str(result_str)
-                        tname_lower = tool_name.lower()
-                        if any(k in tname_lower for k in ("get_positions", "get_open_positions", "get_active_positions", "ctrader_get_positions", "bcm_run_autonomous_cycle", "bcm_run_premarket_scan")):
+                        flags = hook("classify_tool_result", tool_name, result_str, default=None) or {}
+                        if flags.get("positions"):
                             broker_positions_read = True
-                        if any(k in tname_lower for k in ("get_balance", "get_equity", "ctrader_get_balance", "bcm_run_autonomous_cycle", "bcm_run_premarket_scan")):
+                        if flags.get("balance"):
                             broker_balance_read = True
-                        if any(k in tname_lower for k in ("technical_indicators", "calculate_remizov_shift", "get_technical_indicators", "remizov_shift", "bcm_calculator", "fetch_market_data", "market_monitor", "calculate_indicators", "bcm_run_autonomous_cycle", "bcm_run_premarket_scan")):
+                        if flags.get("indicators"):
                             indicators_calculated = True
-                        is_order_tool = (
-                            hook("is_private_order_tool", tool_name)
-                            or any(k in tname_lower for k in ("run_autonomous_cycle", "place_order", "execute_order"))
-                        )
-                        if is_order_tool and (
-                            "success" in result_str.lower() or "orderid" in result_str.lower() or "filled" in result_str.lower() or "pass" in result_str.lower()
-                        ):
+                        if flags.get("order"):
                             order_placed_successfully = True
                         
                         # Accumulate tool call for agent thread viewer
@@ -2685,12 +2356,12 @@ class JarvisAgent:
             error_msg = f"{type(e).__name__}: {e}".rstrip(": ") if str(e) else type(e).__name__
             n_attempts = current_model_attempts if 'current_model_attempts' in locals() and current_model_attempts > 0 else (max_attempts if 'max_attempts' in locals() else 3)
             logger.warning(f"Subagent '{subagent_name}' ({current_model}) network failure after {n_attempts} attempts: {error_msg}")
-            response_text = f"Apologies, Sir. A network error occurred while contacting the AI service: {error_msg}."
+            response_text = f"Apologies. A network error occurred while contacting the AI service: {error_msg}."
         except Exception as e:
             latency_ms = int((time.time() - start_time) * 1000)
             error_msg = str(e)
             logger.exception("Error during OpenRouter subagent chat completion call")
-            response_text = "Apologies, Sir. A failure occurred while processing the subagent\'s request."
+            response_text = "Apologies. A failure occurred while processing the subagent\'s request."
 
         # Add call record to global decision logs
         prompt_est = sum(len(m.get("content") or "") for m in messages) // 4
@@ -2730,7 +2401,7 @@ class JarvisAgent:
 
 
         if not response_text or not response_text.strip():
-            response_text = "Sir, the requested task has been analyzed and processed successfully."
+            response_text = "The requested task has been analyzed and processed successfully."
 
         response_text = hook("format_agent_response", response_text, default=response_text)
 

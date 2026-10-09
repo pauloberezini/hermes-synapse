@@ -471,7 +471,7 @@ export function ScheduleTab({
           <div style={styles.timersList}>
             {safeTimers.length === 0 ? (
               <div style={styles.emptyTimersMsg}>
-                No active timers or scheduled tasks found, Sir.
+                No active timers or scheduled tasks found.
               </div>
             ) : (
               safeTimers.map((timer) => {

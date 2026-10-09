@@ -141,7 +141,7 @@ export function ToolsTab({
               if (safeUploads.length === 0) {
                 return (
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
-                    No loaded datasets, Sir. Attach a CSV/Excel file in the chat.
+                    No loaded datasets. Attach a CSV/Excel file in the chat.
                   </div>
                 );
               }

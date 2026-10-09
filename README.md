@@ -114,14 +114,14 @@ Hermes goes beyond simple chat agents. It is designed for complex, autonomous op
 | Agent | Skills | Required Keys |
 |---|---|---|
 | 🏛️ **Jarvis (Main)** — root orchestrator | — | `OPENROUTER_API_KEY` |
-| 🔍 **Search Agent** | Web search, weather, RSS | `SERPER_API_KEY` |
+| 🔍 **Search Agent** | Web search, weather, RSS | `SEARXNG_URL` |
 | 💻 **Code Engineer** | Python sandbox (self-correcting) | — |
 | 📊 **Data Analyst** | pandas + matplotlib charts | — |
 | ⏰ **Scheduler** | Timers, reminders, alarms | — |
 | 📈 **Market Monitor** | Stocks + crypto (yfinance) | — |
 | 📅 **Daily Planner** | Google Calendar + Todoist | `TODOIST_API_TOKEN` + Google OAuth |
 | 🖥️ **Sys Ops** | System stats + shell exec | — |
-| ⚽ **Football Analyst** | Match results, tactics, standings | `SERPER_API_KEY` |
+| ⚽ **Football Analyst** | Match results, tactics, standings | `SEARXNG_URL` |
 
 > All agents start without error even if their API keys are missing — they return a clear message explaining what needs to be configured.
 
@@ -168,7 +168,7 @@ DATABASE_URL=postgresql://user:password@localhost:5432/hermes
 | Integration | Env Var | Notes |
 |---|---|---|
 | Telegram Bot | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Create via [@BotFather](https://t.me/BotFather) |
-| Web Search | `SERPER_API_KEY` | [serper.dev](https://serper.dev) — 2,500 free/month |
+| Web Search | `SEARXNG_URL` | SearXNG, self-hosted metasearch |
 | Weather | `OPENWEATHERMAP_API_KEY` | Free tier: 1,000 calls/day |
 | Todoist | `TODOIST_API_TOKEN` | Todoist Settings → Integrations |
 | Google Calendar | OAuth2 JSON file | See `.env.example` for setup |

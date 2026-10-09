@@ -133,6 +133,20 @@ async def test_recurring_reminder():
     assert len(scheduler.get_all_reminders()) == 0
     assert scheduler.cancel_recurring_reminder("invalid_id") is False
 
+
+@pytest.mark.asyncio
+async def test_recurring_and_cron_reuse_existing_label():
+    first = scheduler.add_recurring_reminder("Drink Water", 2.0, "123")
+    second = scheduler.add_recurring_reminder("Drink Water", 4.0, "123")
+    assert first == second
+    assert len(scheduler.get_all_reminders()) == 1
+    scheduler.cancel_recurring_reminder(first)
+
+    cron_a = scheduler.add_cron_reminder("Morning Scan", "0 9 * * *", "123")
+    cron_b = scheduler.add_cron_reminder("Morning Scan", "0 10 * * *", "123")
+    assert cron_a == cron_b
+    scheduler.cancel_timer_or_alarm(cron_a)
+
 @pytest.mark.asyncio
 async def test_error_handling():
     mock_app = MagicMock()

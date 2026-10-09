@@ -4,7 +4,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -105,7 +105,23 @@ async def lifespan(app: FastAPI):
     logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
     for uvi_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logging.getLogger(uvi_name).addFilter(endpoint_filter)
-    
+    # Configure global asyncio exception handler to suppress coroutine lifecycle noise & harmless cancellations
+    try:
+        loop = asyncio.get_running_loop()
+        def _hermes_loop_exception_handler(current_loop, context):
+            exc = context.get("exception")
+            msg = context.get("message", "")
+            if isinstance(exc, asyncio.CancelledError):
+                return
+            if "cannot reuse already awaited coroutine" in str(exc) or "already awaited" in msg or "already awaited" in str(exc):
+                logger.debug("Suppressed harmless coroutine lifecycle event on main loop: %s", exc or msg)
+                return
+            current_loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_hermes_loop_exception_handler)
+    except Exception as e:
+        logger.debug("Could not attach custom loop exception handler: %s", e)
+
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
     init_db()
@@ -253,7 +269,7 @@ async def request_code():
         
     msg = (
         f"🏛️ **Hermes Authorization Request**\n\n"
-        f"Sir, an entry request to the web dashboard was detected.\n"
+        f"An entry request to the web dashboard was detected.\n"
         f"Your one-time access code is:\n\n"
         f"`{code}`\n\n"
         f"This code is valid for 5 minutes."
@@ -282,7 +298,7 @@ async def verify_code(req: AuthVerifyRequest):
         return {"status": "success", "token": token}
     else:
         from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Invalid or expired access code, Sir.")
+        raise HTTPException(status_code=401, detail="Invalid or expired access code.")
 
 from fastapi.staticfiles import StaticFiles
 import os
@@ -647,24 +663,44 @@ async def get_office_state_api():
     from backend.database import get_agent_office_state
     return get_agent_office_state()
 
+_CYCLE_MSG = {
+    "en": "This link would cycle the agent graph.",
+    "ru": "Эта связь замыкает цикл в графе агентов.",
+    "he": "קישור זה סוגר מעגל בגרף הסוכנים.",
+    "de": "Diese Verbindung würde einen Zyklus im Agentengraphen schließen.",
+    "es": "Este enlace cerraría un ciclo en el grafo de agentes.",
+    "fr": "Ce lien fermerait un cycle dans le graphe des agents.",
+}
+
+
+def _dag_cycle_message() -> str:
+    from backend.database import get_setting
+    lang = (get_setting("language") or "en").lower()
+    return _CYCLE_MSG.get(lang, _CYCLE_MSG["en"])
+
+
 @app.post("/api/subagents")
 async def save_subagent_api(subagent: SubagentUpdate):
-    from backend.database import save_subagent
+    from backend.database import DagCycleError, save_subagent
     # Basic slug validation for ID
     import re
     clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', subagent.id).lower()
-    save_subagent(
-        clean_id,
-        subagent.name,
-        subagent.system_prompt,
-        subagent.model,
-        subagent.agent_type,
-        subagent.parent_id,
-        subagent.skills,
-        subagent.x,
-        subagent.y,
-        subagent.temperature,
-    )
+    try:
+        save_subagent(
+            clean_id,
+            subagent.name,
+            subagent.system_prompt,
+            subagent.model,
+            subagent.agent_type,
+            subagent.parent_id,
+            subagent.skills,
+            subagent.x,
+            subagent.y,
+            subagent.temperature,
+        )
+    except DagCycleError as e:
+        logger.warning("%s", e)
+        return JSONResponse(status_code=400, content={"status": "failed", "error": _dag_cycle_message()})
     return {"status": "success", "id": clean_id}
 
 @app.post("/api/subagents/positions")
@@ -1345,7 +1381,10 @@ async def trigger_single_log_distillation_api(log_id: int):
 
     from backend.skill_loop import get_skill_distiller
     distiller = get_skill_distiller()
-    skill_dict = distiller.distill_log_entry(target_log)
+    try:
+        skill_dict = distiller.distill_log_entry(target_log)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     saved_skill = distiller.save_and_index_skill(skill_dict)
     return {"status": "success", "skill": saved_skill}
 
@@ -1381,8 +1420,8 @@ async def get_models_api():
                         result.append({"id": m_id, "name": m_name})
                     
                     rec_models = [
-                        "ollama/llama3",
-                        "ollama/llama3",
+                        "google/gemini-2.5-flash",
+                        "google/gemini-2.5-pro",
                         "anthropic/claude-sonnet-4-5",
                         "anthropic/claude-opus-4",
                         "openai/gpt-4o",
@@ -1413,8 +1452,8 @@ async def get_models_api():
 
     # Fallback list if request fails
     return [
-        {"id": "ollama/llama3", "name": "Google: Gemini 2.5 Flash (default)"},
-        {"id": "ollama/llama3", "name": "Google: Gemini 2.5 Pro"},
+        {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash (default)"},
+        {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
         {"id": "anthropic/claude-sonnet-4-5", "name": "Anthropic: Claude Sonnet 4.5"},
         {"id": "anthropic/claude-opus-4", "name": "Anthropic: Claude Opus 4"},
         {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},
@@ -1566,6 +1605,7 @@ async def clear_activity_logs_api():
 @app.get("/api/history/sessions")
 async def get_history_sessions():
     from backend.database import _execute
+    from backend.plugins import hook
     from backend.scheduler import get_all_timers
     import json
     try:
@@ -1611,7 +1651,13 @@ async def get_history_sessions():
         live_jobs = {t["id"]: t for t in get_all_timers()}
         
         # Filter out subagents and archive sessions
-        user_sessions = [s for s in all_session_ids if s not in subagent_ids and s != "dashboard" and not s.startswith("archive_")]
+        user_sessions = [
+            s for s in all_session_ids
+            if s not in subagent_ids
+            and s != "dashboard"
+            and not s.startswith("archive_")
+            and not hook("is_hidden_session", s, default=False)
+        ]
         
         sessions_response = []
         msg_sessions_set = set(msg_sessions)
@@ -1958,14 +2004,14 @@ async def websocket_endpoint(websocket: WebSocket):
                                 f"<!-- {meta} -->\n"
                                 f"```{code_lang}\n{fcontent}\n```\n"
                                 f"</file_context>\n\n"
-                                f"Sir's request: {user_text}"
+                                f"User request: {user_text}"
                             )
                             # Also append a hint so agent knows Obsidian save is available
                             if any(kw in user_text.lower() for kw in [
                                 "сохрани", "запиши", "obsidian", "в заметки", "save", "store", "note"
                             ]):
                                 agent_text += (
-                                    "\n\n[Hint for agent: Sir wants to save this file to Obsidian. "
+                                    "\n\n[Hint for agent: the user wants to save this file to Obsidian. "
                                     "Use create_obsidian_note with an informative title derived from the "
                                     f"filename '{fname}' and the file content. Determine the folder from the "
                                     "taxonomy automatically.]"

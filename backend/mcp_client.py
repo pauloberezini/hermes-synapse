@@ -145,7 +145,10 @@ class MCPServerClient:
                 or any(k in type(e).__name__ for k in ("ConnectError", "ConnectTimeout", "ConnectionRefused", "NetworkError", "RemoteProtocolError"))
                 or any(k in err_str.lower() for k in ("connection refused", "not known", "all connection attempts failed", "connect timeout", "gaierror"))
             )
-            if getattr(self, "optional", False) or is_connection_error:
+            if getattr(self, "optional", False):
+                _server_offline_cooldowns[self.name] = time.time() + 300.0
+                logger.info(f"Optional MCP server '{self.name}' is unavailable or offline ({self.url or self.command}): {e}")
+            elif is_connection_error:
                 _server_offline_cooldowns[self.name] = time.time() + 300.0
                 logger.warning(f"MCP server '{self.name}' is unavailable or failed to connect ({self.url or self.command}): {e}")
             else:
@@ -177,8 +180,13 @@ class MCPServerClient:
             not self.session_id
             and method not in ("initialize", "notifications/initialized")
             and not _is_retry
-            and now > getattr(self, "_reinit_cooldown_until", 0.0)
         ):
+            if now <= getattr(self, "_reinit_cooldown_until", 0.0):
+                remaining = max(1, int(self._reinit_cooldown_until - now))
+                raise RuntimeError(
+                    f"MCP server '{self.name}' HTTP session is unavailable and currently in re-initialization cooldown "
+                    f"({remaining}s remaining)."
+                )
             async with lock:
                 if not self.session_id:
                     try:
@@ -392,8 +400,14 @@ class MCPServerClient:
                     "arguments": arguments
                 })
         except Exception as e:
-            logger.warning(f"MCP server '{self.name}' call_tool '{tool_name}' failed: {e}")
-            return json.dumps({"error": f"MCP server '{self.name}' tool '{tool_name}' failed: {e}"}, ensure_ascii=False)
+            err_str = str(e).strip()
+            err_desc = err_str if err_str else (repr(e) if repr(e) else type(e).__name__)
+            # If proactive re-initialization already failed and entered cooldown, avoid redundant WARNING
+            if time.time() < getattr(self, "_reinit_cooldown_until", 0.0):
+                logger.debug(f"MCP server '{self.name}' call_tool '{tool_name}' failed during active cooldown: {err_desc}")
+            else:
+                logger.warning(f"MCP server '{self.name}' call_tool '{tool_name}' failed: {err_desc}")
+            return json.dumps({"error": f"MCP server '{self.name}' tool '{tool_name}' failed: {err_desc}"}, ensure_ascii=False)
         if "error" in res:
             return json.dumps({"error": res["error"]}, ensure_ascii=False)
         content_list = res.get("result", {}).get("content", [])

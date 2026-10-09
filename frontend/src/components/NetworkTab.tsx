@@ -262,6 +262,9 @@ export function NetworkTab({
       });
       if (res.ok) {
         fetchSubagents();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Could not save the agent.');
       }
     } catch (err) {
       console.error('Error saving agent config:', err);

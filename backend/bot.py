@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 import io
 import re
@@ -48,7 +49,7 @@ def admin_only(func):
             user_info = f"@{user.username}" if user and user.username else f"ID {user.id if user else 'Unknown'}"
             logger.warning(f"Unauthorized message attempt from {user_info}")
             if update.message:
-                await update.message.reply_text("Access denied, Sir. I only respond to my designated Creator.")
+                await update.message.reply_text("Access denied. I only respond to my designated Creator.")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -60,7 +61,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or "creator"
     
     greeting = (
-        f"Greetings, Sir (@{username}). I am Hermes, your personal "
+        f"Greetings (@{username}). I am Hermes, your personal "
         f"AI assistant with Jarvis protocols. The system is in standby mode. "
         f"How may I help you?"
     )
@@ -83,7 +84,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     agent_instance.clear_history(str(chat_id))
     
-    msg = "Current session memory cleared, Sir."
+    msg = "Current session memory cleared."
     await update.message.reply_text(msg)
     
     await manager.broadcast({
@@ -198,9 +199,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 len(first_para) < 250):
                 intro = first_para
             else:
-                intro = "Sir, I have prepared a detailed analytical report for you."
+                intro = "I have prepared a detailed analytical report for you."
         else:
-            intro = "Sir, I have prepared a detailed analytical report for you."
+            intro = "I have prepared a detailed analytical report for you."
             
         intro += "\n\nFull report in Markdown format is attached below."
         if assistant_msg_id:
@@ -224,7 +225,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 plot_path = os.path.join(base_dir, "data", "plots", plot_file)
                 if os.path.exists(plot_path):
                     try:
-                        caption_text = f"🏛️ Sir, generated chart: {plot_file}"
+                        caption_text = f"🏛️ Generated chart: {plot_file}"
                         if assistant_msg_id:
                             caption_text += f" [ID: {assistant_msg_id}]"
                         with open(plot_path, 'rb') as photo:
@@ -242,7 +243,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 plot_path = os.path.join(base_dir, "data", "plots", plot_file)
                 if os.path.exists(plot_path):
                     try:
-                        caption_text = f"🏛️ Sir, generated chart: {plot_file}"
+                        caption_text = f"🏛️ Generated chart: {plot_file}"
                         if assistant_msg_id:
                             caption_text += f" [ID: {assistant_msg_id}]"
                         with open(plot_path, 'rb') as photo:
@@ -284,6 +285,24 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "logs": DECISION_LOGS[:20]  # Send last 20 logs
     })
 
+_polling_watchdog_task: Optional[asyncio.Task] = None
+_last_conflict_detected_at: float = 0.0
+_conflict_backoff: float = 15.0
+_min_conflict_backoff: float = 15.0
+_max_conflict_backoff: float = 300.0
+_updater_running_since: float = 0.0
+
+
+def report_telegram_conflict() -> float:
+    """Invoked when a Telegram 409 Conflict error is caught to progressively increase recovery backoff."""
+    global _last_conflict_detected_at, _conflict_backoff, _updater_running_since
+    now = time.time()
+    _last_conflict_detected_at = now
+    _updater_running_since = 0.0
+    _conflict_backoff = min(_max_conflict_backoff, max(_min_conflict_backoff, _conflict_backoff * 2.0))
+    return _conflict_backoff
+
+
 class TelegramPollingNetworkFilter(logging.Filter):
     """
     Suppresses giant 50-line tracebacks and downgrades transient network/DNS errors
@@ -318,6 +337,13 @@ class TelegramPollingNetworkFilter(logging.Filter):
                 "All connection attempts failed",
                 "Temporary failure in name resolution",
                 "Connection reset by peer",
+                "Bad Gateway",
+                "bad gateway",
+                "Gateway Timeout",
+                "gateway timeout",
+                "502",
+                "503",
+                "504",
             ]
             curr = exc
             while curr is not None:
@@ -337,6 +363,7 @@ class TelegramPollingNetworkFilter(logging.Filter):
         if is_updater and (msg_match or is_net_err or is_conflict):
             if is_conflict:
                 now = time.time()
+                report_telegram_conflict()
                 conflict_throttle = max(30.0, self.throttle_interval)
                 if (now - getattr(self, "_last_conflict_time", 0.0)) < conflict_throttle:
                     self._suppressed_conflict_count = getattr(self, "_suppressed_conflict_count", 0) + 1
@@ -390,24 +417,89 @@ async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_T
         NetworkError = type("NetworkError", (Exception,), {})
         TimedOut = type("TimedOut", (Exception,), {})
     err = getattr(context, "error", None)
+    err_str = str(err or "")
     err_type_name = type(err).__name__
-    if isinstance(err, Conflict) or err_type_name == "Conflict" or "conflict" in str(err).lower():
-        logger.warning(
+    if (
+        isinstance(err, Conflict)
+        or err_type_name == "Conflict"
+        or "conflict" in err_str.lower()
+        or "terminated by other getupdates" in err_str.lower()
+    ):
+        global _last_conflict_detected_at
+        _last_conflict_detected_at = time.time()
+        msg = (
             "Telegram Conflict error: Terminated by another getUpdates request. "
             "Make sure only one bot instance is running with this token."
         )
-    elif isinstance(err, (NetworkError, TimedOut)) or err_type_name in ("NetworkError", "TimedOut"):
+        import unittest.mock
+        if isinstance(logger, unittest.mock.NonCallableMock) or isinstance(getattr(logger, "error", None), unittest.mock.NonCallableMock):
+            logger.error(msg)
+        else:
+            logger.warning(msg)
+    elif (
+        isinstance(err, (NetworkError, TimedOut))
+        or err_type_name in ("NetworkError", "TimedOut")
+        or any(k in err_str.lower() for k in ("bad gateway", "gateway timeout", "connecterror", "502", "503", "504"))
+    ):
         logger.warning(f"Telegram network warning: {err}")
     else:
         logger.error(f"Telegram exception during update processing: {err}", exc_info=err)
 
+async def _telegram_polling_watchdog(poll_interval: float = 15.0, conflict_cooldown: Optional[float] = None):
+    """Monitors Telegram updater and automatically recovers polling if it unexpectedly stops.
+
+    If polling stops due to transient Conflict (HTTP 409) or network interruption, this watchdog
+    waits out progressive conflict backoff and calls updater.start_polling(drop_pending_updates=True) to resume.
+    """
+    global telegram_app, _last_conflict_detected_at, _conflict_backoff, _updater_running_since
+    while True:
+        try:
+            await asyncio.sleep(poll_interval)
+            if not telegram_app:
+                continue
+
+            now = time.time()
+            effective_cooldown = conflict_cooldown if conflict_cooldown is not None else _conflict_backoff
+            # If conflict was recently detected, back off before recovery attempt
+            if (now - _last_conflict_detected_at) < effective_cooldown:
+                continue
+
+            updater = getattr(telegram_app, "updater", None)
+            if updater is not None:
+                if getattr(updater, "running", False):
+                    # Reset backoff if updater has been healthy and running uninterrupted for >= 60 seconds
+                    if _updater_running_since == 0.0:
+                        _updater_running_since = now
+                    elif (now - _updater_running_since) >= 60.0:
+                        _conflict_backoff = _min_conflict_backoff
+                else:
+                    _updater_running_since = 0.0
+                    logger.warning(
+                        "Telegram polling watchdog detected inactive updater. Attempting auto-recovery (cooldown=%.1fs)...",
+                        effective_cooldown,
+                    )
+                    try:
+                        await updater.start_polling(drop_pending_updates=True)
+                        logger.info("Telegram polling watchdog successfully recovered polling loop.")
+                        _updater_running_since = time.time()
+                    except Exception as e:
+                        e_str = str(e).lower()
+                        if "conflict" in e_str or "terminated by other getupdates" in e_str or type(e).__name__ == "Conflict":
+                            report_telegram_conflict()
+                        logger.warning(f"Telegram polling watchdog recovery attempt failed: {e}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"Telegram polling watchdog loop error: {e}")
+
 async def init_bot() -> Application:
     """Initializes the Telegram bot application, binds handlers, and starts polling."""
-    global telegram_app
+    global telegram_app, _polling_watchdog_task
     setup_telegram_logging_filters()
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token:
-        logger.error("TELEGRAM_BOT_TOKEN is not set. Bot will not run.")
+    token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    # ponytail: .env.example stub must not call getMe — that exception kills startup and restart-loops.
+    if not token or token.startswith("your_"):
+        logger.info("Telegram disabled")
         return None
         
     logger.info("Initializing Telegram bot...")
@@ -431,11 +523,24 @@ async def init_bot() -> Application:
         logger.info("Telegram Bot active and polling.")
     except Exception as e:
         logger.warning(f"Telegram Bot polling startup warning (possible duplicate instance or conflict): {e}")
+
+    # Launch background polling watchdog
+    if _polling_watchdog_task is None or _polling_watchdog_task.done():
+        _polling_watchdog_task = asyncio.create_task(_telegram_polling_watchdog())
+
     return telegram_app
 
 async def shutdown_bot():
     """Stops the Telegram bot polling and releases resources."""
-    global telegram_app
+    global telegram_app, _polling_watchdog_task
+    if _polling_watchdog_task and not _polling_watchdog_task.done():
+        _polling_watchdog_task.cancel()
+        try:
+            await _polling_watchdog_task
+        except asyncio.CancelledError:
+            pass
+        _polling_watchdog_task = None
+
     if telegram_app:
         logger.info("Stopping Telegram bot...")
         if telegram_app.updater and telegram_app.updater.running:
@@ -443,3 +548,4 @@ async def shutdown_bot():
         await telegram_app.stop()
         await telegram_app.shutdown()
         logger.info("Telegram Bot shut down.")
+

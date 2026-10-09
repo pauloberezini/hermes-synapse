@@ -127,8 +127,12 @@ def test_obsidian_tools(mock_search_memory):
     res_read = tools.execute_tool("read_obsidian_note", {"note_path": "note1.md"})
     assert "# Note Content" in res_read
     
-    # 3. create_obsidian_note
-    res_create = tools.execute_tool("create_obsidian_note", {"title": "New", "content": "Body"})
+    # 3. create_obsidian_note (file write waits for a human)
+    from backend.governance import ApprovalQueue
+    note_args = {"title": "New", "content": "Body"}
+    req_id = ApprovalQueue.request_approval("default", "create_obsidian_note", note_args, "note")
+    ApprovalQueue.resolve(req_id, "APPROVED")
+    res_create = tools.execute_tool("create_obsidian_note", note_args)
     assert "created" in res_create
 
 

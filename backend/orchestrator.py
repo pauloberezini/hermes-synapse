@@ -152,7 +152,7 @@ def extract_planner_json(raw: str) -> dict:
 
         # 1. Standard JSON parse
         try:
-            d = json.loads(trimmed)
+            d = json.loads(trimmed, strict=False)
             if isinstance(d, list):
                 return {"steps": d}
             if isinstance(d, dict):
@@ -160,10 +160,12 @@ def extract_planner_json(raw: str) -> dict:
         except Exception:
             pass
 
-        # 2. Trailing comma cleanup
+        # 2. Comment stripping + Trailing comma cleanup
         try:
-            repaired = re.sub(r",\s*([\}\]])", r"\1", trimmed)
-            d = json.loads(repaired)
+            decommented = re.sub(r'/\*[\s\S]*?\*/', '', trimmed)
+            decommented = re.sub(r'(?<!:)\/\/[^\r\n]*', '', decommented).strip()
+            repaired = re.sub(r",\s*([\}\]])", r"\1", decommented)
+            d = json.loads(repaired, strict=False)
             if isinstance(d, list):
                 return {"steps": d}
             if isinstance(d, dict):
@@ -174,7 +176,9 @@ def extract_planner_json(raw: str) -> dict:
         # 3. Python literal parsing fallback (for single-quoted JSON dicts)
         try:
             import ast
-            py_s = re.sub(r"\btrue\b", "True", trimmed, flags=re.IGNORECASE)
+            py_s = re.sub(r'/\*[\s\S]*?\*/', '', trimmed)
+            py_s = re.sub(r'(?<!:)\/\/[^\r\n]*', '', py_s).strip()
+            py_s = re.sub(r"\btrue\b", "True", py_s, flags=re.IGNORECASE)
             py_s = re.sub(r"\bfalse\b", "False", py_s, flags=re.IGNORECASE)
             py_s = re.sub(r"\bnull\b", "None", py_s, flags=re.IGNORECASE)
             val = ast.literal_eval(py_s)
@@ -226,9 +230,20 @@ def extract_planner_json(raw: str) -> dict:
         if res is not None:
             return res
 
-    # Step 5: If all attempts fail, do one final attempt on text to raise the exact underlying json error
+    # Step 5: If all attempts fail, try comment-stripped text before raising
     try:
-        data = json.loads(text)
+        clean_final = re.sub(r'/\*[\s\S]*?\*/', '', text)
+        clean_final = re.sub(r'(?<!:)\/\/[^\r\n]*', '', clean_final).strip()
+        clean_final = re.sub(r",\s*([\}\]])", r"\1", clean_final)
+        data = json.loads(clean_final, strict=False)
+        if isinstance(data, list):
+            return {"steps": data}
+        return data
+    except Exception:
+        pass
+
+    try:
+        data = json.loads(text, strict=False)
         if isinstance(data, list):
             return {"steps": data}
         return data
@@ -238,7 +253,9 @@ def extract_planner_json(raw: str) -> dict:
         raise ValueError(f"Invalid JSON format. Underlying error: {str(e)}")
 
 
-async def run_orchestration(query: str, api_key: str, model: str, chat_id: str = "default", parent_skills: Optional[str] = None) -> Dict[str, Any]:
+async def run_orchestration(query: str, api_key: str, model: str, chat_id: str = "default", parent_skills: Optional[str] = None, _stack: tuple = ()) -> Dict[str, Any]:
+    from backend.governance import BudgetExceededError, budget_session
+    budget_session.set(chat_id or "default")
     state = AgentState(query, chat_id)
     
     file_context = ""
@@ -255,7 +272,14 @@ async def run_orchestration(query: str, api_key: str, model: str, chat_id: str =
     else:
         orch_id = "jarvis"
         orch_meta = get_subagent("jarvis")
-    
+
+    if orch_id in _stack:
+        path = " -> ".join((*_stack, orch_id))
+        msg = f"Cycle detected in agent DAG: {path}"
+        state.add_trace("Orchestrator", "Cycle", msg, "error")
+        return {"response": msg, "traces": state.traces, "steps": []}
+    _stack = (*_stack, orch_id)
+
     # Compute active_skills (intersection of parent_skills and this orchestrator's connected skills)
     active_skills = ""
     if orch_meta and orch_meta.get("skills"):
@@ -309,7 +333,9 @@ Available sub-agents:
         child_prompt = child.get("system_prompt", "") or ""
         dynamic_planner_prompt += f'- "{child["id"]}" (Name: {child_name}) — {child_prompt[:250]}\n'
         
-    dynamic_planner_prompt += """
+    from backend.plugins import hook as _plugin_hook
+    _rule = _plugin_hook("planner_trading_rule", default="") or ""
+    dynamic_planner_prompt += (("\n" + _rule) if _rule else "") + """
 You must output the result EXCLUSIVELY in JSON format of the following structure:
 {
   "steps": [
@@ -319,7 +345,6 @@ You must output the result EXCLUSIVELY in JSON format of the following structure
 
 Rules:
 - For scheduled automation tasks or operational execution triggers (such as queries starting with "Execute scheduled task:" or requests to trade, scan, analyze markets, or execute autonomous cycles), you MUST NOT return an empty list {"steps": []}. Even if the task description mentions "System Prompt:" or setup instructions, you must decompose the task into 1 to 3 sub-agent steps (e.g., market scan / proposals, risk evaluation, compliance audit).
-- When planning execution steps for trading sub-agents, explicitly instruct the execution agent to invoke `bcm_run_autonomous_cycle` (specifying target symbol or defaulting to 'BTC') to place orders on the exchange and the risk agent to query `ctrader_get_balance` for live sizing.
 - If the query requires fetching real-time information, you MUST schedule the first step with the "research" agent (or another agent with internet search capability) to fetch data from the Internet. Do not try to solve such tasks with agents that have no network access.
 - When writing `instructions` for the search/research step, convert any relative dates into specific calendar dates based on system time.
 - Use the "code" agent or "analyst" agent for mathematical or data processing tasks.
@@ -360,6 +385,8 @@ Rules:
             # Step A: LLM call
             try:
                 plan_response = await call_llm(planner_messages, api_key, planner_model)
+            except BudgetExceededError:
+                raise
             except Exception as net_err:
                 err_desc = f"{type(net_err).__name__}: {net_err}".rstrip(": ")
                 total_attempts = max_retries + 1
@@ -399,9 +426,9 @@ Rules:
                     if step["agent"] not in allowed_agent_ids:
                         raise ValueError(f"Step at index {idx} has an invalid/unknown agent ID: '{step['agent']}'. Allowed agent IDs are: {sorted(list(allowed_agent_ids))}")
 
-                is_operational = any(k in query.lower() for k in (
-                    "scheduled task", "autonomous", "hedge fund", "trade", "scan", "portfolio", "rebalance", "market"
-                ))
+                from backend.plugins import collect as _collect_markers
+                _op_markers = ("scheduled task",) + tuple(_collect_markers("operational_query_markers", "plan"))
+                is_operational = any(k in query.lower() for k in _op_markers)
                 if len(plan_data["steps"]) == 0 and is_operational and len(allowed_agent_ids) > 0 and attempt < max_retries:
                     raise ValueError(
                         f"Operational or scheduled task '{query[:60]}...' must not return 0 steps when subagents are available. "
@@ -409,70 +436,8 @@ Rules:
                     )
 
                 state.steps = plan_data.get("steps", [])
-                # Ensure operational tasks targeting trading engine subagents explicitly include live execution tool directive
-                for step in state.steps:
-                    step_agent = step.get("agent", "")
-                    step_inst = step.get("instructions", "")
-                    step_agent_lower = step_agent.lower()
-                    is_non_exec = any(k in step_agent_lower for k in ("risk", "compliance", "quant", "analyst", "research", "monitor", "observer"))
-                    is_exec_agent = (
-                        (step_agent == "bcm" or any(k in step_agent_lower for k in ("trader", "trading_engine", "executor")))
-                        and not is_non_exec
-                    )
-
-                    if is_non_exec:
-                        # Strictly forbid execution tools or trade execution instructions in non-exec subagent steps
-                        if "bcm_run_autonomous_cycle" in step_inst:
-                            step_inst = re.sub(
-                                r"\[MANDATORY TOOL INSTRUCTION\]:[^\n]*bcm_run_autonomous_cycle[^\n]*",
-                                "",
-                                step_inst,
-                                flags=re.IGNORECASE
-                            )
-                            step_inst = re.sub(r"\bbcm_run_autonomous_cycle\b", "bcm_get_technical_indicators" if ("quant" in step_agent_lower or "analyst" in step_agent_lower) else "analytical calculations", step_inst)
-                            step_inst = step_inst.strip()
-
-                    if is_exec_agent:
-                        has_symbol_hint = any(sym in step_inst.upper() for sym in ("BTC", "EURUSD", "GBPUSD", "US500", "BRENT", "GOLD", "XAGUSD", "ALL", "PORTFOLIO"))
-                        if is_operational and "bcm_run_autonomous_cycle" not in step_inst:
-                            step["instructions"] = (
-                                f"{step_inst}\n\n[MANDATORY TOOL INSTRUCTION]: You must execute the live trading cycle "
-                                f"via the bcm_run_autonomous_cycle tool (defaulting to symbol='BTC' if no specific asset is requested). "
-                                f"Do not complete your turn with only conversational text or ask for symbols."
-                            )
-                        elif is_operational and not has_symbol_hint:
-                            step["instructions"] = (
-                                f"{step_inst}\n\n[MANDATORY TOOL INSTRUCTION]: Execute bcm_run_autonomous_cycle for "
-                                f"symbol='BTC' or primary monitored assets. Do not complete your turn with only conversational text or ask for symbols."
-                            )
-                        else:
-                            step["instructions"] = step_inst
-                    elif is_operational:
-                        if ("quant" in step_agent_lower or "analyst" in step_agent_lower):
-                            if "bcm_get_technical_indicators" not in step_inst:
-                                step["instructions"] = (
-                                    f"{step_inst}\n\n[MANDATORY TOOL INSTRUCTION]: Compute technical indicators and market metrics "
-                                    f"using bcm_get_technical_indicators. Do not execute trades directly."
-                                )
-                            elif "[MANDATORY TOOL INSTRUCTION]" not in step_inst:
-                                step["instructions"] = (
-                                    f"{step_inst}\n\n[MANDATORY TOOL INSTRUCTION]: Compute live technical indicators and market metrics "
-                                    f"by executing bcm_get_technical_indicators directly. Do not simulate indicators or complete your turn with conversational text."
-                                )
-                            else:
-                                step["instructions"] = step_inst
-                        elif ("risk" in step_agent_lower or "compliance" in step_agent_lower):
-                            if not any(k in step_inst for k in ("ctrader_get_balance", "ctrader_get_positions")):
-                                step["instructions"] = (
-                                    f"{step_inst}\n\n[MANDATORY TOOL INSTRUCTION]: Verify account balance, margin, and positions "
-                                    f"using ctrader_get_balance and ctrader_get_positions. Do not execute trades directly."
-                                )
-                            else:
-                                step["instructions"] = step_inst
-                        else:
-                            step["instructions"] = step_inst
-                    else:
-                        step["instructions"] = step_inst
+                from backend.plugins import hook as _plugin_hook
+                state.steps = _plugin_hook("annotate_plan_steps", state.steps, query, is_operational, allowed_agents=allowed_agent_ids, default=state.steps)
                 state.add_trace("Orchestrator", "Planning", f"Plan of {len(state.steps)} steps generated.", token_cost=plan_cost)
                 parse_err = None
                 break
@@ -487,24 +452,18 @@ Rules:
             state.steps = []
             state.add_trace("Orchestrator", "Planning", f"Failed to generate structured plan after {max_retries} retries. Falling back to direct response.", "warning")
             
-        # Check if 0 steps were generated for an operational / scheduled task or orchestrator with tools
-        if len(state.steps) == 0 and (active_skills or "scheduled task" in query.lower() or "autonomous" in query.lower() or "hedge fund" in query.lower() or "trade" in query.lower() or "scan" in query.lower()):
-            if len(children) >= 2:
-                default_steps = []
-                quant_id = next((c.get("id") for c in children if any(k in c.get("id", "").lower() for k in ("quant", "scan", "market"))), None)
-                if quant_id:
-                    default_steps.append({"agent": quant_id, "instructions": "Perform technical indicator scan and market analysis using bcm_get_technical_indicators."})
-                risk_id = next((c.get("id") for c in children if any(k in c.get("id", "").lower() for k in ("risk", "compliance"))), None)
-                if risk_id:
-                    default_steps.append({"agent": risk_id, "instructions": "Verify account balance and risk limits using ctrader_get_balance."})
-                trader_id = next((c.get("id") for c in children if any(k in c.get("id", "").lower() for k in ("bcm", "trader", "exec")) and c.get("id") not in (quant_id, risk_id)), None)
-                if trader_id:
-                    default_steps.append({"agent": trader_id, "instructions": "Execute the autonomous trading cycle using bcm_run_autonomous_cycle."})
-                
-                if default_steps:
-                    logger.info(f"Orchestrator '{orch_id}' planned 0 steps for operational task. Applied canonical child pipeline: {[s['agent'] for s in default_steps]}")
-                    state.add_trace("Orchestrator", "Planning", f"0 subagent steps planned; applied canonical child pipeline with {len(default_steps)} steps.", "info")
-                    state.steps = default_steps
+        # Empty plan on an operational task: plugin pipeline, else the orchestrator runs the tools itself.
+        _q = query.lower()
+        from backend.plugins import collect as _collect_markers
+        _fb_markers = ("scheduled task",) + tuple(_collect_markers("operational_query_markers", "fallback"))
+        _operational = bool(active_skills) or any(k in _q for k in _fb_markers)
+        if len(state.steps) == 0 and _operational:
+            from backend.plugins import hook as _plugin_hook
+            default_steps = _plugin_hook("fallback_plan_steps", query, children, active_skills, default=None)
+            if default_steps:
+                logger.info(f"Orchestrator '{orch_id}' planned 0 steps for operational task. Applied canonical child pipeline: {[s['agent'] for s in default_steps]}")
+                state.add_trace("Orchestrator", "Planning", f"0 subagent steps planned; applied canonical child pipeline with {len(default_steps)} steps.", "info")
+                state.steps = default_steps
 
             if len(state.steps) == 0:
                 logger.info(f"Orchestrator '{orch_id}' planned 0 steps for operational task. Falling back to direct execution with tools.")
@@ -528,16 +487,30 @@ Rules:
             instructions = step.get("instructions")
             
             # Find agent config
-            child_agent = next((c for c in children if c["id"] == agent_type), None)
+            child_agent = next((c for c in children if c.get("id") == agent_type), None)
             if not child_agent:
                 # Check from all subagents as backup
-                child_agent = next((a for a in all_subagents if a["id"] == agent_type), None)
+                child_agent = next((a for a in all_subagents if a.get("id") == agent_type), None)
                 
             if not child_agent:
                 state.add_trace("Router", "Error", f"Unknown agent: {agent_type}", "error")
                 state.current_step_idx += 1
                 continue
-                
+
+            child_agent = dict(child_agent)
+            child_name = child_agent.get("name") or child_agent.get("id") or "Agent"
+            if not child_agent.get("model"):
+                child_agent["model"] = orch_meta.get("model") or model or os.getenv("DEFAULT_MODEL", "google/gemini-2.5-pro")
+
+            from backend.plugins import hook as _plugin_hook
+            prior_outputs = [str(r.get("output") or "") for r in state.results]
+            stub = _plugin_hook("skip_orchestrator_step", agent_type, prior_outputs, default=None)
+            if stub:
+                state.results.append({"step": state.current_step_idx, "agent": agent_type, "output": stub})
+                state.add_trace(child_name, "Skip", "Skipped LLM call: prior step already WAIT/HOLD.", "info")
+                state.current_step_idx += 1
+                continue
+
             # Build context from previous steps using compress_step_context
             from backend.context_manager import compress_step_context
             context_str = compress_step_context(state.results, max_chars_per_step=3000)
@@ -546,28 +519,10 @@ Rules:
             if file_context:
                 contextual_instructions = file_context + "\n\n" + contextual_instructions
 
-            if "compliance" in agent_type.lower():
-                has_wait = any(
-                    any(term in str(r.get("output", "")).lower() for term in (
-                        "verdict: wait", "action verdict: ⏸️ wait", "action verdict: wait",
-                        "action: wait", "md hold veto", "skipped: md hold veto",
-                        "trade not executed", "no active trade"
-                    ))
-                    for r in state.results
-                )
-                if has_wait:
-                    contextual_instructions += (
-                        "\n\n[COMPLIANCE DIRECTIVE]: The trading engine verdict for this cycle is WAIT / HOLD (no trade executed). "
-                        "Your compliance audit MUST render 'Compliance Verdict: PASSED (No Action Required / HOLD)'. "
-                        "A WAIT/HOLD decision adheres to capital preservation and is fully compliant. Do not mark as FAILED for lack of trade parameters."
-                    )
-                contextual_instructions += (
-                    "\n\n[COMPLIANCE DIRECTIVE ON DIVERSIFICATION]: Note that existing open positions in different asset classes "
-                    "(e.g., commodities like BRENT vs cryptocurrencies like BTC or Forex pairs) represent standard multi-asset portfolio diversification. "
-                    "Per BCM Risk Protocol Rule 4, open positions in different asset classes do NOT violate single-symbol exposure limits. "
-                    "Do NOT fail the compliance audit due to speculative cross-asset drawdown correlation if the proposed trade's single-symbol risk is <= 1.0% equity and volume is within limits."
-                )
-            state.add_trace("Router", "Route", f"Step {state.current_step_idx+1}/{len(state.steps)}: Delegating to agent '{child_agent['name']}' ({agent_type})")
+            step_prefix = _plugin_hook("orchestrator_step_prefix", agent_type, prior_outputs, default=None)
+            if step_prefix:
+                contextual_instructions = step_prefix + contextual_instructions
+            state.add_trace("Router", "Route", f"Step {state.current_step_idx+1}/{len(state.steps)}: Delegating to agent '{child_name}' ({agent_type})")
             
             # Check node execution type
             is_sub_orch = child_agent.get("agent_type") in ("orchestrator", "sub-orchestrator")
@@ -576,18 +531,18 @@ Rules:
                 try:
                     # Recursive dynamic orchestration call!
                     logger.info(f"Triggering recursive sub-orchestration for '{agent_type}'")
-                    sub_orch_res = await run_orchestration(contextual_instructions, api_key, model, chat_id=agent_type, parent_skills=parent_skills)
+                    sub_orch_res = await run_orchestration(contextual_instructions, api_key, model, chat_id=agent_type, parent_skills=parent_skills, _stack=_stack)
                     state.results.append({"step": state.current_step_idx, "agent": agent_type, "output": sub_orch_res["response"]})
                     # Add child traces to parent traces
                     for trace in sub_orch_res.get("traces", []):
                         state.traces.append({
                             **trace,
-                            "agent": f"{child_agent['name']} > {trace['agent']}"
+                            "agent": f"{child_name} > {trace['agent']}"
                         })
-                    state.add_trace(child_agent["name"], "Orchestrate", f"Sub-orchestrator completed. Result: {sub_orch_res['response'][:120]}...")
+                    state.add_trace(child_name, "Orchestrate", f"Sub-orchestrator completed. Result: {sub_orch_res['response'][:120]}...")
                 except Exception as e:
                     state.results.append({"step": state.current_step_idx, "agent": agent_type, "error": str(e)})
-                    state.add_trace(child_agent["name"], "Error", f"Sub-orchestration error: {str(e)}", "error")
+                    state.add_trace(child_name, "Error", f"Sub-orchestration error: {str(e)}", "error")
             
             # Fallbacks for built-in Research / Code / Analyst execution
             elif agent_type == "research":
@@ -662,48 +617,40 @@ Rules:
                         if asst_msgs and asst_msgs[-1].strip():
                             res = asst_msgs[-1]
                         else:
-                            res = f"Sir, the requested task for agent {child_agent.get('name', agent_type)} has been analyzed and completed."
+                            res = f"The requested task for agent {child_agent.get('name', agent_type)} has been analyzed and completed."
 
-                    if res.startswith("Apologies, Sir.") or "Difficulties occurred while communicating with the server" in res:
+                    if (
+                        res.startswith("Apologies")
+                        or any(k in res.lower() for k in (
+                            "difficulties occurred while communicating with the server",
+                            "network error occurred while contacting the ai service",
+                            "all connection attempts failed",
+                            "connecterror",
+                        ))
+                    ):
                         is_error = True
                         err_msg = res
                     elif any(k in res.lower() for k in ("http error 429", "rate limit", "rate-limited", "engine_overloaded", "provider returned error")):
                         is_error = True
                         err_msg = res
                     elif any(k in res.lower() for k in (
-                        "ch_access_token_invalid",
-                        "trades blocked (authentication required)",
-                        "trades blocked (critical authentication required)",
                         "critical authentication failure",
                         "re-authentication required",
                         "authentication required",
                         "invalid access token",
                         "subagent execution blocked by authentication/system error",
-                        "broker account balance is unavailable",
-                        "mock or simulated balances",
-                    )):
-                        # If this is a substantive compliance/risk audit report that explicitly rendered a verdict,
-                        # or a structured BCM autonomous cycle execution report, the subagent did NOT crash.
-                        is_structured_audit_report = any(k in res.lower() for k in (
-                            "compliance verdict", "risk assessment", "audit verdict", "audit report",
-                            "rationale:", "risk limit", "autonomous cycle execution report"
-                        )) and not any(block in res.lower() for block in (
-                            "subagent execution blocked by authentication/system error",
-                            "broker account balance is unavailable",
-                            "mock or simulated balances",
-                            "critical authentication",
-                        ))
-                        if not is_structured_audit_report:
+                    ) + tuple(_collect_markers("execution_blocker_markers"))):
+                        if not _plugin_hook("is_substantive_report", res, default=False):
                             is_error = True
                             err_msg = f"Subagent execution blocked by authentication/system error: {res[:150]}"
 
                     if is_error:
-                        result_entry = {"step": state.current_step_idx, "agent": agent_type, "error": f"Agent {child_agent['name']} failed with error: {err_msg}"}
+                        result_entry = {"step": state.current_step_idx, "agent": agent_type, "error": f"Agent {child_name} failed with error: {err_msg}"}
                         if res and isinstance(res, str):
                             result_entry["output"] = res
                         state.results.append(result_entry)
-                        state.add_trace(child_agent["name"], "Execute", f"Sub-agent execution failed: {err_msg[:120]}...", "error")
-                        is_auth_blocker = any(k in err_msg.lower() for k in ("authentication", "access_token", "re-authentication", "blocked by authentication/system error", "broker account balance is unavailable"))
+                        state.add_trace(child_name, "Execute", f"Sub-agent execution failed: {err_msg[:120]}...", "error")
+                        is_auth_blocker = any(k in err_msg.lower() for k in ("authentication", "access_token", "re-authentication", "blocked by authentication/system error")) or bool(_plugin_hook("is_auth_blocker", err_msg, default=False))
                         is_network_blocker = any(k in err_msg.lower() for k in (
                             "all connection attempts failed",
                             "name or service not known",
@@ -742,64 +689,31 @@ Rules:
                             state.current_step_idx += 1
                             break
                     else:
-                        if "compliance" in agent_type.lower() and isinstance(res, str):
-                            lower_res = res.lower()
-                            if "failed" in lower_res:
-                                is_wait_benign = any(k in lower_res for k in (
-                                    "resulted in a \"wait\" action verdict",
-                                    "resulted in a 'wait' action verdict",
-                                    "action verdict with 0.0% confidence",
-                                    "action verdict: wait",
-                                    "verdict: wait",
-                                    "md hold veto",
-                                    "no concrete trade parameters",
-                                    "no actual parameters to audit",
-                                    "hypothetical trade parameters",
-                                    "trade was not executed",
-                                    "decision is to wait",
-                                    "decision to wait",
-                                ))
-                                is_cross_asset_benign = (
-                                    any(k in lower_res for k in ("symbol verification", "volume limit", "risk verification"))
-                                    and any(k in lower_res for k in (
-                                        "while not directly overlapping with",
-                                        "cumulative exposure from these existing",
-                                        "cumulative exposure across different asset classes",
-                                        "open positions across different currency pairs",
-                                        "correlation between existing assets",
-                                    ))
-                                )
-                                if is_wait_benign:
-                                    res = re.sub(
-                                        r"(?i)(compliance\s+(?:audit|verdict)\s*:\s*)FAILED",
-                                        r"\1PASSED (No Action Required / HOLD)",
-                                        res
-                                    )
-                                    res = re.sub(
-                                        r"(?i)(\*\*compliance\s+(?:audit|verdict)\s*:\s*)FAILED(\*\*)",
-                                        r"\1PASSED (No Action Required / HOLD)\2",
-                                        res
-                                    )
-                                elif is_cross_asset_benign:
-                                    res = re.sub(
-                                        r"(?i)(compliance\s+(?:audit|verdict)\s*:\s*)FAILED",
-                                        r"\1PASSED (Cross-Asset Exposure Verified / Within Risk Limits)",
-                                        res
-                                    )
-                                    res = re.sub(
-                                        r"(?i)(\*\*compliance\s+(?:audit|verdict)\s*:\s*)FAILED(\*\*)",
-                                        r"\1PASSED (Cross-Asset Exposure Verified / Within Risk Limits)\2",
-                                        res
-                                    )
+                        rewritten = _plugin_hook("rewrite_orchestrator_output", agent_type, res, prior_outputs, default=None)
+                        if rewritten:
+                            res = rewritten
                         state.results.append({"step": state.current_step_idx, "agent": agent_type, "output": res})
-                        state.add_trace(child_agent["name"], "Execute", f"Sub-agent completed execution: {res[:120]}...")
+                        state.add_trace(child_name, "Execute", f"Sub-agent completed execution: {res[:120]}...")
                 except Exception as e:
-                    state.results.append({"step": state.current_step_idx, "agent": agent_type, "error": f"Agent {child_agent['name']} failed with error: {str(e)}"})
-                    state.add_trace(child_agent["name"], "Error", f"Error: {str(e)}", "error")
+                    state.results.append({"step": state.current_step_idx, "agent": agent_type, "error": f"Agent {child_name} failed with error: {str(e)}"})
+                    state.add_trace(child_name, "Error", f"Error: {str(e)}", "error")
                     
             state.current_step_idx += 1
             
         # 3. SYNTHESIZE NODE
+        from backend.plugins import hook as _plugin_hook
+        wait_report = _plugin_hook("orchestrator_synthesis", state.results, default=None)
+        if wait_report:
+            logger.info("Skipping synthesis LLM call: cycle already produced WAIT/HOLD report.")
+            state.add_trace("Orchestrator", "Notice", "Skipping synthesis LLM call; using WAIT/HOLD engine report.", "info")
+            state.final_response = str(wait_report)
+            return {
+                "response": state.final_response,
+                "traces": state.traces,
+                "steps": state.steps,
+                "results": state.results,
+            }
+
         state.add_trace("Router", "Route", "All plan steps completed. Proceeding to synthesize final response.")
         
         # Build results context string
@@ -832,17 +746,16 @@ Rules:
         parent_name = parent_agent.get("name", "Jarvis") if (parent_agent and isinstance(parent_agent, dict)) else "Jarvis"
         synth_prompt = (
             f"You are {parent_name}, a highly intelligent assistant.\n"
-            f"Formulate the final response to the user (Sir) based on their original query and the results of your sub-agents.\n\n"
-            f"Original query of Sir: \"{query}\"\n\n"
+            f"Formulate the final response to the user based on their original query and the results of your sub-agents.\n\n"
+            f"Original query: \"{query}\"\n\n"
             f"Results of sub-agents:\n{results_context}\n\n"
             f"CRITICAL FACTUALITY & ANTI-HALLUCINATION RULES:\n"
             f"1. STRICT ADHERENCE TO SUB-AGENT RESULTS: You MUST base your response strictly on the factual results returned by the sub-agents above.\n"
             f"2. ACCURATE ERROR REPORTING: If a sub-agent encountered an error, failure, or API rejection (e.g., Code 170140 or invalid parameter), YOU MUST TRUTHFULLY REPORT THAT THE ACTION FAILED and state the exact error message.\n"
             f"3. NO FAKE EXECUTION / NO HALLUCINATED RESOLUTIONS: You are CATEGORICALLY FORBIDDEN from inventing, pretending, or hallucinating that you or the sub-agents auto-corrected parameters, re-submitted orders, or opened positions that were NOT explicitly reported as successful in the sub-agents' outputs.\n"
-            f"4. NO FAKE TOOL CALL TEXT: Do NOT output fake code blocks pretending to invoke tools (e.g. `exchange_place_order`) or fake order IDs unless confirmed by successful tool outputs.\n"
-            f"5. EXECUTIVE SUMMARY FORMAT: Formulate an executive Markdown summary for Sir. Synthesis is a reporting stage, NOT a tool invocation stage. Under no circumstances should you output raw tool call code blocks or snippets (such as ```json {{\"bcm_run_autonomous_cycle\": ...}}```).\n"
-            f"6. UNVERIFIED POSITION & EXECUTION DISCLOSURE: If any sub-agent output contains warnings that broker position audit tools were not executed, orders were NOT opened, or that positions/indicators are simulated, you MUST explicitly state in your executive summary that no live trades were executed on the exchange and all reported positions/indicators are unverified simulations. NEVER state 'exchange execution: pass' or claim orders were executed.\n"
-            f"7. UNVERIFIED BALANCE DISCLOSURE: If any sub-agent output contains notices or warnings that live broker balance was unverified or simulated, you MUST clearly report in your executive summary that capital sizing was calculated based on unverified reference balance and requires live balance confirmation before live trade placement.\n\n"
+            f"4. NO FAKE TOOL CALL TEXT: Do NOT output fake code blocks pretending to invoke tools or fake IDs unless confirmed by successful tool outputs.\n"
+            f"5. EXECUTIVE SUMMARY FORMAT: Formulate an executive Markdown summary. Synthesis is a reporting stage, NOT a tool invocation stage. Under no circumstances should you output raw tool call code blocks or snippets.\n"
+            f"{_plugin_hook('synthesis_extra_rules', default='') or ''}"
             f"Adhere to the tone and instructions of your system role. "
             f"Embed links to charts as Markdown images, for example: ![Chart](chart_url)."
         )
@@ -881,7 +794,7 @@ Rules:
         )
 
         if has_network_outage:
-            logger.warning("Skipping synthesis LLM call due to upstream network outage. Generating subagents error summary.")
+            logger.info("Skipping synthesis LLM call due to upstream network outage. Generating subagents error summary.")
             state.add_trace("Orchestrator", "Abort", "Skipping synthesis LLM call due to confirmed network outage.", "warning")
             state.final_response = ""
         elif has_rate_limit_outage:
@@ -896,6 +809,8 @@ Rules:
         else:
             try:
                 state.final_response = await call_llm(synth_messages, api_key, model)
+            except BudgetExceededError:
+                raise
             except Exception as synth_err:
                 synth_err_desc = f"{type(synth_err).__name__}: {synth_err}".rstrip(": ") if str(synth_err) else type(synth_err).__name__
                 is_fatal_net = any(k in synth_err_desc.lower() for k in (
@@ -920,6 +835,8 @@ Rules:
                     try:
                         logger.info(f"Retrying synthesis with secondary fallback model '{fallback_synth_model}'...")
                         state.final_response = await call_llm(synth_messages, api_key, fallback_synth_model)
+                    except BudgetExceededError:
+                        raise
                     except Exception as fb_err:
                         fb_err_desc = f"{type(fb_err).__name__}: {fb_err}".rstrip(": ") if str(fb_err) else type(fb_err).__name__
                         logger.warning(f"Secondary synthesis fallback model '{fallback_synth_model}' failed: {fb_err_desc}")
@@ -958,7 +875,7 @@ Rules:
                 header = "### Sub-agent Execution Issues:\n\n" if has_error else "### Sub-agents execution results:\n\n"
                 state.final_response = header + "\n\n".join(fallback_texts)
             else:
-                state.final_response = "Apologies, Sir. The execution could not be completed because the assigned sub-agents encountered errors and produced no valid output."
+                state.final_response = "Apologies. The execution could not be completed because the assigned sub-agents encountered errors and produced no valid output."
 
         # Check if synthesis returned a bare tool-call snippet or raw JSON without an executive summary
         raw_resp = state.final_response.strip()
@@ -969,7 +886,9 @@ Rules:
                 inner = inner[4:].strip()
             try:
                 parsed_call = json.loads(inner)
-                if isinstance(parsed_call, dict) and any("bcm" in str(k) or "tool" in str(k) or "cycle" in str(k) or "autonomous" in str(k) for k in parsed_call.keys()):
+                from backend.plugins import tool_hints
+                _name_bits = tuple(p.rstrip("_") for p in (tool_hints().get("prefixes") or ())) + ("tool", "cycle", "autonomous")
+                if isinstance(parsed_call, dict) and any(any(bit and bit in str(k) for bit in _name_bits) for k in parsed_call.keys()):
                     is_raw_tool_block = True
             except Exception:
                 pass
@@ -1003,7 +922,6 @@ Rules:
         from backend.agent import sanitize_tool_tokens
         state.final_response = sanitize_tool_tokens(state.final_response)
 
-        # Strip unexecuted markdown tool blocks (e.g. ```json\n{"bcm_run_autonomous_cycle": ...}\n```)
         def _strip_tool_blocks(text: str) -> str:
             if not text:
                 return text
@@ -1014,9 +932,11 @@ Rules:
                     data = json.loads(raw_json)
                     if isinstance(data, dict):
                         keys = [str(k).lower() for k in data.keys()]
-                        if any(any(prefix in k for prefix in ("bcm_", "ctrader_", "exchange_", "call_subagent", "execute_tool")) for k in keys):
+                        from backend.plugins import tool_hints
+                        _prefixes = ("exchange_", "call_subagent", "execute_tool") + tuple(tool_hints().get("prefixes") or ())
+                        if any(any(prefix in k for prefix in _prefixes) for k in keys):
                             return ""
-                        if "name" in keys and any(prefix in str(data.get("name", "")).lower() for prefix in ("bcm_", "ctrader_", "exchange_", "call_subagent")):
+                        if "name" in keys and any(prefix in str(data.get("name", "")).lower() for prefix in _prefixes):
                             return ""
                         if "tool" in keys:
                             return ""
@@ -1028,122 +948,17 @@ Rules:
 
         state.final_response = _strip_tool_blocks(state.final_response)
 
-        # Guardrail: Check if synthesis claims trade execution when no subagent actually executed orders
-        resp_lower = state.final_response.lower()
-        is_trading_context = (
-            "bcm" in orch_id.lower()
-            or "trad" in orch_id.lower()
-            or "hedge" in query.lower()
-            or any(k in resp_lower for k in ("ndx", "brent", "trade", "exchange execution", "lots"))
+        guarded = _plugin_hook(
+            "guard_orchestrator_response",
+            state.final_response,
+            orch_id,
+            query,
+            state.results,
+            default=None,
         )
-        if is_trading_context:
-            has_actual_order_execution = False
-            for r in state.results:
-                out_str = str(r.get("output") or "")
-                if any(warn in out_str for warn in (
-                    "⚠️ Warning: Order placement was not executed",
-                    "⚠️ Notice: Live broker position audit tool was not executed",
-                    "⚠️ Notice: Technical indicators",
-                    "(Simulated / Live Broker Tool Not Triggered)",
-                    "Proposal ID: Simulated",
-                    "Proposed (Simulation)",
-                )):
-                    continue
-                out_lower = out_str.lower()
-                if any(k in out_lower for k in (
-                    "exchange execution: pass",
-                    "exchange execution: ✅ pass",
-                    "order placed successfully",
-                    "new order placed",
-                    "execution order placed",
-                )) or (("order_id" in out_lower or "order id:" in out_lower) and "simulat" not in out_lower and "propos" not in out_lower):
-                    has_actual_order_execution = True
-                    break
-
-            if not has_actual_order_execution:
-                synth_claim_patterns = [
-                    r"exchange\s+execution\s*:\s*(?:✅\s*)?pass",
-                    r"order\s+execution\s*:\s*(?:✅\s*)?pass",
-                    r"(?<!compliance\s)(?<!checklist\s)(?<!risk\s)(?<!pre-flight\s)(?<!preflight\s)(?<!gate\s)(?<!system\s)(?<!macro\s)(?<!workflow\s)(?<!task\s)(?<!scan\s)(?<!analysis\s)(?<!strategy\s)(?<!plan\s)(?<!script\s)(?<!query\s)(?<!audit\s)trade\s+execution\s*:\s*(?:✅\s*)?pass",
-                    r"(?<!compliance\s)(?<!checklist\s)(?<!risk\s)(?<!pre-flight\s)(?<!preflight\s)(?<!gate\s)(?<!system\s)(?<!macro\s)(?<!workflow\s)(?<!task\s)(?<!scan\s)(?<!analysis\s)(?<!strategy\s)(?<!plan\s)(?<!script\s)(?<!query\s)(?<!audit\s)execution\s*:\s*✅?\s*pass",
-                    r"approved\s+and\s+executed",
-                    r"executed\s+as\s+planned",
-                    r"executed\s+successfully",
-                    r"successfully\s+executed",
-                    r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)(?<!never\s)executed\s+on\s+the\s+exchange",
-                    r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)(?<!live\s)(?<!real\s)positions?\s+(?:were\s+)?opened",
-                    r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)(?<!live\s)(?<!real\s)trades?\s+(?:were\s+)?executed",
-                    r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)(?<!live\s)(?<!real\s)trades?\s+(?:were\s+)?opened",
-                    r"(?<!no\s)(?<!not\s)(?<!zero\s)(?<!0\s)(?<!without\s)(?<!live\s)(?<!real\s)orders?\s+(?:were\s+)?(?:placed|filled)",
-                    r"completed\s+trades\s*:\s*\d+/\d+\s*(?:proposals\s+)?executed",
-                    r"\|\s*(?:[✔✓✅☑]\s*)?executed\s*\|",
-                    r"\|\s*(?:[✔✓✅☑]\s*)?filled\s*\|",
-                    r"status\s*[:|]\s*(?:[✔✓✅☑]\s*)?(?:filled|executed)",
-                    r"execution\s+mode\s*:\s*(?:fix\s+api|autonomous)",
-                    r"execution\s+id\s*[:|]\s*[a-zA-Z0-9_\-]+",
-                    r"\|\s*execution\s+id\s*\|\s*[a-zA-Z0-9_\-]+",
-                    r"\b\d+\s+trades?\s+executed\s+autonomously\b",
-                    r"executed\s+autonomously",
-                ]
-                zero_indicators = [
-                    r"(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:opened|executed|placed|filled)\s*[:=\-]?\s*(?:0\b|none\b|zero\b|\[\]|nil\b|null\b|false\b|n/a\b|no\b|pending\b|simulated\b|simulating\b|simulation\b|awaiting\b)",
-                    r"(?:total|new|recent|open|historical|previous|count\s+of|number\s+of|completed)\s+(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:opened|executed|placed|filled)\s*[:=\-]?\s*(?:0\b|none\b|zero\b|\[\]|nil\b|null\b|false\b|n/a\b|no\b)",
-                    r"\b0\s+(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:opened|executed|placed|filled)\b",
-                    r"\b(?:no|zero|without\s+any|never|not\s+any)\s+(?:(?:new|live|real|actual|active|further|additional|other|pending|simulated|\w+)\s+){0,3}(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+|being\s+)?(?:opened|executed|placed|filled)\b",
-                    r"\b(?:no|zero|without\s+any|never|not\s+any)\s+(?:(?:new|live|real|actual|active|further|additional|other|pending|simulated|\w+)\s+){0,3}(?:trades?|positions?|orders?)\b",
-                    r"(?:trades?|positions?|orders?)\s+(?:were\s+|was\s+|are\s+|have\s+been\s+)?(?:not|never)\s+(?:opened|executed|placed|filled)\b",
-                    r"(?:trade|trades|position|positions|order|orders)\s+(?:not|never)\s+(?:opened|executed|placed|filled)\b",
-                    r"(?:trade|trades|position|positions|order|orders)\s+(?:were\s+|was\s+)?(?:skipped|halted|vetoed|cancelled|rejected|blocked)\b",
-                    r"(?:no|zero)\s+(?:new\s+|further\s+|additional\s+)?trades?\s+(?:to\s+(?:be\s+)?executed|warranted|recommended|executed|opened)\b",
-                    r"(?:trades?|positions?|orders?)\s+(?:to\s+be\s+|will\s+be\s+|once\s+|if\s+)(?:executed|opened|placed|filled)",
-                    r"(?:trades?|positions?|orders?)\s+executed\s+(?:if|once|when|after|pending)\b",
-                    r"(?:trades?|positions?|orders?)\s+(?:were\s+)?executed\s+(?:during|in)\s+(?:backtest|simulation|paper\s+trade|testing|sample)\b",
-                    r"(?:backtest|simulation|paper|candidate|historical|sample|test)\s+(?:trades?|positions?|orders?)\s+(?:were\s+)?executed\b",
-                    r"(?:candidate|proposed|hypothetical|potential)\s+(?:trades?|positions?|orders?)\s+(?:were\s+)?executed\b",
-                    r"(?:pending|simulated|hypothetical|potential)\s+(?:trades?|positions?|orders?)\s+(?:executed|opened|placed)",
-                    r"trades?\s+executed\s*:\s*simulation\b",
-                    r"\|\s*(?:[✔✓✅☑]\s*)?(?:executed|filled)\s*\|[^\n]*\n\s*\|[\s\-:|]+\|",
-                    r"\|\s*(?:symbol|action|size|instrument|asset|ticker|side|order|status)[^|\n]*\|\s*(?:[✔✓✅☑]\s*)?(?:executed|filled)\s*\|",
-                    r"trade\s+execution\s*:\s*(?:✅\s*)?pass[^\n]*(?:checklist|compliance|audit|verified|check|gate)",
-                    r"(?:checklist|compliance|audit|verification|pre-trade|pre-flight)[\s\S]{0,80}trade\s+execution\s*:\s*(?:✅\s*)?pass",
-                    r"(?:pending|awaiting|simulat|conditional)[\s\S]{0,80}(?:executed|filled)",
-                    r"(?:executed|filled)[\s\S]{0,80}(?:pending|awaiting|simulat|conditional)",
-                    r"skipped\s+due\s+to\s+(?:an?\s+)?(?:existing\s+)?(?:open\s+|active\s+)?position",
-                    r"\b(?:trade\s+execution\s+verdict|trade\s+verdict|action)\s*[:\-]?\s*(?:🔴\s*)?(?:trade\s+)?(?:blocked|veto|wait|hold|standby|none)\b",
-                    r"\b(?:trade|order)\s+(?:blocked|vetoed|halted|rejected|cancelled)\b",
-                    r"\b(?:blocked|vetoed)\s+by\s+(?:systemic\s+)?(?:veto|guard|risk|compliance)\b",
-                    r"\bno\s+live\s+(?:\w+\s+)?trades?\s+executed\b",
-                    r"\bexisting\s+positions\s+authorized\b",
-                    r"\bunrelated\s+to\s+.*\b",
-                ]
-                matched_synth_claim = False
-                for pat in synth_claim_patterns:
-                    for m in re.finditer(pat, resp_lower):
-                        line_start = resp_lower.rfind("\n", 0, m.start())
-                        if line_start == -1:
-                            line_start = 0
-                        prefix_line = resp_lower[line_start:m.start()]
-                        if any(re.search(neg_pat, prefix_line) for neg_pat in (
-                            r"\b(?:no|not|zero|without|never)\b",
-                            r"\b(?:blocked|vetoed|cancelled|halted)\b",
-                        )):
-                            continue
-
-                        snippet = resp_lower[max(0, m.start() - 80):min(len(resp_lower), m.end() + 80)]
-                        if not any(re.search(z_pat, snippet) for z_pat in zero_indicators):
-                            matched_synth_claim = True
-                            break
-                    if matched_synth_claim:
-                        break
-
-                if matched_synth_claim:
-                    verification_notice = (
-                        "\n\n> ⚠️ **Verification Notice**: No live broker/exchange order placement tools were executed "
-                        "in this autonomous cycle. The executions mentioned above represent analytical proposals/simulations only. "
-                        "No real positions have been opened on the exchange."
-                    )
-                    state.final_response += verification_notice
-                    state.add_trace("Orchestrator", "Guardrail", "Appended verification notice: synthesis claimed execution without tool calls.", "warning")
+        if isinstance(guarded, str) and guarded != state.final_response:
+            state.final_response = guarded
+            state.add_trace("Orchestrator", "Guardrail", "Appended verification notice: synthesis claimed execution without tool calls.", "warning")
 
         # Calculate cost
         prompt_est = sum(len(m["content"]) for m in synth_messages) // 4
@@ -1155,7 +970,7 @@ Rules:
         
     except Exception as general_err:
         state.add_trace("Orchestrator", "Error", f"Critical orchestrator failure: {str(general_err)}", "error")
-        state.final_response = f"Apologies, Sir. A failure occurred while coordinating my sub-agents: {str(general_err)}"
+        state.final_response = f"Apologies. A failure occurred while coordinating my sub-agents: {str(general_err)}"
         
     return {
         "response": state.final_response,

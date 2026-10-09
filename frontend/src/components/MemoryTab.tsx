@@ -109,7 +109,7 @@ export function MemoryTab({
           <div style={styles.logsList}>
             {memorySearchResults !== null ? (
               (!Array.isArray(memorySearchResults) || memorySearchResults.length === 0) ? (
-                <div style={styles.emptyLogs}>Nothing found for your query, Sir.</div>
+                <div style={styles.emptyLogs}>Nothing found for your query.</div>
               ) : (
                 memorySearchResults.map((match, idx) => (
                   <div 
@@ -158,7 +158,7 @@ export function MemoryTab({
               )
             ) : (
               (!Array.isArray(documents) || documents.length === 0) ? (
-                <div style={styles.emptyLogs}>SYNAPSE's memory is empty, Sir. Add a note on the left.</div>
+                <div style={styles.emptyLogs}>SYNAPSE's memory is empty. Add a note on the left.</div>
               ) : (
                 documents.map((doc, idx) => (
                   <div 

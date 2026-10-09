@@ -12,6 +12,24 @@ default_skills_dir = os.path.join(workspace_root, ".agents", "skills")
 SKILLS_DIR = os.getenv("DISTILLED_SKILLS_DIR", default_skills_dir)
 
 
+def _is_scheduled_automation_log(log_entry: Dict[str, Any]) -> bool:
+    """Scheduled task logs are not reusable skills — distilling them feeds RAG and inflates the next run."""
+    if not isinstance(log_entry, dict):
+        return False
+    if log_entry.get("is_scheduled") or log_entry.get("scheduled"):
+        return True
+    sid = str(log_entry.get("session_id") or "").lower()
+    if sid.startswith("task_") or "scheduled" in sid:
+        return True
+    msg = str(log_entry.get("user_message") or "").strip().lower()
+    return (
+        msg.startswith("execute scheduled task:") or
+        "scheduled task" in msg or
+        "scheduled automation" in msg or
+        "scheduled run" in msg
+    )
+
+
 def slugify(text: str) -> str:
     """Helper to turn a title or sentence into a safe file slug."""
     text = text.lower().strip()
@@ -64,13 +82,20 @@ class SkillDistiller:
             "re-authentication required", "trading execution blocked",
             "execution blocked", "trade execution: blocked", "trade execution blocked",
             "cannot perform a comprehensive", "api offline", "not authorized",
-            "invalid access token", "failed to connect to ctrader",
+            "invalid access token",
             "i need to know which symbol", "please provide the symbol",
             "which symbol to run", "what symbol to run", "what instrument are you planning",
             "await the proposed trade", "awaiting proposed trade",
             "without proper input confirmation"
         ]
-        if err_msg or any(marker in assistant_resp.lower() for marker in failure_markers):
+        try:
+            from backend.plugins import collect as _collect_markers
+            failure_markers.extend(_collect_markers("broker_failure_markers"))
+        except Exception:
+            pass
+        from backend.database import match_failure_marker
+        matched_marker = match_failure_marker(assistant_resp, failure_markers)
+        if err_msg or matched_marker:
             raise ValueError(f"Log entry #{log_entry.get('id')} contains error or execution failure, skipping skill distillation.")
 
         # 3. Check traces for error status or failure text
@@ -91,6 +116,12 @@ class SkillDistiller:
                         "await the proposed trade", "awaiting proposed trade"
                     )):
                         raise ValueError(f"Log entry #{log_entry.get('id')} contains tool failure, parameter stall, or trading paused in trace messages, skipping skill distillation.")
+
+        # 4. Check if it's a scheduled automation run
+        if _is_scheduled_automation_log(log_entry):
+            raise ValueError(
+                f"Log entry #{log_entry.get('id')} is a scheduled automation run, skipping skill distillation."
+            )
 
         # 4. Check for minimum worker execution steps (avoid distilling 0-worker scaffolding runs)
         worker_traces = [
@@ -134,8 +165,9 @@ class SkillDistiller:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             }
+            from backend.llm_model_manager import resolve_provider_model
             payload = {
-                "model": self.model,
+                "model": resolve_provider_model(self.model, self.api_base),
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
                 "max_tokens": 1500,
@@ -276,11 +308,16 @@ class SkillDistiller:
         
         distilled_results = []
         for log in undistilled_logs:
+            if _is_scheduled_automation_log(log):
+                logger.info("Skipping skill distillation for scheduled automation log #%s", log.get("id"))
+                continue
             try:
                 skill_dict = self.distill_log_entry(log)
                 saved_skill = self.save_and_index_skill(skill_dict)
                 distilled_results.append(saved_skill)
                 logger.info(f"Distilled log #{log['id']} into skill '{saved_skill['skill_name']}'")
+            except ValueError as e:
+                logger.info(f"Skipping skill distillation for log #{log.get('id')}: {e}")
             except Exception as e:
                 logger.error(f"Error distilling log #{log.get('id')}: {e}")
 

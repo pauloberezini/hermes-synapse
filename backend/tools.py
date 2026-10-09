@@ -8,10 +8,30 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 
+import contextvars
+
 logger = logging.getLogger("hermes.tools")
 
-# Threading-local context for passing parent_message_id to call_subagent without breaking API
-_call_context = threading.local()
+# ContextVar and Threading-local context for passing parent_message_id to call_subagent across threads
+_parent_msg_cvar: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("parent_message_id", default=None)
+
+class _CallContextProxy:
+    def __init__(self):
+        self._local = threading.local()
+
+    @property
+    def parent_message_id(self) -> Optional[str]:
+        val = getattr(self._local, "parent_message_id", None)
+        if val is not None:
+            return val
+        return _parent_msg_cvar.get(None)
+
+    @parent_message_id.setter
+    def parent_message_id(self, val: Optional[str]):
+        self._local.parent_message_id = val
+        _parent_msg_cvar.set(val)
+
+_call_context = _CallContextProxy()
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1737,7 +1757,7 @@ _KB_READ_ONLY = ("найди в", "что в заметк", "что я писа�
 
 
 def is_knowledge_save_request(text: str) -> bool:
-    """True when Sir is handing over content to archive, not asking a question."""
+    """True when the user is handing over content to archive, not asking a question."""
     if not text or not isinstance(text, str):
         return False
     low = text.lower()
@@ -1783,9 +1803,9 @@ def try_direct_knowledge_save(user_message: str) -> Optional[str]:
     except Exception:
         return None
     if data.get("error"):
-        return f"Sir, I could not save the note: {data['error']}"
+        return f"Could not save the note: {data['error']}"
     path = data.get("path", f"{folder}/{title}.md")
-    return f"Sir, the note is in the knowledge base: `{path}`."
+    return f"The note is in the knowledge base: `{path}`."
 
 
 def sync_obsidian_vault() -> str:
@@ -1818,11 +1838,46 @@ def execute_command(command: str) -> str:
 # TOOL ROUTER
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def is_invalid_tool_name(name: Any) -> bool:
+    """Checks whether a given candidate name is an invalid, generic, or non-callable tool identifier.
+    
+    Rejects:
+    - None or boolean types (e.g. True, False)
+    - Generic keyword placeholders ('function', 'tool', 'call', 'action', 'method', 'type', 'tool_call')
+    - Boolean/null literal strings ('true', 'false', 'null', 'none', 'undefined', 'boolean', 'bool')
+    - Python reserved keywords ('True', 'False', 'None', 'def', 'class', etc.)
+    - Empty or non-identifier tokens (names containing spaces, brackets, or starting with digits)
+    """
+    if name is None or isinstance(name, bool):
+        return True
+    name_str = str(name).strip()
+    if not name_str:
+        return True
+    name_lower = name_str.lower()
+    generic_keywords = {
+        "function", "tool", "call", "action", "method", "type", "tool_call",
+        "true", "false", "null", "none", "undefined", "boolean", "bool"
+    }
+    if name_lower in generic_keywords:
+        return True
+    import keyword
+    if keyword.iskeyword(name_str) or keyword.iskeyword(name_lower):
+        return True
+    import re
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-\.:]*$', name_str):
+        return True
+    return False
+
+
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
-    generic_keywords = {"function", "tool", "call", "action", "method", "type", "tool_call", ""}
-    if not name or str(name).strip().lower() in generic_keywords:
+    if is_invalid_tool_name(name):
         logger.warning(f"execute_tool called with invalid generic tool name: '{name}', arguments: {arguments}. Skipping execution.")
-        return json.dumps({"error": f"Invalid tool name: '{name}'. Generic keywords cannot be executed as tools."}, ensure_ascii=False)
+        return json.dumps({"error": f"Invalid tool name: '{name}'. Generic keywords and invalid identifiers cannot be executed as tools."}, ensure_ascii=False)
+
+    from backend.governance import gate_tool
+    blocked = gate_tool(chat_id, name, arguments or {})
+    if blocked is not None:
+        return blocked
 
     logger.info(f"Executing tool '{name}' with args: {arguments}")
 

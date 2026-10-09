@@ -646,7 +646,7 @@ export function ChatTab({
                               onClick={async (e) => {
                                 e.stopPropagation();
                                 setActiveMenu(null);
-                                if (window.confirm('Sir, are you sure you want to completely purge the history of the Main Terminal?')) {
+                                if (window.confirm('Are you sure you want to completely purge the history of the Main Terminal?')) {
                                   try {
                                     const res = await fetchWithAuth(`/api/history/dashboard`, {
                                       method: 'DELETE'
@@ -1121,7 +1121,7 @@ export function ChatTab({
                     e.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={isUploading ? "Uploading file..." : attachedFile ? `Ask SYNAPSE about "${attachedFile.name}"...` : "Enter command or request for SYNAPSE, Sir..."}
+                placeholder={isUploading ? "Uploading file..." : attachedFile ? `Ask SYNAPSE about "${attachedFile.name}"...` : "Enter command or request for SYNAPSE..."}
                 style={styles.chatInput}
                 className="form-input"
                 disabled={!isConnected || isUploading}

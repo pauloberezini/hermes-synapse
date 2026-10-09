@@ -1,10 +1,12 @@
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from telegram import Update
 from telegram.ext import ContextTypes
 import os
 
-from backend.bot import admin_only
+from backend.bot import admin_only, init_bot
 
 @pytest.mark.asyncio
 async def test_admin_only_authorized():
@@ -45,8 +47,18 @@ async def test_admin_only_unauthorized():
         await dummy_handler(update, context)
         assert called is False
         update.message.reply_text.assert_called_once_with(
-            "Access denied, Sir. I only respond to my designated Creator."
+            "Access denied. I only respond to my designated Creator."
         )
+
+@pytest.mark.asyncio
+async def test_placeholder_telegram_token_logs_disabled_and_does_not_crash(caplog, monkeypatch):
+    """`.env.example` stub must not raise during startup (that restart-loops the backend)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "your_telegram_bot_token_here")
+    with caplog.at_level(logging.INFO, logger="hermes.bot"):
+        result = await init_bot()
+    assert result is None
+    assert "telegram disabled" in caplog.text.lower()
+
 
 @pytest.mark.asyncio
 async def test_telegram_error_handler_conflict():

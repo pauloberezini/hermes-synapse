@@ -52,7 +52,7 @@ export function MetricsTab({
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '300px', color: 'var(--accent-cyan)' }}>
-          <div className="pulse" style={{ fontSize: '18px', fontWeight: 'bold' }}>Retrieving Telemetry, Sir...</div>
+          <div className="pulse" style={{ fontSize: '18px', fontWeight: 'bold' }}>Retrieving Telemetry...</div>
         </div>
       </div>
     );

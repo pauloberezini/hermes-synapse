@@ -168,7 +168,8 @@ class PostgresBackend(DatabaseBackend):
             raw_conn.close()
 
     def translate_placeholder(self, sql: str) -> str:
-        s = sql.replace("?", "%s")
+        s = re.sub(r"(?<!%)%(?!%)", "%%", sql)
+        s = s.replace("?", "%s")
         if "INSERT OR REPLACE INTO subagent_memory" in s:
             s = s.replace("INSERT OR REPLACE INTO subagent_memory", "INSERT INTO subagent_memory")
             if "ON CONFLICT" not in s:
@@ -1448,7 +1449,7 @@ def save_message(session_id: str, role: str, content: str, cost_usd: float = 0.0
     """Saves a single message to database with cost tracking and returns the new message ID."""
     try:
         if role == "assistant" and (not content or not content.strip()):
-            content = "Sir, the operation requested has been completed successfully."
+            content = "The operation requested has been completed successfully."
         if not timestamp:
             timestamp = datetime.now(timezone.utc).isoformat()
         return _lastrowid(
@@ -1535,12 +1536,40 @@ def clear_chat_history(session_id: str):
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
 
+def match_failure_marker(text: str, markers: Any) -> Optional[str]:
+    """Matches failure markers against text with false-positive suppression.
+
+    Specifically handles numeric error codes like '170140' (Bybit order limit error):
+    - Matches genuine order rejections: retCode: 170140, Code 170140, error: 170140,
+      order value exceeded.
+    - Suppresses false positives from protocol citations ('Protocol 170140') and
+      anti-hallucination prompt instruction echoes ('(e.g., Code 170140 or invalid parameter)').
+    """
+    if not text or not markers:
+        return None
+    t_lower = str(text).lower()
+    for m in markers:
+        if not m:
+            continue
+        m_lower = str(m).lower()
+        if m_lower == "170140":
+            # Genuine Bybit order value limit failure check
+            if re.search(r'\b(?:retcode|code|error|errcode|errno)\b[\s:="\'\\]*170140\b', t_lower):
+                # Suppress prompt rule instruction echo: e.g. "(e.g., code 170140"
+                cleaned = re.sub(r'\(?e\.g\.,?\s*code\s*170140[^)]*\)?', '', t_lower)
+                if re.search(r'\b(?:retcode|code|error|errcode|errno)\b[\s:="\'\\]*170140\b', cleaned):
+                    return "170140"
+            continue
+        if m_lower in t_lower:
+            return m
+    return None
+
 def save_decision_log(log: Dict[str, Any]):
     """Saves a single agent decision log to the database with defense-in-depth failure detection."""
     try:
         is_success = bool(log.get("success", False))
         err_val = log.get("error")
-        resp_lower = str(log.get("assistant_response") or "").lower()
+        resp_lower = str(log.get("assistant_response") or "")
         traces = log.get("traces", [])
 
         # Failure markers that indicate execution failed or was blocked
@@ -1555,12 +1584,17 @@ def save_decision_log(log: Dict[str, Any]):
             "trade execution: blocked", "trade execution blocked",
             "execution blocked", "trading paused", "170140", "order value exceeded",
             "cannot perform a comprehensive", "api offline", "not authorized",
-            "invalid access token", "failed to connect to ctrader"
+            "invalid access token",
         )
-        if any(m in resp_lower for m in failure_markers):
+        try:
+            from backend.plugins import collect as _collect_markers
+            failure_markers = failure_markers + tuple(_collect_markers("broker_failure_markers"))
+        except Exception:
+            pass
+        matched = match_failure_marker(resp_lower, failure_markers)
+        if matched:
             is_success = False
             if not err_val:
-                matched = next(m for m in failure_markers if m in resp_lower)
                 err_val = f"Execution failure detected: {matched}"
 
         if isinstance(traces, list):
@@ -1571,8 +1605,9 @@ def save_decision_log(log: Dict[str, Any]):
                         if not err_val:
                             err_val = t.get("message") or "Trace execution failure"
                         break
-                    t_msg = str(t.get("message") or "").lower()
-                    if any(m in t_msg for m in failure_markers):
+                    t_msg = str(t.get("message") or "")
+                    matched_trace = match_failure_marker(t_msg, failure_markers)
+                    if matched_trace:
                         is_success = False
                         if not err_val:
                             err_val = f"Trace failure: {t_msg[:80]}"
@@ -1989,6 +2024,26 @@ def clear_activity_logs():
 
 # ─── SUBAGENTS CRUD HELPERS ───────────────────────────────────────────────────
 
+class DagCycleError(ValueError):
+    """parent_id would close a cycle in the agent DAG."""
+
+
+def _parent_link_cycles(agent_id: str, parent_id: Optional[str]) -> bool:
+    if not parent_id:
+        return False
+    if parent_id == agent_id:
+        return True
+    parents = {a["id"]: a.get("parent_id") for a in get_all_subagents()}
+    seen = set()
+    cur = parent_id
+    while cur and cur not in seen:
+        if cur == agent_id:
+            return True
+        seen.add(cur)
+        cur = parents.get(cur)
+    return False
+
+
 def save_subagent(
     id: str,
     name: str,
@@ -2002,6 +2057,10 @@ def save_subagent(
     temperature: float = 0.7,
 ):
     """Saves or updates a subagent's configuration in the database."""
+    if _parent_link_cycles(id, parent_id):
+        raise DagCycleError(
+            f"Refusing parent_id={parent_id!r} for agent {id!r}: it would cycle the agent DAG"
+        )
     try:
         _execute("""
             INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
@@ -2528,7 +2587,8 @@ def db_save_distilled_skill(skill_data: Dict[str, Any]) -> int:
             "critical authentication", "authentication failure", "authentication expired",
             "authentication required", "re-authentication required", "trades blocked",
             "trading execution blocked", "trade execution: blocked", "trade execution blocked",
-            "execution blocked", "autonomous execution cycle: failed", "compliance verdict: failed"
+            "execution blocked", "autonomous execution cycle: failed", "compliance verdict: failed",
+            "execute scheduled", "scheduled task execution",
         )
         if any(m in content_lower or m in title_lower or m in name_lower for m in invalid_markers):
             logger.warning(f"Refusing to save distilled skill with failure/auth markers: {skill_data.get('skill_name')}")
@@ -2598,7 +2658,8 @@ def purge_invalid_distilled_skills() -> int:
             "critical authentication", "authentication failure", "authentication expired",
             "authentication required", "re-authentication required", "trades blocked",
             "trading execution blocked", "trade execution: blocked", "trade execution blocked",
-            "execution blocked", "autonomous execution cycle: failed", "compliance verdict: failed"
+            "execution blocked", "autonomous execution cycle: failed", "compliance verdict: failed",
+            "execute scheduled", "scheduled task execution",
         )
         purged_count = 0
         for r in rows:
@@ -2681,13 +2742,54 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
             WHERE success = 1
               AND (error IS NULL OR error = '')
               AND id NOT IN (SELECT decision_log_id FROM distilled_skills WHERE decision_log_id IS NOT NULL)
+              AND (session_id NOT LIKE ? OR session_id IS NULL)
+              AND (LOWER(user_message) NOT LIKE ? OR user_message IS NULL)
             ORDER BY id DESC LIMIT ?
-        """, (limit * 3,))
+        """, ("task_%", "execute scheduled task:%", limit * 3))
         
         candidates = []
         for r in rows:
-            err_text = str(r[6] or "").lower()
-            resp_text = str(r[9] or "").lower()
+            if not r:
+                continue
+
+            if isinstance(r, dict):
+                r_id = r.get("id")
+                r_ts = r.get("timestamp")
+                r_session_id = str(r.get("session_id") or "")
+                r_model = r.get("model")
+                r_latency = r.get("latency_ms")
+                r_success = bool(r.get("success"))
+                r_error = r.get("error")
+                r_prompt_tokens = r.get("prompt_tokens_estimate")
+                r_user_msg = str(r.get("user_message") or "")
+                r_resp = str(r.get("assistant_response") or "")
+                raw_traces = r.get("traces")
+                r_agent_id = r.get("agent_id") or "jarvis"
+                r_comp_tokens = r.get("completion_tokens_estimate") or 0
+                r_cost = r.get("cost_usd") or 0.0
+            elif isinstance(r, (list, tuple)):
+                if len(r) < 11:
+                    # Incomplete row — cannot distill reliably
+                    continue
+                r_id = r[0]
+                r_ts = r[1]
+                r_session_id = str(r[2] or "")
+                r_model = r[3]
+                r_latency = r[4]
+                r_success = bool(r[5])
+                r_error = r[6]
+                r_prompt_tokens = r[7]
+                r_user_msg = str(r[8] or "")
+                r_resp = str(r[9] or "")
+                raw_traces = r[10]
+                r_agent_id = r[11] if len(r) > 11 and r[11] is not None else "jarvis"
+                r_comp_tokens = r[12] if len(r) > 12 and r[12] is not None else 0
+                r_cost = r[13] if len(r) > 13 and r[13] is not None else 0.0
+            else:
+                continue
+
+            err_text = str(r_error or "").lower()
+            resp_text = r_resp.lower()
             
             # Check for error or failure markers in text
             failure_markers = [
@@ -2703,13 +2805,21 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
                 "re-authentication required", "trading execution blocked",
                 "execution blocked", "trade execution: blocked", "trade execution blocked",
                 "cannot perform a comprehensive", "api offline", "not authorized",
-                "invalid access token", "failed to connect to ctrader"
+                "invalid access token",
             ]
-            if err_text or any(marker in resp_text for marker in failure_markers):
+            try:
+                from backend.plugins import collect as _collect_markers
+                failure_markers.extend(_collect_markers("broker_failure_markers"))
+            except Exception:
+                pass
+            if err_text or match_failure_marker(resp_text, failure_markers):
+                continue
+
+            if r_session_id.startswith("task_") or r_user_msg.strip().lower().startswith("execute scheduled task:"):
                 continue
 
             try:
-                traces = json.loads(r[10]) if isinstance(r[10], str) else r[10]
+                traces = json.loads(raw_traces) if isinstance(raw_traces, str) else raw_traces
             except Exception:
                 traces = []
             
@@ -2746,20 +2856,20 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
             ]
             if len(worker_traces) >= min_steps:
                 candidates.append({
-                    "id": r[0],
-                    "timestamp": r[1],
-                    "session_id": r[2],
-                    "model": r[3],
-                    "latency_ms": r[4],
-                    "success": bool(r[5]),
-                    "error": r[6],
-                    "prompt_tokens_estimate": r[7],
-                    "user_message": r[8],
-                    "assistant_response": r[9],
+                    "id": r_id,
+                    "timestamp": r_ts,
+                    "session_id": r_session_id,
+                    "model": r_model,
+                    "latency_ms": r_latency,
+                    "success": r_success,
+                    "error": r_error,
+                    "prompt_tokens_estimate": r_prompt_tokens,
+                    "user_message": r_user_msg,
+                    "assistant_response": r_resp,
                     "traces": traces,
-                    "agent_id": r[11],
-                    "completion_tokens_estimate": r[12],
-                    "cost_usd": r[13]
+                    "agent_id": r_agent_id,
+                    "completion_tokens_estimate": r_comp_tokens,
+                    "cost_usd": r_cost
                 })
                 if len(candidates) >= limit:
                     break

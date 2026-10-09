@@ -8,10 +8,24 @@ Provides:
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+# Session whose spend caps apply to the current agent turn (orchestrator, subagent, call_llm).
+budget_session: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "hermes_budget_session", default="default"
+)
+# ponytail: flat floor so a near-full cap blocks the next call; token price if this gets noisy
+LLM_CALL_ESTIMATE_USD = 0.01
+
+HIGH_RISK_TOOLS = frozenset({
+    "execute_command",
+    "create_obsidian_note",
+    "delete_todoist_task",
+})
 
 logger = logging.getLogger("hermes.governance")
 
@@ -314,6 +328,86 @@ class ApprovalQueue:
             cursor.execute(sql, (ApprovalQueue.STATUS_PENDING,))
             row = cursor.fetchone()
         return row[0] if row else 0
+
+    @staticmethod
+    def find_latest(agent_id: str, action_name: str, payload: dict) -> Optional[dict]:
+        """Newest non-consumed request with the same agent, action, and payload."""
+        wanted = _payload_key(payload)
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
+            cursor = conn.cursor()
+            sql = backend.translate_placeholder(
+                "SELECT id, status, payload FROM approval_requests "
+                "WHERE agent_id = ? AND action_name = ? ORDER BY id DESC LIMIT 20"
+            )
+            cursor.execute(sql, (agent_id, action_name))
+            rows = cursor.fetchall()
+        for row in rows:
+            if row[1] == "CONSUMED":
+                continue
+            if _payload_key_stored(row[2]) == wanted:
+                return {"id": row[0], "status": row[1]}
+        return None
+
+    @staticmethod
+    def consume(request_id: int) -> None:
+        """One approval authorizes one execution."""
+        from backend.database import _rowcount
+        now = datetime.now(timezone.utc).isoformat()
+        _rowcount(
+            "UPDATE approval_requests SET status = ?, resolved_at = ? WHERE id = ? AND status = ?",
+            ("CONSUMED", now, request_id, ApprovalQueue.STATUS_APPROVED),
+        )
+
+
+def _payload_key(payload: dict) -> str:
+    try:
+        return json.dumps(payload or {}, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return json.dumps(str(payload), ensure_ascii=False)
+
+
+def _payload_key_stored(raw: str) -> str:
+    try:
+        return json.dumps(json.loads(raw or "{}"), ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return raw or ""
+
+
+def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
+    """Block a high-risk tool until a human approves that exact call.
+
+    Returns None when the tool may run. Otherwise a JSON string for the agent.
+    """
+    if action_name not in HIGH_RISK_TOOLS:
+        return None
+    agent_id = agent_id or "default"
+    payload = payload or {}
+    match = ApprovalQueue.find_latest(agent_id, action_name, payload)
+    if match and match["status"] == ApprovalQueue.STATUS_APPROVED:
+        ApprovalQueue.consume(match["id"])
+        return None
+    if match and match["status"] == ApprovalQueue.STATUS_PENDING:
+        request_id = match["id"]
+    elif match and match["status"] == ApprovalQueue.STATUS_REJECTED:
+        return json.dumps({
+            "status": ApprovalQueue.STATUS_REJECTED,
+            "request_id": match["id"],
+            "error": f"Human rejected {action_name}.",
+        }, ensure_ascii=False)
+    else:
+        request_id = ApprovalQueue.request_approval(
+            agent_id=agent_id,
+            action_name=action_name,
+            payload=payload,
+            description=action_name,
+        )
+    return json.dumps({
+        "status": "PENDING_APPROVAL",
+        "request_id": request_id,
+        "error": f"Awaiting human approval for {action_name}.",
+    }, ensure_ascii=False)
 
 
 # ── Local PII Guard ───────────────────────────────────────────────────────────────

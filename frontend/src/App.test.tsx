@@ -148,7 +148,7 @@ describe('App Component', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Greetings, Sir/)).toBeInTheDocument();
+      expect(screen.getByText(/Greetings\./)).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(typeof lastWs?.onmessage).toBe('function');

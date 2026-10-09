@@ -74,6 +74,40 @@ _timer_meta: Dict[str, Dict[str, Any]] = {}
 _RUNNING_TASKS: Dict[str, asyncio.Task] = {}
 RUNNING_TASKS: Dict[str, asyncio.Task] = _RUNNING_TASKS
 
+
+def _is_redundant_desk_orchestrator_job(
+    label: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    prompt: Optional[str] = None,
+    task_type: Optional[str] = None,
+    job_id: Optional[str] = None,
+) -> bool:
+    from backend.plugins import hook
+    return bool(hook(
+        "is_redundant_desk_orchestrator_job",
+        label=label,
+        agent_id=agent_id,
+        prompt=prompt,
+        task_type=task_type,
+        job_id=job_id,
+        default=False,
+    ))
+
+
+def _drop_scheduled_job(job_id: str, session_id: Optional[str] = None) -> None:
+    job = scheduler.get_job(job_id) if scheduler is not None else None
+    if job:
+        job.remove()
+    _timer_meta.pop(job_id, None)
+    _fire_counts.pop(job_id, None)
+    try:
+        from backend.database import delete_session_title
+        for sid in (f"task_{job_id}", job_id, session_id):
+            if sid:
+                delete_session_title(sid)
+    except Exception as e:
+        logger.error(f"Error cleaning session metadata while dropping job {job_id}: {e}")
+
 # Backward compatibility exports for unit tests
 ACTIVE_TIMERS: List[Any] = []
 ACTIVE_REMINDERS: List[Any] = []
@@ -116,7 +150,7 @@ async def _job_one_shot(
             save_message(task_session_id, "assistant", completion_msg)
             await _send_telegram_alert(
                 chat_id,
-                f"🏛️ **ATTENTION, SIR**\n\nTimer complete:\n"
+                f"🏛️ **ATTENTION**\n\nTimer complete:\n"
                 f"• Event: **{label}**\n• Duration: {duration} sec\n• Status: ✅ Completed",
             )
             await manager.broadcast({
@@ -165,7 +199,7 @@ async def _job_alarm(
             save_message(task_session_id, "assistant", completion_msg)
             await _send_telegram_alert(
                 chat_id,
-                f"⏰ **ALARM, SIR**\n\n"
+                f"⏰ **ALARM**\n\n"
                 f"• Event: **{label}**\n• Trigger time: {target_time_str}\n• Status: ✅ Completed",
             )
             await manager.broadcast({
@@ -195,6 +229,16 @@ async def _job_recurring(
     **kwargs,
 ) -> None:
     try:
+        if _is_redundant_desk_orchestrator_job(
+            label=label, agent_id=agent_id, prompt=prompt, task_type="recurring", job_id=job_id
+        ):
+            logger.info(
+                "Skipping redundant desk orchestrator reminder '%s' (%s); session scheduler already covers the desk.",
+                label, job_id,
+            )
+            _drop_scheduled_job(job_id)
+            return
+
         _fire_counts[job_id] = _fire_counts.get(job_id, 0) + 1
         count = _fire_counts[job_id]
         logger.info(f"Recurring reminder fired #{count}: '{label}'")
@@ -214,7 +258,7 @@ async def _job_recurring(
             log_activity("idle", "Scheduler", f"🔔 Recurring reminder #{count} triggered: '{label}'")
             await _send_telegram_alert(
                 chat_id,
-                f"🔔 **REMINDER, SIR** (#{count})\n\n• {label}\n"
+                f"🔔 **REMINDER** (#{count})\n\n• {label}\n"
                 f"• Repeat every: {hours_str}\n\n_Next trigger in {hours_str}._",
             )
         job = scheduler.get_job(job_id)
@@ -251,6 +295,16 @@ async def _job_cron(
     **kwargs,
 ) -> None:
     try:
+        if _is_redundant_desk_orchestrator_job(
+            label=label, agent_id=agent_id, prompt=prompt, task_type="cron", job_id=job_id
+        ):
+            logger.info(
+                "Skipping redundant desk orchestrator cron '%s' (%s); session scheduler already covers the desk.",
+                label, job_id,
+            )
+            _drop_scheduled_job(job_id)
+            return
+
         # Ensure this cron trigger runs only once per minute across multiple workers
         try:
             from backend.database import _get_backend
@@ -289,7 +343,7 @@ async def _job_cron(
             log_activity("idle", "Scheduler", f"⚙️ Cron task #{count} triggered: '{label}' ({cron_expr})")
             await _send_telegram_alert(
                 chat_id,
-                f"⚙️ **CRON TASK, SIR** (#{count})\n\n• {label}\n"
+                f"⚙️ **CRON TASK** (#{count})\n\n• {label}\n"
                 f"• Schedule: `{cron_expr}`",
             )
         job = scheduler.get_job(job_id)
@@ -311,6 +365,24 @@ async def _job_cron(
         logger.info(f"Cron task '{label}' ({job_id}) cancelled.")
     except Exception as e:
         logger.error(f"Error in cron task '{label}' ({job_id}): {e}")
+
+
+def _existing_named_job(label: str, task_type: str):
+    """Return a live APScheduler job with the same label and type, if any."""
+    if scheduler is None or not label:
+        return None
+    try:
+        jobs = scheduler.get_jobs()
+    except Exception:
+        return None
+    for job in jobs:
+        kwargs = getattr(job, "kwargs", None) or {}
+        meta = _timer_meta.get(job.id, {})
+        job_label = kwargs.get("label") or job.name
+        job_type = meta.get("type") or kwargs.get("task_type") or _infer_type(job)
+        if job_label == label and job_type == task_type:
+            return job
+    return None
 
 
 def _register_scheduled_session(
@@ -445,6 +517,16 @@ def add_recurring_reminder(
     agent_id: Optional[str] = None,
     prompt: Optional[str] = None,
 ) -> str:
+    if _is_redundant_desk_orchestrator_job(
+        label=label, agent_id=agent_id, prompt=prompt, task_type="recurring"
+    ):
+        raise ValueError(
+            "This reminder duplicates a schedule owned by an installed plugin."
+        )
+    existing = _existing_named_job(label, "recurring")
+    if existing:
+        logger.info("Reusing existing recurring reminder %s for label '%s'", existing.id, label)
+        return existing.id
     reminder_id = str(uuid.uuid4())
     created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
     scheduler.add_job(
@@ -480,6 +562,16 @@ def add_cron_reminder(
     agent_id: Optional[str] = None,
     prompt: Optional[str] = None,
 ) -> str:
+    if _is_redundant_desk_orchestrator_job(
+        label=label, agent_id=agent_id, prompt=prompt, task_type="cron"
+    ):
+        raise ValueError(
+            "This reminder duplicates a schedule owned by an installed plugin."
+        )
+    existing = _existing_named_job(label, "cron")
+    if existing:
+        logger.info("Reusing existing cron reminder %s for label '%s'", existing.id, label)
+        return existing.id
     reminder_id = str(uuid.uuid4())
     created_at = datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
     cron_expr = cron_expr.strip()
@@ -1106,7 +1198,7 @@ async def _trigger_agent_task(
         )
 
         if not response_text or not response_text.strip():
-            response_text = "Sir, the scheduled automation task completed successfully."
+            response_text = "The scheduled automation task completed successfully."
 
         cost_usd = agent_instance.last_costs.get(session_id, 0.0)
         suppress_tts = agent_instance.check_and_clear_suppress_tts(session_id)
@@ -1285,6 +1377,15 @@ def restore_state() -> None:
                 
             task_type = schedule_type or info.get("task_type") or "recurring"
             prompt = info.get("prompt")
+            if _is_redundant_desk_orchestrator_job(
+                label=label, agent_id=agent_id, prompt=prompt, task_type=task_type, job_id=job_id
+            ):
+                logger.info(
+                    "Skipping restore of redundant desk orchestrator job '%s' (%s)",
+                    label, job_id,
+                )
+                _drop_scheduled_job(job_id, session_id=session_id)
+                continue
             status = info.get("status") or "running"
             chat_id = info.get("chat_id", "dashboard")
             created_at = info.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")

@@ -76,6 +76,37 @@ def test_heuristic_distillation(sample_decision_log):
     assert "read_user_config" in content or "Execute Action" in content
 
 
+def test_distill_log_entry_rejects_scheduled_automation():
+    distiller = SkillDistiller(api_key="sk-test")
+    with pytest.raises(ValueError, match="scheduled automation"):
+        distiller.distill_log_entry({
+            "id": 2335,
+            "success": True,
+            "session_id": "task_b2825bfb-64cc-4466-86fc-3766fec1cd87",
+            "user_message": "Execute scheduled task: System Prompt: Autonomous AI Hedge Fund Manager",
+            "assistant_response": "WAIT",
+            "traces": [{"agent": "bcm", "action": "Execute", "message": "ok", "status": "success"}],
+        })
+
+
+def test_process_undistilled_logs_skips_scheduled_quietly(caplog):
+    distiller = SkillDistiller(api_key="sk-test")
+    scheduled = {
+        "id": 2355,
+        "success": True,
+        "session_id": "task_b2825bfb-64cc-4466-86fc-3766fec1cd87",
+        "user_message": "Execute scheduled task: System Prompt: Autonomous AI Hedge Fund Manager",
+        "assistant_response": "WAIT",
+        "traces": [{"agent": "bcm", "action": "Execute", "message": "ok", "status": "success"}],
+    }
+    with patch("backend.database.db_get_undistilled_successful_logs", return_value=[scheduled]):
+        with caplog.at_level("INFO"):
+            out = distiller.process_undistilled_logs()
+    assert out == []
+    assert "Skipping skill distillation" in caplog.text
+    assert not any(r.levelno >= 40 for r in caplog.records)
+
+
 def test_parse_skill_markdown(sample_decision_log):
     distiller = SkillDistiller(api_key=None)
     md_sample = (
@@ -181,3 +212,20 @@ def test_skill_loop_api_endpoints(sample_decision_log, tmp_path):
         resp_auto = client.post("/api/skills/distill/auto?min_steps=3&limit=5")
         assert resp_auto.status_code == 200
         assert "distilled_count" in resp_auto.json()
+
+
+def test_db_get_undistilled_successful_logs_handles_short_tuples():
+    """
+    IT: Verify db_get_undistilled_successful_logs safely handles short tuples (< 11 elements)
+    without raising IndexError: tuple index out of range.
+    """
+    short_tuple_rows = [
+        (1, "2026-10-06 07:38:49", "sess_1"),  # Only 3 elements
+        (2, "2026-10-06 07:38:50", "sess_2", "gpt-4", 100, 1, None, 50, "msg", "resp"),  # 10 elements (< 11)
+        (3, "2026-10-06 07:38:51", "sess_3", "gpt-4", 100, 1, None, 50, "msg", "resp", json.dumps([{"a": 1}, {"a": 2}, {"a": 3}]), "jarvis", 20, 0.001),  # 14 elements (full)
+    ]
+    with patch("backend.database._execute", return_value=short_tuple_rows):
+        logs = db_get_undistilled_successful_logs(min_steps=3, limit=10)
+    assert len(logs) == 1
+    assert logs[0]["id"] == 3
+

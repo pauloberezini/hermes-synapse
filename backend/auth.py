@@ -1,3 +1,8 @@
+import base64
+import hashlib
+import hmac
+import json
+import os
 import time
 import secrets
 import logging
@@ -55,10 +60,10 @@ def create_session() -> str:
     return token
 
 def validate_session(token: str) -> bool:
-    """Checks if a session token is valid (local session or OIDC JWT token)."""
-    if token == "dev_master_token" or token in active_sessions:
+    """Checks if a session token is valid (local session or signed OIDC JWT)."""
+    if token in active_sessions:
         return True
-    
+
     # Check if token is a valid unexpired OIDC JWT token
     claims = decode_jwt_payload(token)
     if claims:
@@ -80,9 +85,6 @@ def destroy_session(token: str):
 # STAGE 13: ENTERPRISE SSO & MULTI-TENANT RBAC (OIDC / JWT)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import base64
-import json
-
 ROLE_HIERARCHY = {
     "admin": 100,
     "editor": 50,
@@ -90,22 +92,34 @@ ROLE_HIERARCHY = {
     "viewer": 10,
 }
 
+def _b64url_decode(data: str) -> bytes:
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
 def decode_jwt_payload(token: str) -> Optional[Dict[str, Any]]:
     """
-    Decodes a standard JWT payload without requiring external crypto dependencies.
-    Useful for local OIDC validation and role extraction.
+    Return JWT claims only after the HS256 signature matches JWT_SECRET.
+    Unset secret, alg=none, or a bad signature yields None.
     """
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret:
+        return None
     try:
-        parts = token.split(".")
-        if len(parts) != 3:
+        header_b64, payload_b64, sig_b64 = token.split(".")
+        header = json.loads(_b64url_decode(header_b64))
+        if not isinstance(header, dict) or header.get("alg") != "HS256":
             return None
-        payload_b64 = parts[1]
-        # Restore padding
-        padding = "=" * (4 - len(payload_b64) % 4)
-        decoded_bytes = base64.urlsafe_b64decode(payload_b64 + padding)
-        return json.loads(decoded_bytes.decode("utf-8"))
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            f"{header_b64}.{payload_b64}".encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(expected, _b64url_decode(sig_b64)):
+            return None
+        claims = json.loads(_b64url_decode(payload_b64))
+        return claims if isinstance(claims, dict) else None
     except Exception as e:
-        logger.debug(f"JWT payload decoding skipped: {e}")
+        logger.debug(f"JWT verification failed: {e}")
         return None
 
 def get_user_roles(token: str) -> List[str]:

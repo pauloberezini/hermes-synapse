@@ -43,6 +43,7 @@ from backend.bot import (
 )
 from backend import obsidian
 from backend import scheduler
+from backend.auth import create_session
 import backend.main as main_mod
 
 
@@ -262,7 +263,7 @@ async def test_scheduler_send_telegram_alert_transient_network_error_cross(caplo
 def test_fastapi_obsidian_and_status_endpoints_cross():
     """Cross: Ensure /api/obsidian/status and /api/obsidian/notes return HTTP 200 when Obsidian is offline."""
     client = TestClient(main_mod.app)
-    headers = {"Authorization": "Bearer dev_master_token"}
+    headers = {"Authorization": f"Bearer {create_session()}"}
 
     fake_rag_docs = [{"note_path": "Note1.md", "title": "Note 1"}]
 
