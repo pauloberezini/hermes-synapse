@@ -1,4 +1,5 @@
 """Public-surface leftovers: Sir in replies, Serper docs, desk names in core, root junk."""
+import json
 import re
 from pathlib import Path
 import pytest
@@ -92,3 +93,29 @@ def test_repo_root_has_no_scratch_files():
     assert not list(ROOT.glob("patch_*.py"))
     for name in ROOT_JUNK:
         assert not (ROOT / name).exists(), name
+
+
+def test_changelog_matches_package_version():
+    package_json = ROOT / "frontend/package.json"
+    if not package_json.exists():
+        pytest.skip("frontend/package.json not accessible in container workspace")
+    pkg_data = json.loads(package_json.read_text())
+    pkg_version = pkg_data.get("version")
+    assert pkg_version, "frontend/package.json missing version field"
+
+    changelog_path = ROOT / "CHANGELOG.md"
+    if not changelog_path.exists():
+        pytest.skip("CHANGELOG.md not accessible in container workspace")
+    changelog = changelog_path.read_text()
+
+    # Find release headers like "## 🚀 [v1.4.1] - 2026-10-09"
+    versions = re.findall(r"^##\s*(?:[^\n\r]*?)\[?v?(\d+\.\d+\.\d+)\]?", changelog, re.MULTILINE)
+    assert versions, "No version headers found in CHANGELOG.md"
+
+    latest_changelog_version = versions[0]
+    assert latest_changelog_version == pkg_version, (
+        f"Latest CHANGELOG.md version ({latest_changelog_version}) does not match "
+        f"frontend/package.json version ({pkg_version})"
+    )
+    assert pkg_version in versions, f"Version {pkg_version} not found in CHANGELOG.md headers"
+

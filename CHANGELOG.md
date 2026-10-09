@@ -4,6 +4,23 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ---
 
+## 🚀 [v1.4.1] - 2026-10-09
+
+### 🛡️ Resilience
+- **Non-blocking tool execution:** synchronous tools run in a worker thread (`asyncio.to_thread`), so long tools no longer starve the event loop or the health endpoints.
+- **Telegram polling:** exponential backoff (15s → 300s) on polling conflicts instead of a fixed cooldown.
+- **Idempotent client shutdown:** repeated or concurrent `close()` calls no longer raise "cannot reuse already awaited coroutine".
+
+### 🧹 Hygiene & Docs
+- Search docs and `.env.example` describe self-hosted SearXNG (`SEARXNG_URL`).
+- Removed stray root artifacts; added `test_public_hygiene.py` to keep the public surface clean.
+- `export_oss.sh`: fixed `set -e` abort when the leak gate and coupling check find nothing.
+
+### 🧪 Tests
+- New core tests: DAG cycle detection, governance wiring, OpenRouter/Ollama model selection.
+
+---
+
 ## 🚀 [v1.4.0] - 2026-09-26
 
 ### 🔌 Plugin Boundary (Open-Core Hygiene)

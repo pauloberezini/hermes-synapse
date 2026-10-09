@@ -23,6 +23,14 @@ OPENROUTER_API_KEY=your_key_here
 LLM_MODEL=ollama/llama3
 ```
 
+#### 🔍 Web Search Backend (SearXNG)
+Hermes uses [SearXNG](https://github.com/searxng/searxng) as its open-source, self-hosted metasearch engine. No paid search API key is required:
+```env
+SEARXNG_URL=http://localhost:8080
+```
+Point `SEARXNG_URL` to your local or self-hosted SearXNG instance so agents can perform web searches without proprietary search APIs.
+
+
 ### 3. Launch via Docker Compose (Recommended)
 ```bash
 docker-compose up --build -d

@@ -171,6 +171,19 @@ PRs that violate these principles will be kindly redirected to an OSS-compatible
 
 ---
 
+## 📦 Release Checklist (Maintainers)
+
+Before publishing a release tag (per `vX.Y.Z`):
+
+1. `CHANGELOG.md` has a header for the new version.
+2. New env vars appear in `.env.example` and `docs/guide/getting-started.md`.
+3. `grep -rniE "serper|\bSir\b" docs README.md` returns nothing.
+4. `bash scripts/export_oss.sh` dry run: no leaks, `Coupling smell: 0`.
+5. After `--push`: `gh run list --repo pauloberezini/hermes-synapse --limit 3` shows Release, Hermes CI and Deploy Docs green.
+6. Open the live Pages URL and check the changed section.
+
+---
+
 ## 📜 License
 
 By contributing, you agree your code will be licensed under [MIT](LICENSE).
