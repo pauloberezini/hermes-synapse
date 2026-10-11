@@ -714,6 +714,14 @@ async def update_subagent_positions_api(update: SubagentPositionsUpdate):
         logger.error(f"Error updating positions: {e}")
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/subagents/{subagent_id}/confirm")
+async def confirm_subagent_api(subagent_id: str):
+    from backend.database import get_subagent, set_hire_status
+    if not get_subagent(subagent_id):
+        return JSONResponse(status_code=404, content={"status": "failed", "error": "not found"})
+    set_hire_status(subagent_id, "active")
+    return {"status": "success", "id": subagent_id, "hire_status": "active"}
+
 @app.delete("/api/subagents/{subagent_id}")
 async def delete_subagent_api(subagent_id: str):
     from backend.database import delete_subagent

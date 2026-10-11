@@ -62,7 +62,7 @@ def test_execute_tool_set_timer_max_limit():
     res_str = tools.execute_tool("set_timer", args, chat_id="111222")
     data = json.loads(res_str)
     assert data["status"] == "failed"
-    assert "лимит" in data["error"]
+    assert "Limit exceeded" in data["error"]
 
 @patch("backend.tools._get_calendar_service")
 def test_google_calendar(mock_get_service):
@@ -140,21 +140,21 @@ def test_knowledge_save_request_detects_recipe_and_skips_chat():
     from backend.tools import is_knowledge_save_request, try_direct_knowledge_save
 
     recipe = (
-        "Я хочу чтобы у меня была своя база знаний рецептов\n\n"
-        "Ингредиенты на 1,1–1,3 кг:\n"
-        "• Филе индейки в магазинной кулинарной сетке: 1 шт.\n"
-        "• Соль: 18–20 г\n"
-        "• Чеснок: 3 зубчика\n"
+        "I want my own knowledge base of recipes\n\n"
+        "Ingredients for 1.1-1.3 kg:\n"
+        "- Turkey fillet: 1\n"
+        "- Salt: 18-20 g\n"
+        "- Garlic: 3 cloves\n"
     )
     assert is_knowledge_save_request(recipe) is True
-    assert is_knowledge_save_request("Привет") is False
-    assert is_knowledge_save_request("найди в заметках рецепт индейки") is False
+    assert is_knowledge_save_request("Hello") is False
+    assert is_knowledge_save_request("find in notes the turkey recipe") is False
 
-    with patch("backend.tools.create_obsidian_note", return_value='{"status":"created","path":"Health/Индейка.md"}'):
+    with patch("backend.tools.create_obsidian_note", return_value='{"status":"created","path":"Health/Turkey.md"}'):
         reply = try_direct_knowledge_save(recipe)
     assert reply is not None
-    assert "Health/Индейка.md" in reply
-    assert try_direct_knowledge_save("Привет") is None
+    assert "Health/Turkey.md" in reply
+    assert try_direct_knowledge_save("Hello") is None
 
 
 @patch("backend.rag.index_document", return_value=True)

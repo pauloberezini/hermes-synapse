@@ -43,6 +43,8 @@ class AgentState:
         self.traces: List[Dict[str, Any]] = []
         self.final_response = ""
         self.aborted_due_to_network = False
+        self.hires: List[Dict[str, Any]] = []
+        self.hire_notes: List[str] = []
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes AgentState into JSON-compatible dict for checkpointing."""
@@ -253,6 +255,78 @@ def extract_planner_json(raw: str) -> dict:
         raise ValueError(f"Invalid JSON format. Underlying error: {str(e)}")
 
 
+def _stop(state: AgentState, text: str) -> Dict[str, Any]:
+    state.final_response = text
+    return {"response": text, "traces": state.traces, "steps": state.steps, "results": state.results}
+
+
+def _materialize_hires(state: AgentState, orch_id: str, active_skills: str, stack: tuple) -> Optional[Dict[str, Any]]:
+    """Create or reuse each hire. Return a response dict when the turn must stop."""
+    from backend.agent_factory import auto_hire_mode, hire_with_escalation, slug_id
+    from backend.database import set_hire_status
+    hires = list(getattr(state, "hires", None) or [])
+    if not hires:
+        return None
+    competence = hires[0].get("reason") or hires[0].get("mandate") or "this request"
+    mode = auto_hire_mode()
+    if mode == "off":
+        state.add_trace("Orchestrator", "Hire", f"No specialist for {competence}.", "warning")
+        return _stop(state, f"No specialist for {competence}.")
+    for spec in hires:
+        result = hire_with_escalation(spec, orch_id, stack)
+        agent = result.get("agent")
+        status = result.get("status")
+        if status == "cycle":
+            state.add_trace("Orchestrator", "Cycle", "Hiring stopped: parent_id cycle.", "error")
+            return _stop(state, f"No specialist for {competence}: hiring cycle in the agent graph.")
+        if not agent:
+            state.add_trace("Orchestrator", "Hire", f"No specialist for {competence}.", "warning")
+            return _stop(state, f"No specialist for {competence}.")
+        parent = result.get("parent_id") or orch_id
+        if mode == "ask" and status == "created":
+            set_hire_status(agent["id"], "pending")
+            agent = {**agent, "hire_status": "pending"}
+        elif agent.get("hire_status") == "pending" and mode != "ask":
+            set_hire_status(agent["id"], "active")
+            agent = {**agent, "hire_status": "active"}
+        if agent.get("hire_status") == "pending":
+            state.add_trace("Orchestrator", "Hire", f"Awaiting confirmation for {agent.get('name')}.", "info")
+            return _stop(state, f"Confirm new specialist {agent.get('name')} ({agent.get('id')}) before I run it. No specialist ran for {competence}.")
+        if status == "created":
+            state.hire_notes.append(f"🧩 New specialist: {agent.get('name')} ({agent.get('id')}) → {parent}")
+            state.add_trace("Orchestrator", "Hire", f"🧩 Hired {agent.get('name')} under {parent}", "info")
+        else:
+            state.add_trace("Orchestrator", "Hire", f"♻️ Reused {agent.get('id')}", "info")
+        for step in state.steps:
+            if slug_id(str(step.get("agent"))) == slug_id(str(spec.get("id") or agent.get("id"))):
+                step["agent"] = agent["id"]
+                step["skill_cap"] = active_skills
+    state.hires = []
+    return None
+
+
+async def _detect_gap(query: str, children, api_key: str, model: str) -> Optional[str]:
+    from backend.agent_factory import keyword_gap
+    roster = "\n".join(
+        f"- {c.get('id')}: {(c.get('name') or '')} {(c.get('system_prompt') or '')[:160]}"
+        for c in (children or [])
+    )
+    try:
+        raw = await call_llm(
+            [
+                {"role": "system", "content": 'Reply JSON only: {"gap": null} if one of the agents covers the query, else {"gap": "one-word competence"}.'},
+                {"role": "user", "content": f"Query: {query}\nAgents:\n{roster}"},
+            ],
+            api_key,
+            model,
+        )
+        data = extract_planner_json(raw)
+        gap = data.get("gap") if isinstance(data, dict) else None
+        return str(gap)[:80] if gap else None
+    except Exception:
+        return keyword_gap(query, children)
+
+
 async def run_orchestration(query: str, api_key: str, model: str, chat_id: str = "default", parent_skills: Optional[str] = None, _stack: tuple = ()) -> Dict[str, Any]:
     from backend.governance import BudgetExceededError, budget_session
     budget_session.set(chat_id or "default")
@@ -339,12 +413,16 @@ Available sub-agents:
     dynamic_planner_prompt += (("\n" + _rule) if _rule else "") + """
 You must output the result EXCLUSIVELY in JSON format of the following structure:
 {
+  "hire": [
+    {"id": "new_agent_id", "name": "Display Name", "mandate": "what this specialist does", "skills": ["skill_id"], "reason": "why no current agent covers it"}
+  ],
   "steps": [
     {"agent": "agent_id", "instructions": "clear instructions for the agent in English"}
   ]
 }
 
 Rules:
+- If no available sub-agent has the required competence, declare it in `hire` instead of forcing the task onto an unrelated agent. Leave `hire` empty when the current staff is enough.
 - For scheduled automation tasks or operational execution triggers (such as queries starting with "Execute scheduled task:" or requests to trade, scan, analyze markets, or execute autonomous cycles), you MUST NOT return an empty list {"steps": []}. Even if the task description mentions "System Prompt:" or setup instructions, you must decompose the task into 1 to 3 sub-agent steps (e.g., market scan / proposals, risk evaluation, compliance audit).
 - If the query requires fetching real-time information, you MUST schedule the first step with the "research" agent (or another agent with internet search capability) to fetch data from the Internet. Do not try to solve such tasks with agents that have no network access.
 - When writing `instructions` for the search/research step, convert any relative dates into specific calendar dates based on system time.
@@ -353,7 +431,7 @@ Rules:
 - If the request is simple conversational greeting or casual chat that does not require sub-agents or tools, return an empty list of steps: {"steps": []}.
 - Limit the number of steps to the minimum (maximum 3 steps).
 - Do not write any explanations, preambles, or conclusions. Only clean JSON.
-- Specify only exact identifiers from the list of available sub-agents above in "agent"!
+- In "agent", use an id from the list above, or an id you declared in `hire`.
 """
 
     # Resolve per-role models
@@ -417,6 +495,19 @@ Rules:
                 if not isinstance(plan_data["steps"], list):
                     raise ValueError("The 'steps' value must be a list.")
                 
+                hires = plan_data.get("hire") or []
+                if not isinstance(hires, list):
+                    raise ValueError("The 'hire' value must be a list.")
+                max_hires = int(os.getenv("AUTO_HIRE_MAX_PER_TURN", "1") or "1")
+                if len(hires) > max_hires:
+                    raise ValueError(f"hire holds at most {max_hires} entries.")
+                from backend.agent_factory import slug_id
+                hire_ids = set()
+                for hidx, hire in enumerate(hires):
+                    if not isinstance(hire, dict) or not hire.get("id"):
+                        raise ValueError(f"hire at index {hidx} needs an id.")
+                    hire_ids.add(slug_id(str(hire["id"])))
+
                 for idx, step in enumerate(plan_data["steps"]):
                     if not isinstance(step, dict):
                         raise ValueError(f"Step at index {idx} must be a JSON object/dict.")
@@ -424,7 +515,7 @@ Rules:
                         raise ValueError(f"Step at index {idx} is missing the required 'agent' field.")
                     if "instructions" not in step:
                         raise ValueError(f"Step at index {idx} is missing the required 'instructions' field.")
-                    if step["agent"] not in allowed_agent_ids:
+                    if step["agent"] not in allowed_agent_ids and slug_id(str(step["agent"])) not in hire_ids:
                         raise ValueError(f"Step at index {idx} has an invalid/unknown agent ID: '{step['agent']}'. Allowed agent IDs are: {sorted(list(allowed_agent_ids))}")
 
                 from backend.plugins import collect as _collect_markers
@@ -437,8 +528,9 @@ Rules:
                     )
 
                 state.steps = plan_data.get("steps", [])
+                state.hires = hires
                 from backend.plugins import hook as _plugin_hook
-                state.steps = _plugin_hook("annotate_plan_steps", state.steps, query, is_operational, allowed_agents=allowed_agent_ids, default=state.steps)
+                state.steps = _plugin_hook("annotate_plan_steps", state.steps, query, is_operational, allowed_agents=allowed_agent_ids | hire_ids, default=state.steps)
                 state.add_trace("Orchestrator", "Planning", f"Plan of {len(state.steps)} steps generated.", token_cost=plan_cost)
                 parse_err = None
                 break
@@ -451,16 +543,32 @@ Rules:
                 
         if parse_err is not None:
             state.steps = []
+            state.hires = []
             state.add_trace("Orchestrator", "Planning", f"Failed to generate structured plan after {max_retries} retries. Falling back to direct response.", "warning")
-            
+            # A dead model call (no body) is the incident. Invalid JSON keeps the old fallback.
+            planner_dead = not (plan_response or "").strip()
+            gap = await _detect_gap(query, children, api_key, planner_model) if planner_dead else None
+            if gap:
+                from backend.agent_factory import gap_spec
+                spec = gap_spec(query, gap, active_skills)
+                state.hires = [spec]
+                state.steps = [{"agent": spec["id"], "instructions": query}]
+                stopped = _materialize_hires(state, orch_id, active_skills, _stack)
+                if stopped:
+                    return stopped
+                from backend.database import get_all_subagents as _all
+                all_subagents = _all()
+                children = [a for a in all_subagents if a.get("parent_id") == orch_id]
+
         # Empty plan on an operational task: plugin pipeline, else the orchestrator runs the tools itself.
+        # A detected gap already hired (or stopped). Do not stuff that intent into a canonical pipeline.
         _q = query.lower()
         from backend.plugins import collect as _collect_markers
         _fb_markers = ("scheduled task",) + tuple(_collect_markers("operational_query_markers", "fallback"))
         _operational = bool(active_skills) or any(k in _q for k in _fb_markers)
         if len(state.steps) == 0 and _operational:
             from backend.plugins import hook as _plugin_hook
-            default_steps = _plugin_hook("fallback_plan_steps", query, children, active_skills, default=None)
+            default_steps = _plugin_hook("fallback_plan_steps", query, children, active_skills, gap=None, default=None)
             if default_steps:
                 logger.info(f"Orchestrator '{orch_id}' planned 0 steps for operational task. Applied canonical child pipeline: {[s['agent'] for s in default_steps]}")
                 state.add_trace("Orchestrator", "Planning", f"0 subagent steps planned; applied canonical child pipeline with {len(default_steps)} steps.", "info")
@@ -478,6 +586,14 @@ Rules:
                     "traces": state.traces,
                     "steps": []
                 }
+
+        if state.hires:
+            stopped = _materialize_hires(state, orch_id, active_skills, _stack)
+            if stopped:
+                return stopped
+            from backend.database import get_all_subagents as _all
+            all_subagents = _all()
+            children = [a for a in all_subagents if a.get("parent_id") == orch_id]
 
         # 2. ROUTER LOOP
         from backend.agent import agent_instance
@@ -498,10 +614,22 @@ Rules:
                 state.current_step_idx += 1
                 continue
 
+            if child_agent.get("hire_status") == "pending":
+                pending_name = child_agent.get("name") or agent_type
+                state.add_trace("Router", "Hire", f"Awaiting confirmation for {pending_name}.", "info")
+                state.hire_notes.append(
+                    f"Confirm new specialist {pending_name} ({agent_type}) before I run it."
+                )
+                state.current_step_idx += 1
+                continue
+
+            from backend.database import touch_subagent_last_used
+            touch_subagent_last_used(agent_type)
+
             child_agent = dict(child_agent)
             child_name = child_agent.get("name") or child_agent.get("id") or "Agent"
             if not child_agent.get("model"):
-                child_agent["model"] = orch_meta.get("model") or model or os.getenv("DEFAULT_MODEL", "google/gemini-2.5-pro")
+                child_agent["model"] = (orch_meta.get("model") if orch_meta else None) or model or os.getenv("DEFAULT_MODEL", "google/gemini-2.5-pro")
 
             from backend.plugins import hook as _plugin_hook
             prior_outputs = [str(r.get("output") or "") for r in state.results]
@@ -586,7 +714,8 @@ Rules:
                     subagent_kwargs = {
                         # Top-level (parent_skills is None) leaves keep their own skills.
                         # Under a cap, pass the intersection so a nested tree cannot widen it.
-                        "parent_skills": None if parent_skills is None else active_skills,
+                        # Hired steps carry the parent's skill cap even when this orch is the root.
+                        "parent_skills": step.get("skill_cap") if step.get("skill_cap") is not None else (None if parent_skills is None else active_skills),
                         "chat_id": scoped_subagent_session_id,
                     }
                     try:
@@ -977,6 +1106,9 @@ Rules:
         state.add_trace("Orchestrator", "Error", f"Critical orchestrator failure: {str(general_err)}", "error")
         state.final_response = f"Apologies. A failure occurred while coordinating my sub-agents: {str(general_err)}"
         
+    notes = getattr(state, "hire_notes", None)
+    if notes:
+        state.final_response = (state.final_response or "").rstrip() + "\n\n" + "\n".join(notes)
     return {
         "response": state.final_response,
         "traces": state.traces,

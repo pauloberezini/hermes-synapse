@@ -212,8 +212,11 @@ async def generate_chat_title(user_message: str, api_key: str, api_base: str, mo
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        from backend.llm_model_manager import resolve_provider_model
-        model = resolve_provider_model(model, api_base)
+        try:
+            from backend.llm_model_manager import resolve_provider_model
+            model = resolve_provider_model(model, api_base) or model
+        except (ImportError, AttributeError):
+            pass
         payload = {
             "model": model,
             "messages": [
@@ -276,11 +279,12 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str, mo
 
     # Try LLM classifier with the fast/cheap planner model
     from backend.subagents import get_agent_model
-    from backend.llm_model_manager import resolve_provider_model
-    classifier_model = resolve_provider_model(
-        model or get_agent_model("planner", os.getenv("LLM_MODEL", "ollama/llama3")),
-        api_base,
-    )
+    raw_classifier_model = model or get_agent_model("planner", os.getenv("LLM_MODEL", "ollama/llama3"))
+    try:
+        from backend.llm_model_manager import resolve_provider_model
+        classifier_model = resolve_provider_model(raw_classifier_model, api_base) or raw_classifier_model
+    except (ImportError, AttributeError):
+        classifier_model = raw_classifier_model
 
     if not api_key:
         msg_lower = user_message.lower()
@@ -413,6 +417,16 @@ CRITICAL RULES FOR OBSIDIAN:
 - NEVER ask the user where to store a note — decide on your own. Subfolders are encouraged (e.g., Research/AI, Projects/Jarvis).
 If the user asks what you can do, or requests info about a specific skill, describe its capabilities in a detailed, polite, and signature manner using these user-friendly names. Never use technical function names like "get_weather" in dialogue unless the user explicitly asks for them.
 """
+
+_ORCHESTRATOR_TYPES = ("orchestrator", "sub-orchestrator")
+
+
+def management_tools_for(subagent: dict) -> set:
+    """Orchestrators can hire and delegate even when those skills are not listed."""
+    if (subagent or {}).get("agent_type") in _ORCHESTRATOR_TYPES:
+        return {"create_subagent", "list_subagents", "call_subagent"}
+    return set()
+
 
 def sanitize_tool_tokens(text: str) -> str:
     """Removes model-specific tool call tokens and XML wrappers from text to prevent delimiter leakage."""
@@ -547,7 +561,7 @@ class JarvisAgent:
         target_agent_id = override_agent_id or get_session_agent_id(session_id) or session_id
         subagent = get_subagent(target_agent_id)
         if subagent:
-            if subagent.get("agent_type") == "orchestrator" or subagent.get("id") == "orchestrator" or subagent.get("id", "").endswith("_orchestrator"):
+            if subagent.get("agent_type") == "orchestrator" or subagent.get("id") == "orchestrator":
                 from backend.orchestrator import run_orchestration
                 start_time = time.time()
                 orch_result = await run_orchestration(user_message, self.api_key, self.model, chat_id=session_id)
@@ -618,7 +632,12 @@ class JarvisAgent:
                     save_decision_log(log_entry)
                 except Exception as db_err:
                     logger.error(f"Failed to save decision log to DB: {db_err}")
-                    
+
+                self.last_run_metadata[session_id] = {
+                    "is_complex": True,
+                    "complexity": "orchestrate",
+                    "steps": orch_result.get("steps", [])
+                }
                 return response_text
             else:
                 return await self._respond_as_subagent(user_message, subagent, current_user_msg_id=current_user_msg_id, chat_id=session_id)
@@ -914,8 +933,11 @@ class JarvisAgent:
                     ]:
                         if fallback_m and fallback_m.strip() and fallback_m.strip() not in candidate_models:
                             candidate_models.append(fallback_m.strip())
-                    from backend.llm_model_manager import resolve_provider_model, resolve_provider_models
-                    candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
+                    try:
+                        from backend.llm_model_manager import resolve_provider_model, resolve_provider_models
+                        candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
+                    except (ImportError, AttributeError):
+                        pass
 
                     data = None
                     valid_model = None
@@ -1086,9 +1108,15 @@ class JarvisAgent:
                                     "role": "user",
                                     "content": "The requested action has been executed successfully via the tools above. Please formulate a brief, polite confirmation stating that the task is complete."
                                 })
+                                fb_model = self.model
+                                try:
+                                    from backend.llm_model_manager import resolve_provider_model
+                                    fb_model = resolve_provider_model(self.model, self.api_base) or self.model
+                                except (ImportError, AttributeError):
+                                    pass
                                 fb_resp = await client.post(
                                     url,
-                                    json={"model": resolve_provider_model(self.model, self.api_base), "messages": fallback_messages, "temperature": 0.5, "max_tokens": 150},
+                                    json={"model": fb_model, "messages": fallback_messages, "temperature": 0.5, "max_tokens": 150},
                                     headers=headers
                                 )
                                 if fb_resp.status_code == 200:
@@ -1746,7 +1774,9 @@ class JarvisAgent:
             "timers_alarms": ["set_timer", "set_alarm", "cancel_timer_or_alarm"],
             "shell_execution": ["get_system_stats", "execute_command"],
             "python_sandbox": ["execute_command"],
-            "read_rss_node_feed": ["read_rss_node_feed"]
+            "read_rss_node_feed": ["read_rss_node_feed"],
+            "agent_management": ["create_subagent", "list_subagents"],
+            "agent_delegation": ["call_subagent"],
         }
 
         skills_str = subagent.get("skills", "")
@@ -1799,8 +1829,9 @@ class JarvisAgent:
             allowed_tools = child_allowed
 
         allowed_tools.update(["save_subagent_memory", "get_subagent_memory"])
-        if subagent.get("agent_type") in ("orchestrator", "sub-orchestrator"):
-            allowed_tools.update(["call_subagent", "web_search"])
+        allowed_tools.update(management_tools_for(subagent))
+        if subagent.get("agent_type") in _ORCHESTRATOR_TYPES:
+            allowed_tools.add("web_search")
         subagent_tools = [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed_tools]
 
         start_time = time.time()
@@ -1888,17 +1919,21 @@ class JarvisAgent:
                         if m and m.strip() and m.strip() not in candidate_models:
                             candidate_models.append(m.strip())
 
-                    from backend.llm_model_manager import (
-                        prioritize_healthy_models,
-                        mark_model_rate_limited,
-                        mark_model_success,
-                        is_model_rate_limited,
-                        resolve_provider_model,
-                        resolve_provider_models,
-                    )
-                    candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
-                    candidate_models = prioritize_healthy_models(candidate_models)
-                    if candidate_models and candidate_models[0] != resolve_provider_model(subagent_model, self.api_base):
+                    try:
+                        from backend.llm_model_manager import (
+                            prioritize_healthy_models,
+                            mark_model_rate_limited,
+                            mark_model_success,
+                            is_model_rate_limited,
+                            resolve_provider_model,
+                            resolve_provider_models,
+                        )
+                        candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
+                        candidate_models = prioritize_healthy_models(candidate_models)
+                        resolved_subagent = resolve_provider_model(subagent_model, self.api_base)
+                    except (ImportError, AttributeError):
+                        resolved_subagent = subagent_model
+                    if candidate_models and candidate_models[0] != resolved_subagent:
                         logger.info(
                             f"Subagent '{subagent_name}' configured model '{subagent_model}' is in rate-limit cooldown. "
                             f"Bypassing to healthy model '{candidate_models[0]}'."

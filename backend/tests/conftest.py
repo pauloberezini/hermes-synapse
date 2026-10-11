@@ -35,16 +35,18 @@ def clean_test_database():
     db_mod.init_db()
     with backend.connect() as conn:
         cur = conn.cursor()
-        for table in ["trade_traces", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_requests"]:
+        for table in ["trade_traces", "trades", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_requests"]:
             try:
                 cur.execute(f"DELETE FROM {table}")
             except Exception:
                 pass
+
         # Re-insert default settings
         try:
             cur.execute("INSERT INTO app_settings (key, value) VALUES ('language', 'en') ON CONFLICT(key) DO NOTHING")
         except Exception:
             pass
+        conn.commit()
 
     yield
 
@@ -58,6 +60,11 @@ def reset_shared_test_state():
     try:
         from backend.mcp_client import mcp_clients
         mcp_clients.clear()
+    except Exception:
+        pass
+    try:
+        from backend.llm_model_manager import reset_endpoint_cooldowns
+        reset_endpoint_cooldowns()
     except Exception:
         pass
 

@@ -375,12 +375,20 @@ def _payload_key_stored(raw: str) -> str:
         return raw or ""
 
 
+def _requires_approval(action_name: str) -> bool:
+    if action_name in HIGH_RISK_TOOLS:
+        return True
+    # MCP tool names are registered at runtime, so they cannot sit in HIGH_RISK_TOOLS.
+    from backend.mcp_client import mcp_tool_to_server
+    return action_name in mcp_tool_to_server
+
+
 def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
     """Block a high-risk tool until a human approves that exact call.
 
     Returns None when the tool may run. Otherwise a JSON string for the agent.
     """
-    if action_name not in HIGH_RISK_TOOLS:
+    if not _requires_approval(action_name):
         return None
     agent_id = agent_id or "default"
     payload = payload or {}

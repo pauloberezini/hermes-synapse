@@ -15,6 +15,21 @@ from typing import List, Dict, Optional, Tuple, Any
 
 logger = logging.getLogger("hermes.llm_manager")
 
+__all__ = [
+    "resolve_provider_model",
+    "resolve_provider_models",
+    "prioritize_healthy_models",
+    "mark_model_rate_limited",
+    "is_model_rate_limited",
+    "reset_model_cooldowns",
+    "reset_endpoint_cooldowns",
+    "reset_endpoint_circuits",
+    "mark_endpoint_unreachable",
+    "is_endpoint_unreachable",
+    "mark_endpoint_down",
+    "is_endpoint_down",
+]
+
 # Global in-process rate-limit cooldown timestamps: model_name -> expiration timestamp
 _MODEL_RATE_LIMIT_COOLDOWNS: Dict[str, float] = {}
 _MODEL_CONSECUTIVE_429: Dict[str, int] = {}
@@ -335,4 +350,7 @@ def reset_endpoint_cooldowns(endpoint_or_host: Optional[str] = None) -> None:
                 os.remove(cache_file)
     except Exception:
         pass
+
+
+reset_endpoint_circuits = reset_endpoint_cooldowns
 

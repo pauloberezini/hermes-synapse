@@ -113,14 +113,15 @@ def test_cross_rss_full_workflow(auth_client):
 
     # 5. Execute Agent Tool Call `read_rss_node_feed` with limit 2 (Cross-component integration)
     tool_output_limited = execute_tool("read_rss_node_feed", {"node_id": node_id, "limit": 2})
-    assert "RSS Нода: Tech News Feed Node" in tool_output_limited
-    assert "Всего публикаций отдано: 2" in tool_output_limited
+    assert ("Tech News Feed Node" in tool_output_limited)
+    assert ("Items returned: 2" in tool_output_limited or "Всего публикаций отдано: 2" in tool_output_limited)
     assert "Artificial Intelligence Models" in tool_output_limited
 
     # Execute Agent Tool Call without limit parameter (returns all 3 items)
     tool_output_all = execute_tool("read_rss_node_feed", {"node_id": node_id})
-    assert "Всего публикаций отдано: 3" in tool_output_all
+    assert ("Items returned: 3" in tool_output_all or "Всего публикаций отдано: 3" in tool_output_all)
     assert "Python 3.14 Alpha Released" in tool_output_all
+
 
     # 6. Test Output Filtering dynamically: Update RSS Node with keywords_filter="Python"
     update_resp = auth_client.put(f"/api/rss/nodes/{node_id}", json={

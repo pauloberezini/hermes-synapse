@@ -1243,16 +1243,21 @@ async def _send_telegram_alert(chat_id: str, text: str) -> None:
     if not chat_id or chat_id == "dashboard" or not (chat_id.lstrip('-').isdigit() or chat_id.startswith('@')):
         return
     try:
-        from backend.bot import telegram_app
+        from backend.bot import telegram_app, split_telegram_message
         if telegram_app:
-            try:
-                await telegram_app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
-            except Exception as pe:
-                if "can't parse entities" in str(pe).lower() or "entity" in str(pe).lower() or "bad request" in str(pe).lower():
-                    logger.warning(f"Telegram Markdown parse failed in scheduler: {pe}. Retrying with plain text.")
-                    await telegram_app.bot.send_message(chat_id=chat_id, text=text)
-                else:
-                    raise pe
+            chunks = split_telegram_message(text, max_chars=4000) if text else []
+            for chunk in chunks:
+                try:
+                    await telegram_app.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="Markdown")
+                except Exception as pe:
+                    if "can't parse entities" in str(pe).lower() or "entity" in str(pe).lower() or "bad request" in str(pe).lower() or "too long" in str(pe).lower():
+                        logger.warning(f"Telegram Markdown parse failed in scheduler: {pe}. Retrying with plain text.")
+                        try:
+                            await telegram_app.bot.send_message(chat_id=chat_id, text=chunk)
+                        except Exception as pe2:
+                            logger.error(f"Telegram plain alert retry failed in scheduler: {pe2}")
+                    else:
+                        raise pe
     except Exception as exc:
         exc_str = str(exc)
         exc_type = type(exc).__name__

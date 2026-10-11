@@ -359,6 +359,7 @@ def init_db(force: bool = False):
     with _init_db_lock:
         b = _get_backend()
         b.init_schema()
+        backfill_pending_hires()
         try:
             cleanup_contaminated_decision_logs()
             purge_invalid_distilled_skills()
@@ -524,6 +525,10 @@ def _do_init_sqlite_schema(conn):
         ("y", "INTEGER DEFAULT 100"),
         ("temperature", "REAL DEFAULT 0.7"),
         ("memory_engine", "TEXT DEFAULT 'default'"),
+        ("origin", "TEXT DEFAULT 'manual'"),
+        ("hire_reason", "TEXT DEFAULT ''"),
+        ("last_used_at", "TEXT"),
+        ("hire_status", "TEXT DEFAULT 'active'"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE subagents ADD COLUMN {col} {definition}")
@@ -1023,6 +1028,10 @@ def _init_postgres_schema():
                 ("y", "INTEGER DEFAULT 100"),
                 ("temperature", "REAL DEFAULT 0.7"),
                 ("memory_engine", "TEXT DEFAULT 'default'"),
+                ("origin", "TEXT DEFAULT 'manual'"),
+                ("hire_reason", "TEXT DEFAULT ''"),
+                ("last_used_at", "TIMESTAMP"),
+                ("hire_status", "TEXT DEFAULT 'active'"),
             ]:
                 _postgres_add_column_if_not_exists(cursor, conn, "subagents", col, definition)
 
@@ -1470,7 +1479,27 @@ def get_chat_history(session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
                 ORDER BY id DESC LIMIT ?
             ) ORDER BY id ASC
         """, (session_id, limit))
-        return [{"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3], "timestamp": r[4]} for r in rows]
+        result = []
+        for r in rows:
+            if not r:
+                continue
+            if isinstance(r, dict):
+                result.append({
+                    "id": r.get("id"),
+                    "role": r.get("role"),
+                    "content": r.get("content"),
+                    "cost_usd": r.get("cost_usd") or 0.0,
+                    "timestamp": r.get("timestamp")
+                })
+            elif isinstance(r, (list, tuple)):
+                result.append({
+                    "id": r[0] if len(r) > 0 else None,
+                    "role": r[1] if len(r) > 1 else "",
+                    "content": r[2] if len(r) > 2 else "",
+                    "cost_usd": r[3] if len(r) > 3 and r[3] is not None else 0.0,
+                    "timestamp": r[4] if len(r) > 4 else None
+                })
+        return result
     except Exception as e:
         logger.error(f"Error retrieving chat history: {e}")
         return []
@@ -1483,10 +1512,26 @@ def get_session_trajectory_data(session_id: str) -> Dict[str, Any]:
             WHERE session_id = ?
             ORDER BY id ASC
         """, (session_id,))
-        messages = [
-            {"id": r[0], "role": r[1], "content": r[2], "cost_usd": r[3], "timestamp": r[4]}
-            for r in rows
-        ]
+        messages = []
+        for r in rows:
+            if not r:
+                continue
+            if isinstance(r, dict):
+                messages.append({
+                    "id": r.get("id"),
+                    "role": r.get("role"),
+                    "content": r.get("content"),
+                    "cost_usd": r.get("cost_usd") or 0.0,
+                    "timestamp": r.get("timestamp")
+                })
+            elif isinstance(r, (list, tuple)):
+                messages.append({
+                    "id": r[0] if len(r) > 0 else None,
+                    "role": r[1] if len(r) > 1 else "",
+                    "content": r[2] if len(r) > 2 else "",
+                    "cost_usd": r[3] if len(r) > 3 and r[3] is not None else 0.0,
+                    "timestamp": r[4] if len(r) > 4 else None
+                })
 
         dec_rows = _execute("""
             SELECT id, timestamp, session_id, model, latency_ms, success,
@@ -1498,26 +1543,52 @@ def get_session_trajectory_data(session_id: str) -> Dict[str, Any]:
         """, (session_id,))
         decision_logs = []
         for r in dec_rows:
-            try:
-                traces = json.loads(r[10]) if isinstance(r[10], str) else r[10]
-            except Exception:
-                traces = []
-            decision_logs.append({
-                "id": r[0],
-                "timestamp": r[1],
-                "session_id": r[2],
-                "model": r[3],
-                "latency_ms": r[4],
-                "success": bool(r[5]),
-                "error": r[6],
-                "prompt_tokens_estimate": r[7],
-                "user_message": r[8],
-                "assistant_response": r[9],
-                "traces": traces,
-                "agent_id": r[11] if len(r) > 11 else "jarvis",
-                "completion_tokens_estimate": r[12] if len(r) > 12 else 0,
-                "cost_usd": r[13] if len(r) > 13 else 0.0,
-            })
+            if not r:
+                continue
+            if isinstance(r, dict):
+                raw_traces = r.get("traces")
+                try:
+                    traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
+                except Exception:
+                    traces = []
+                decision_logs.append({
+                    "id": r.get("id"),
+                    "timestamp": r.get("timestamp"),
+                    "session_id": r.get("session_id"),
+                    "model": r.get("model"),
+                    "latency_ms": r.get("latency_ms"),
+                    "success": bool(r.get("success")),
+                    "error": r.get("error"),
+                    "prompt_tokens_estimate": r.get("prompt_tokens_estimate"),
+                    "user_message": r.get("user_message"),
+                    "assistant_response": r.get("assistant_response"),
+                    "traces": traces,
+                    "agent_id": r.get("agent_id") or "jarvis",
+                    "completion_tokens_estimate": r.get("completion_tokens_estimate") or 0,
+                    "cost_usd": r.get("cost_usd") or 0.0,
+                })
+            elif isinstance(r, (list, tuple)):
+                raw_traces = r[10] if len(r) > 10 else []
+                try:
+                    traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
+                except Exception:
+                    traces = []
+                decision_logs.append({
+                    "id": r[0] if len(r) > 0 else None,
+                    "timestamp": r[1] if len(r) > 1 else None,
+                    "session_id": r[2] if len(r) > 2 else None,
+                    "model": r[3] if len(r) > 3 else None,
+                    "latency_ms": r[4] if len(r) > 4 else None,
+                    "success": bool(r[5]) if len(r) > 5 and r[5] is not None else False,
+                    "error": r[6] if len(r) > 6 else None,
+                    "prompt_tokens_estimate": r[7] if len(r) > 7 else None,
+                    "user_message": r[8] if len(r) > 8 else None,
+                    "assistant_response": r[9] if len(r) > 9 else None,
+                    "traces": traces,
+                    "agent_id": r[11] if len(r) > 11 and r[11] is not None else "jarvis",
+                    "completion_tokens_estimate": r[12] if len(r) > 12 and r[12] is not None else 0,
+                    "cost_usd": r[13] if len(r) > 13 and r[13] is not None else 0.0,
+                })
         return {
             "session_id": session_id,
             "messages": messages,
@@ -1651,36 +1722,72 @@ def get_decision_logs(limit: int = 100) -> List[Dict[str, Any]]:
         """, (limit,))
         logs = []
         for r in rows:
-            try:
-                traces = json.loads(r[10]) if isinstance(r[10], str) else r[10]
-            except Exception:
-                traces = []
-            try:
-                tool_calls_log = json.loads(r[15]) if len(r) > 15 and isinstance(r[15], str) else []
-            except Exception:
-                tool_calls_log = []
-            logs.append({
-                "id": r[0],
-                "timestamp": r[1],
-                "session_id": r[2],
-                "model": r[3],
-                "latency_ms": r[4],
-                "success": bool(r[5]),
-                "error": r[6],
-                "prompt_tokens_estimate": r[7],
-                "user_message": r[8],
-                "assistant_response": r[9],
-                "traces": traces,
-                "agent_id": r[11] if len(r) > 11 else "jarvis",
-                "completion_tokens_estimate": r[12] if len(r) > 12 else 0,
-                "cost_usd": r[13] if len(r) > 13 else 0.0,
-                "parent_message_id": r[14] if len(r) > 14 else None,
-                "tool_calls_log": tool_calls_log,
-            })
+            if not r:
+                continue
+            if isinstance(r, dict):
+                raw_traces = r.get("traces")
+                raw_tool_calls = r.get("tool_calls_log")
+                try:
+                    traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
+                except Exception:
+                    traces = []
+                try:
+                    tool_calls_log = json.loads(raw_tool_calls) if isinstance(raw_tool_calls, str) else (raw_tool_calls or [])
+                except Exception:
+                    tool_calls_log = []
+                logs.append({
+                    "id": r.get("id"),
+                    "timestamp": r.get("timestamp"),
+                    "session_id": r.get("session_id"),
+                    "model": r.get("model"),
+                    "latency_ms": r.get("latency_ms"),
+                    "success": bool(r.get("success")),
+                    "error": r.get("error"),
+                    "prompt_tokens_estimate": r.get("prompt_tokens_estimate"),
+                    "user_message": r.get("user_message"),
+                    "assistant_response": r.get("assistant_response"),
+                    "traces": traces,
+                    "agent_id": r.get("agent_id") or "jarvis",
+                    "completion_tokens_estimate": r.get("completion_tokens_estimate") or 0,
+                    "cost_usd": r.get("cost_usd") or 0.0,
+                    "parent_message_id": r.get("parent_message_id"),
+                    "tool_calls_log": tool_calls_log,
+                })
+            elif isinstance(r, (list, tuple)):
+                raw_traces = r[10] if len(r) > 10 else []
+                try:
+                    traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
+                except Exception:
+                    traces = []
+                raw_tool_calls = r[15] if len(r) > 15 else []
+                try:
+                    tool_calls_log = json.loads(raw_tool_calls) if isinstance(raw_tool_calls, str) else (raw_tool_calls or [])
+                except Exception:
+                    tool_calls_log = []
+                logs.append({
+                    "id": r[0] if len(r) > 0 else None,
+                    "timestamp": r[1] if len(r) > 1 else None,
+                    "session_id": r[2] if len(r) > 2 else None,
+                    "model": r[3] if len(r) > 3 else None,
+                    "latency_ms": r[4] if len(r) > 4 else None,
+                    "success": bool(r[5]) if len(r) > 5 and r[5] is not None else False,
+                    "error": r[6] if len(r) > 6 else None,
+                    "prompt_tokens_estimate": r[7] if len(r) > 7 else None,
+                    "user_message": r[8] if len(r) > 8 else None,
+                    "assistant_response": r[9] if len(r) > 9 else None,
+                    "traces": traces,
+                    "agent_id": r[11] if len(r) > 11 and r[11] is not None else "jarvis",
+                    "completion_tokens_estimate": r[12] if len(r) > 12 and r[12] is not None else 0,
+                    "cost_usd": r[13] if len(r) > 13 and r[13] is not None else 0.0,
+                    "parent_message_id": r[14] if len(r) > 14 else None,
+                    "tool_calls_log": tool_calls_log,
+                })
         return logs
     except Exception as e:
         logger.error(f"Error retrieving decision logs: {e}")
         return []
+
+db_get_decision_logs = get_decision_logs
 
 BUILTIN_TOOL_SKILL_MAP: Dict[str, str] = {
     "web_search": "web_search",
@@ -1786,80 +1893,163 @@ def get_agent_threads_for_message(message_id: int) -> List[Dict[str, Any]]:
         
         threads = []
         for r in rows:
-            raw_response = r[8] or ""
-            reasoning_content, clean_response = extract_reasoning_and_output(raw_response)
-            
-            try:
-                traces = json.loads(r[9]) if isinstance(r[9], str) else r[9]
-            except Exception:
-                traces = []
-            if not isinstance(traces, list):
-                traces = []
+            if not r:
+                continue
+            if isinstance(r, dict):
+                raw_response = r.get("assistant_response") or ""
+                reasoning_content, clean_response = extract_reasoning_and_output(raw_response)
+                raw_traces = r.get("traces")
+                try:
+                    traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
+                except Exception:
+                    traces = []
+                if not isinstance(traces, list):
+                    traces = []
 
-            # If <think> was not in the text but traces contain thinking/planning steps, synthesize reasoning
-            if not reasoning_content and traces:
-                thought_steps = [
-                    f"[{t.get('action', 'Step')}]: {t.get('message', '')}"
-                    for t in traces if t.get("action") in ("Thinking", "Planning", "Route", "Analysis", "Start")
-                ]
-                if thought_steps:
-                    reasoning_content = "\n".join(thought_steps)
+                if not reasoning_content and traces:
+                    thought_steps = [
+                        f"[{t.get('action', 'Step')}]: {t.get('message', '')}"
+                        for t in traces if t.get("action") in ("Thinking", "Planning", "Route", "Analysis", "Start")
+                    ]
+                    if thought_steps:
+                        reasoning_content = "\n".join(thought_steps)
 
-            try:
-                tool_calls_log = json.loads(r[14]) if isinstance(r[14], str) else []
-            except Exception:
-                tool_calls_log = []
-            if not isinstance(tool_calls_log, list):
-                tool_calls_log = []
+                raw_tc = r.get("tool_calls_log")
+                try:
+                    tool_calls_log = json.loads(raw_tc) if isinstance(raw_tc, str) else (raw_tc or [])
+                except Exception:
+                    tool_calls_log = []
+                if not isinstance(tool_calls_log, list):
+                    tool_calls_log = []
 
-            # Enrich tool_calls_log with skills if missing
-            enriched_tool_calls = []
-            skills_from_tools = []
-            for tc in tool_calls_log:
-                if not isinstance(tc, dict):
-                    continue
-                tc_name = tc.get("name", "")
-                tc_skill = tc.get("skill") or BUILTIN_TOOL_SKILL_MAP.get(tc_name)
-                if tc_skill:
-                    skills_from_tools.append(tc_skill)
-                enriched_tool_calls.append({
-                    "name": tc_name,
-                    "args": tc.get("args", {}),
-                    "result": tc.get("result", ""),
-                    "skill": tc_skill
+                enriched_tool_calls = []
+                skills_from_tools = []
+                for tc in tool_calls_log:
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_name = tc.get("name", "")
+                    tc_skill = tc.get("skill") or BUILTIN_TOOL_SKILL_MAP.get(tc_name)
+                    if tc_skill:
+                        skills_from_tools.append(tc_skill)
+                    enriched_tool_calls.append({
+                        "name": tc_name,
+                        "args": tc.get("args", {}),
+                        "result": tc.get("result", ""),
+                        "skill": tc_skill
+                    })
+
+                agent_skills_str = r.get("agent_skills") or ""
+                configured_skills = [s.strip() for s in agent_skills_str.split(",") if s.strip()]
+                all_skills = list(dict.fromkeys(skills_from_tools + configured_skills))
+                
+                user_msg = r.get("user_message") or ""
+                prompt_tok = r.get("prompt_tokens_estimate") if r.get("prompt_tokens_estimate") is not None else (len(user_msg) // 4)
+                comp_tok = r.get("completion_tokens_estimate") if r.get("completion_tokens_estimate") is not None else (len(raw_response) // 4)
+                role_desc = (r.get("agent_role") or "")[:250].strip() if r.get("agent_role") else None
+                agent_id_val = r.get("agent_id") or "jarvis"
+                agent_name_val = r.get("agent_name") or agent_id_val
+
+                threads.append({
+                    "id": r.get("id"),
+                    "timestamp": r.get("timestamp"),
+                    "session_id": r.get("session_id"),
+                    "model": r.get("model"),
+                    "latency_ms": r.get("latency_ms"),
+                    "success": bool(r.get("success")),
+                    "error": r.get("error"),
+                    "user_message": user_msg,
+                    "assistant_response": clean_response or raw_response,
+                    "reasoning_content": reasoning_content,
+                    "agent_id": agent_id_val,
+                    "agent_name": agent_name_val,
+                    "role_description": role_desc,
+                    "prompt_tokens_estimate": prompt_tok,
+                    "completion_tokens_estimate": comp_tok,
+                    "total_tokens": prompt_tok + comp_tok,
+                    "cost_usd": r.get("cost_usd") or 0.0,
+                    "parent_message_id": r.get("parent_message_id"),
+                    "tool_calls_log": enriched_tool_calls,
+                    "skills_used": all_skills,
+                    "traces": traces,
                 })
+            elif isinstance(r, (list, tuple)):
+                raw_response = r[8] if len(r) > 8 and r[8] is not None else ""
+                reasoning_content, clean_response = extract_reasoning_and_output(raw_response)
+                
+                raw_traces = r[9] if len(r) > 9 else []
+                try:
+                    traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
+                except Exception:
+                    traces = []
+                if not isinstance(traces, list):
+                    traces = []
 
-            agent_skills_str = r[16] or ""
-            configured_skills = [s.strip() for s in agent_skills_str.split(",") if s.strip()]
-            all_skills = list(dict.fromkeys(skills_from_tools + configured_skills))
-            
-            prompt_tok = r[18] if len(r) > 18 and r[18] is not None else (len(r[7] or "") // 4)
-            comp_tok = r[11] or (len(raw_response) // 4)
-            role_desc = (r[17] or "")[:250].strip() if len(r) > 17 and r[17] else None
+                if not reasoning_content and traces:
+                    thought_steps = [
+                        f"[{t.get('action', 'Step')}]: {t.get('message', '')}"
+                        for t in traces if t.get("action") in ("Thinking", "Planning", "Route", "Analysis", "Start")
+                    ]
+                    if thought_steps:
+                        reasoning_content = "\n".join(thought_steps)
 
-            threads.append({
-                "id": r[0],
-                "timestamp": r[1],
-                "session_id": r[2],
-                "model": r[3],
-                "latency_ms": r[4],
-                "success": bool(r[5]),
-                "error": r[6],
-                "user_message": r[7],
-                "assistant_response": clean_response or raw_response,
-                "reasoning_content": reasoning_content,
-                "agent_id": r[10],
-                "agent_name": r[15] or r[10],
-                "role_description": role_desc,
-                "prompt_tokens_estimate": prompt_tok,
-                "completion_tokens_estimate": comp_tok,
-                "total_tokens": prompt_tok + comp_tok,
-                "cost_usd": r[12] or 0.0,
-                "parent_message_id": r[13],
-                "tool_calls_log": enriched_tool_calls,
-                "skills_used": all_skills,
-                "traces": traces,
-            })
+                raw_tc = r[14] if len(r) > 14 else []
+                try:
+                    tool_calls_log = json.loads(raw_tc) if isinstance(raw_tc, str) else (raw_tc or [])
+                except Exception:
+                    tool_calls_log = []
+                if not isinstance(tool_calls_log, list):
+                    tool_calls_log = []
+
+                enriched_tool_calls = []
+                skills_from_tools = []
+                for tc in tool_calls_log:
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_name = tc.get("name", "")
+                    tc_skill = tc.get("skill") or BUILTIN_TOOL_SKILL_MAP.get(tc_name)
+                    if tc_skill:
+                        skills_from_tools.append(tc_skill)
+                    enriched_tool_calls.append({
+                        "name": tc_name,
+                        "args": tc.get("args", {}),
+                        "result": tc.get("result", ""),
+                        "skill": tc_skill
+                    })
+
+                agent_skills_str = r[16] if len(r) > 16 and r[16] else ""
+                configured_skills = [s.strip() for s in agent_skills_str.split(",") if s.strip()]
+                all_skills = list(dict.fromkeys(skills_from_tools + configured_skills))
+                
+                user_msg = r[7] if len(r) > 7 and r[7] else ""
+                prompt_tok = r[18] if len(r) > 18 and r[18] is not None else (len(user_msg) // 4)
+                comp_tok = r[11] if len(r) > 11 and r[11] is not None else (len(raw_response) // 4)
+                role_desc = (r[17] or "")[:250].strip() if len(r) > 17 and r[17] else None
+                agent_id_val = r[10] if len(r) > 10 and r[10] else "jarvis"
+                agent_name_val = r[15] if len(r) > 15 and r[15] else agent_id_val
+
+                threads.append({
+                    "id": r[0] if len(r) > 0 else None,
+                    "timestamp": r[1] if len(r) > 1 else None,
+                    "session_id": r[2] if len(r) > 2 else None,
+                    "model": r[3] if len(r) > 3 else None,
+                    "latency_ms": r[4] if len(r) > 4 else None,
+                    "success": bool(r[5]) if len(r) > 5 and r[5] is not None else False,
+                    "error": r[6] if len(r) > 6 else None,
+                    "user_message": user_msg,
+                    "assistant_response": clean_response or raw_response,
+                    "reasoning_content": reasoning_content,
+                    "agent_id": agent_id_val,
+                    "agent_name": agent_name_val,
+                    "role_description": role_desc,
+                    "prompt_tokens_estimate": prompt_tok,
+                    "completion_tokens_estimate": comp_tok,
+                    "total_tokens": prompt_tok + comp_tok,
+                    "cost_usd": r[12] if len(r) > 12 and r[12] is not None else 0.0,
+                    "parent_message_id": r[13] if len(r) > 13 else None,
+                    "tool_calls_log": enriched_tool_calls,
+                    "skills_used": all_skills,
+                    "traces": traces,
+                })
         
         if threads:
             return threads
@@ -1869,8 +2059,13 @@ def get_agent_threads_for_message(message_id: int) -> List[Dict[str, Any]]:
         if not msg_rows:
             return []
         
-        msg_content = msg_rows[0][2]
-        msg_session = msg_rows[0][1]
+        first_msg_row = msg_rows[0]
+        if isinstance(first_msg_row, dict):
+            msg_content = first_msg_row.get("content") or ""
+            msg_session = first_msg_row.get("session_id")
+        else:
+            msg_content = first_msg_row[2] if len(first_msg_row) > 2 and first_msg_row[2] else ""
+            msg_session = first_msg_row[1] if len(first_msg_row) > 1 else None
 
         dec_rows = _execute("""
             SELECT id, timestamp, session_id, model, latency_ms, success, error,
@@ -1883,7 +2078,10 @@ def get_agent_threads_for_message(message_id: int) -> List[Dict[str, Any]]:
         # Match by assistant_response prefix or exact content
         matched_log = None
         for dl in dec_rows:
-            resp = dl[8] or ""
+            if isinstance(dl, dict):
+                resp = dl.get("assistant_response") or ""
+            else:
+                resp = dl[8] if len(dl) > 8 and dl[8] else ""
             if resp and (resp in msg_content or msg_content in resp or resp[:100] == msg_content[:100]):
                 matched_log = dl
                 break
@@ -1892,8 +2090,12 @@ def get_agent_threads_for_message(message_id: int) -> List[Dict[str, Any]]:
             matched_log = dec_rows[0]
 
         if matched_log:
+            if isinstance(matched_log, dict):
+                raw_traces = matched_log.get("traces")
+            else:
+                raw_traces = matched_log[9] if len(matched_log) > 9 else []
             try:
-                traces = json.loads(matched_log[9]) if isinstance(matched_log[9], str) else matched_log[9]
+                traces = json.loads(raw_traces) if isinstance(raw_traces, str) else (raw_traces or [])
             except Exception:
                 traces = []
             if not isinstance(traces, list):
@@ -1951,12 +2153,16 @@ def get_agent_threads_for_message(message_id: int) -> List[Dict[str, Any]]:
                 ]
                 reasoning_text = "\n".join(thought_traces) if thought_traces else None
 
+                m_timestamp = matched_log.get("timestamp") if isinstance(matched_log, dict) else (matched_log[1] if len(matched_log) > 1 else None)
+                m_model = matched_log.get("model") if isinstance(matched_log, dict) else (matched_log[3] if len(matched_log) > 3 else "")
+                m_latency = matched_log.get("latency_ms") if isinstance(matched_log, dict) else (matched_log[4] if len(matched_log) > 4 else 0)
+
                 threads.append({
                     "id": virtual_id,
-                    "timestamp": matched_log[1],
+                    "timestamp": m_timestamp,
                     "session_id": msg_session,
-                    "model": matched_log[3],
-                    "latency_ms": matched_log[4],
+                    "model": m_model,
+                    "latency_ms": m_latency,
                     "success": True,
                     "error": None,
                     "user_message": f"Delegated sub-task to {agent_name}",
@@ -1979,6 +2185,8 @@ def get_agent_threads_for_message(message_id: int) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error retrieving agent threads for message {message_id}: {e}")
         return []
+
+db_get_subagent_threads_for_message = get_agent_threads_for_message
 
 
 def save_activity_log(log: Dict[str, Any]):
@@ -2044,6 +2252,58 @@ def _parent_link_cycles(agent_id: str, parent_id: Optional[str]) -> bool:
     return False
 
 
+def _subagent_from_row(row) -> Dict[str, Any]:
+    if not row:
+        return {}
+    if isinstance(row, dict):
+        origin = row.get("origin") or "manual"
+        last_used = row.get("last_used_at")
+        return {
+            "id": row.get("id"),
+            "name": row.get("name") or "",
+            "system_prompt": row.get("system_prompt") or "",
+            "model": row.get("model") or "",
+            "created_at": row.get("created_at"),
+            "agent_type": row.get("agent_type") or "agent",
+            "parent_id": row.get("parent_id"),
+            "skills": row.get("skills") or "",
+            "x": row.get("x") if row.get("x") is not None else 100,
+            "y": row.get("y") if row.get("y") is not None else 100,
+            "temperature": row.get("temperature") if row.get("temperature") is not None else 0.7,
+            "origin": origin,
+            "hire_reason": row.get("hire_reason") or "",
+            "last_used_at": last_used,
+            "hire_status": row.get("hire_status") or "active",
+            "unused": _is_unused_auto(origin, last_used),
+        }
+    origin = row[11] if len(row) > 11 and row[11] is not None else "manual"
+    last_used = row[13] if len(row) > 13 else None
+    return {
+        "id": row[0] if len(row) > 0 else None,
+        "name": row[1] if len(row) > 1 else "",
+        "system_prompt": row[2] if len(row) > 2 else "",
+        "model": row[3] if len(row) > 3 else "",
+        "created_at": row[4] if len(row) > 4 else None,
+        "agent_type": (row[5] if len(row) > 5 and row[5] else "agent"),
+        "parent_id": row[6] if len(row) > 6 else None,
+        "skills": (row[7] if len(row) > 7 and row[7] else ""),
+        "x": row[8] if len(row) > 8 and row[8] is not None else 100,
+        "y": row[9] if len(row) > 9 and row[9] is not None else 100,
+        "temperature": row[10] if len(row) > 10 and row[10] is not None else 0.7,
+        "origin": origin,
+        "hire_reason": (row[12] if len(row) > 12 and row[12] else ""),
+        "last_used_at": last_used,
+        "hire_status": (row[14] if len(row) > 14 and row[14] else "active"),
+        "unused": _is_unused_auto(origin, last_used),
+    }
+
+
+_SUBAGENT_COLUMNS = (
+    "id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature, "
+    "origin, hire_reason, last_used_at, hire_status"
+)
+
+
 def save_subagent(
     id: str,
     name: str,
@@ -2055,16 +2315,24 @@ def save_subagent(
     x: int = 100,
     y: int = 100,
     temperature: float = 0.7,
+    origin: Optional[str] = None,
+    hire_reason: Optional[str] = None,
 ):
     """Saves or updates a subagent's configuration in the database."""
     if _parent_link_cycles(id, parent_id):
         raise DagCycleError(
             f"Refusing parent_id={parent_id!r} for agent {id!r}: it would cycle the agent DAG"
         )
+    if origin is None or hire_reason is None:
+        existing = get_subagent(id)
+        if origin is None:
+            origin = (existing or {}).get("origin") or "manual"
+        if hire_reason is None:
+            hire_reason = (existing or {}).get("hire_reason") or ""
     try:
         _execute("""
-            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO subagents (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature, origin, hire_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 system_prompt=excluded.system_prompt,
@@ -2074,8 +2342,10 @@ def save_subagent(
                 skills=excluded.skills,
                 x=excluded.x,
                 y=excluded.y,
-                temperature=excluded.temperature
-        """, (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature))
+                temperature=excluded.temperature,
+                origin=excluded.origin,
+                hire_reason=excluded.hire_reason
+        """, (id, name, system_prompt, model, agent_type, parent_id, skills, x, y, temperature, origin, hire_reason))
         logger.info(f"Subagent saved: {id} ({name})")
     except Exception as e:
         logger.error(f"Error saving subagent {id}: {e}")
@@ -2083,26 +2353,8 @@ def save_subagent(
 def get_subagent(id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a subagent by its ID."""
     try:
-        rows = _execute("""
-            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
-            FROM subagents WHERE id = ?
-        """, (id,))
-        if rows:
-            row = rows[0]
-            return {
-                "id": row[0],
-                "name": row[1],
-                "system_prompt": row[2],
-                "model": row[3],
-                "created_at": row[4],
-                "agent_type": row[5] or "agent",
-                "parent_id": row[6],
-                "skills": row[7] or "",
-                "x": row[8] if row[8] is not None else 100,
-                "y": row[9] if row[9] is not None else 100,
-                "temperature": row[10] if row[10] is not None else 0.7,
-            }
-        return None
+        rows = _execute(f"SELECT {_SUBAGENT_COLUMNS} FROM subagents WHERE id = ?", (id,))
+        return _subagent_from_row(rows[0]) if rows else None
     except Exception as e:
         logger.error(f"Error retrieving subagent {id}: {e}")
         return None
@@ -2110,29 +2362,85 @@ def get_subagent(id: str) -> Optional[Dict[str, Any]]:
 def get_all_subagents() -> List[Dict[str, Any]]:
     """Retrieves all registered subagents from the database."""
     try:
-        rows = _execute("""
-            SELECT id, name, system_prompt, model, created_at, agent_type, parent_id, skills, x, y, temperature
-            FROM subagents ORDER BY id ASC
-        """)
-        return [
-            {
-                "id": r[0],
-                "name": r[1],
-                "system_prompt": r[2],
-                "model": r[3],
-                "created_at": r[4],
-                "agent_type": r[5] or "agent",
-                "parent_id": r[6],
-                "skills": r[7] or "",
-                "x": r[8] if r[8] is not None else 100,
-                "y": r[9] if r[9] is not None else 100,
-                "temperature": r[10] if r[10] is not None else 0.7,
-            }
-            for r in rows
-        ]
+        rows = _execute(f"SELECT {_SUBAGENT_COLUMNS} FROM subagents ORDER BY id ASC")
+        return [_subagent_from_row(r) for r in rows]
     except Exception as e:
         logger.error(f"Error listing subagents: {e}")
         return []
+
+
+def touch_subagent_last_used(agent_id: str) -> None:
+    try:
+        _execute("UPDATE subagents SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", (agent_id,))
+    except Exception as e:
+        logger.error(f"Error touching subagent {agent_id}: {e}")
+
+
+_HIRE_STATUSES = {"active", "pending"}
+
+
+def set_hire_status(agent_id: str, status: str) -> None:
+    if status not in _HIRE_STATUSES:
+        raise ValueError(f"hire_status must be one of {sorted(_HIRE_STATUSES)}")
+    _execute("UPDATE subagents SET hire_status = ? WHERE id = ?", (status, agent_id))
+
+
+def _unused_days() -> int:
+    try:
+        return int(os.getenv("AUTO_HIRE_UNUSED_DAYS", "30") or "30")
+    except ValueError:
+        return 30
+
+
+def _is_unused_auto(origin, last_used_at, days: Optional[int] = None) -> bool:
+    if (origin or "manual") != "auto":
+        return False
+    if days is None:
+        days = _unused_days()
+    if not last_used_at:
+        return True
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    seen = last_used_at
+    if isinstance(seen, datetime):
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=timezone.utc)
+    else:
+        raw = str(seen).strip().replace("T", " ")[:19]
+        try:
+            seen = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return True
+    return seen < cutoff
+
+
+def backfill_pending_hires() -> None:
+    """Move a PENDING: hire_reason prefix into hire_status. Promote suffixed orchestrator rows."""
+    rows = _execute(
+        "SELECT id, hire_reason FROM subagents WHERE hire_reason LIKE ?",
+        ("PENDING:%",),
+    ) or []
+    for row in rows:
+        stripped = str(row[1] or "")[len("PENDING:"):].strip()
+        _execute(
+            "UPDATE subagents SET hire_status = ?, hire_reason = ? WHERE id = ?",
+            ("pending", stripped, row[0]),
+        )
+    _execute(
+        "UPDATE subagents SET agent_type = ? "
+        "WHERE id LIKE ? ESCAPE '\\' "
+        "AND COALESCE(agent_type, '') NOT IN (?, ?)",
+        ("orchestrator", "%\\_orchestrator", "orchestrator", "sub-orchestrator"),
+    )
+
+
+def list_unused_auto_agents(days: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Auto-hired agents with no use in `days`. Never deletes them."""
+    if days is None:
+        days = _unused_days()
+    return [
+        agent for agent in get_all_subagents()
+        if _is_unused_auto(agent.get("origin"), agent.get("last_used_at"), days)
+    ]
 
 get_subagents = get_all_subagents
 
@@ -2193,16 +2501,17 @@ def get_agent_events(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """, (agent_id, limit))
         return [
             {
-                "id": r[0],
-                "agent_id": r[1],
-                "timestamp": r[2],
-                "event_type": r[3],
-                "message": r[4],
-                "status": r[5],
-                "task": r[6] or "",
-                "metadata": _json_or_empty(r[7]),
+                "id": r.get("id") if isinstance(r, dict) else (r[0] if len(r) > 0 else None),
+                "agent_id": r.get("agent_id") if isinstance(r, dict) else (r[1] if len(r) > 1 else None),
+                "timestamp": r.get("timestamp") if isinstance(r, dict) else (r[2] if len(r) > 2 else None),
+                "event_type": r.get("event_type") if isinstance(r, dict) else (r[3] if len(r) > 3 else None),
+                "message": r.get("message") if isinstance(r, dict) else (r[4] if len(r) > 4 else None),
+                "status": r.get("status") if isinstance(r, dict) else (r[5] if len(r) > 5 else None),
+                "task": (r.get("task") if isinstance(r, dict) else (r[6] if len(r) > 6 else "")) or "",
+                "metadata": _json_or_empty(r.get("metadata") if isinstance(r, dict) else (r[7] if len(r) > 7 else None)),
             }
             for r in rows
+            if r
         ]
     except Exception as e:
         logger.error(f"Error fetching agent events for {agent_id}: {e}")
@@ -2627,17 +2936,32 @@ def db_get_distilled_skills(limit: int = 50) -> List[Dict[str, Any]]:
         """, (limit,))
         skills = []
         for r in rows:
-            skills.append({
-                "id": r[0],
-                "created_at": r[1],
-                "decision_log_id": r[2],
-                "session_id": r[3],
-                "skill_name": r[4],
-                "title": r[5],
-                "file_path": r[6],
-                "trigger_conditions": r[7],
-                "content": r[8]
-            })
+            if not r:
+                continue
+            if isinstance(r, dict):
+                skills.append({
+                    "id": r.get("id"),
+                    "created_at": r.get("created_at"),
+                    "decision_log_id": r.get("decision_log_id"),
+                    "session_id": r.get("session_id"),
+                    "skill_name": str(r.get("skill_name") or ""),
+                    "title": str(r.get("title") or ""),
+                    "file_path": r.get("file_path"),
+                    "trigger_conditions": str(r.get("trigger_conditions") or ""),
+                    "content": str(r.get("content") or ""),
+                })
+            elif isinstance(r, (list, tuple)):
+                skills.append({
+                    "id": r[0] if len(r) > 0 else None,
+                    "created_at": r[1] if len(r) > 1 else None,
+                    "decision_log_id": r[2] if len(r) > 2 else None,
+                    "session_id": r[3] if len(r) > 3 else None,
+                    "skill_name": str(r[4] or "") if len(r) > 4 and r[4] is not None else "",
+                    "title": str(r[5] or "") if len(r) > 5 and r[5] is not None else "",
+                    "file_path": r[6] if len(r) > 6 else None,
+                    "trigger_conditions": str(r[7] or "") if len(r) > 7 and r[7] is not None else "",
+                    "content": str(r[8] or "") if len(r) > 8 and r[8] is not None else "",
+                })
         return skills
     except Exception as e:
         logger.error(f"Error fetching distilled skills: {e}")
@@ -2663,15 +2987,31 @@ def purge_invalid_distilled_skills() -> int:
         )
         purged_count = 0
         for r in rows:
-            skill_id = r[0]
-            s_name = str(r[2] or "").lower()
-            s_title = str(r[3] or "").lower()
-            s_path = r[4]
-            s_content = str(r[5] or "").lower()
-            log_success = r[6] if len(r) > 6 else 1
+            if not r:
+                continue
+            if isinstance(r, dict):
+                skill_id = r.get("id")
+                s_name = str(r.get("skill_name") or "")
+                s_title = str(r.get("title") or "")
+                s_path = r.get("file_path")
+                s_content = str(r.get("content") or "")
+                log_success = r.get("log_success", 1)
+            elif isinstance(r, (list, tuple)):
+                skill_id = r[0] if len(r) > 0 else None
+                s_name = str(r[2] or "") if len(r) > 2 and r[2] is not None else ""
+                s_title = str(r[3] or "") if len(r) > 3 and r[3] is not None else ""
+                s_path = r[4] if len(r) > 4 else None
+                s_content = str(r[5] or "") if len(r) > 5 and r[5] is not None else ""
+                log_success = r[6] if len(r) > 6 and r[6] is not None else 1
+            else:
+                continue
+
+            s_name_lower = s_name.lower()
+            s_title_lower = s_title.lower()
+            s_content_lower = s_content.lower()
             is_invalid = (
                 log_success == 0
-                or any(m in s_content or m in s_title or m in s_name for m in invalid_markers)
+                or any(m in s_content_lower or m in s_title_lower or m in s_name_lower for m in invalid_markers)
             )
             if is_invalid:
                 _execute("DELETE FROM distilled_skills WHERE id = ?", (skill_id,))
@@ -2684,7 +3024,7 @@ def purge_invalid_distilled_skills() -> int:
                 try:
                     from backend.memory import get_memory_engine
                     engine = get_memory_engine()
-                    doc_id = f"distilled_skill_{r[2]}"
+                    doc_id = f"distilled_skill_{s_name}"
                     engine.delete_document(doc_id)
                 except Exception:
                     pass
@@ -2742,10 +3082,10 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
             WHERE success = 1
               AND (error IS NULL OR error = '')
               AND id NOT IN (SELECT decision_log_id FROM distilled_skills WHERE decision_log_id IS NOT NULL)
-              AND (session_id NOT LIKE ? OR session_id IS NULL)
-              AND (LOWER(user_message) NOT LIKE ? OR user_message IS NULL)
+              AND (session_id NOT LIKE ? AND session_id NOT LIKE ? OR session_id IS NULL)
+              AND (LOWER(user_message) NOT LIKE ? AND LOWER(user_message) NOT LIKE ? AND LOWER(user_message) NOT LIKE ? OR user_message IS NULL)
             ORDER BY id DESC LIMIT ?
-        """, ("task_%", "execute scheduled task:%", limit * 3))
+        """, ("task_%", "%scheduled%", "%execute scheduled task:%", "%scheduled task%", "%scheduled automation%", limit * 3))
         
         candidates = []
         for r in rows:
@@ -2815,7 +3155,16 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
             if err_text or match_failure_marker(resp_text, failure_markers):
                 continue
 
-            if r_session_id.startswith("task_") or r_user_msg.strip().lower().startswith("execute scheduled task:"):
+            r_sid_lower = r_session_id.lower()
+            r_msg_lower = r_user_msg.strip().lower()
+            if (
+                r_sid_lower.startswith("task_")
+                or "scheduled" in r_sid_lower
+                or r_msg_lower.startswith("execute scheduled task:")
+                or "scheduled task" in r_msg_lower
+                or "scheduled automation" in r_msg_lower
+                or "scheduled run" in r_msg_lower
+            ):
                 continue
 
             try:
@@ -3008,27 +3357,51 @@ def db_create_rss_node(id: str, name: str, feed_urls: str = "", fetch_interval_m
     return res if res else {}
 
 
+def _rss_node_from_row(r) -> Optional[Dict[str, Any]]:
+    if not r:
+        return None
+    if isinstance(r, dict):
+        return {
+            "id": r.get("id"),
+            "name": r.get("name") or "",
+            "feed_urls": r.get("feed_urls") or "",
+            "fetch_interval_minutes": r.get("fetch_interval_minutes") or 15,
+            "output_limit": r.get("output_limit") or 10,
+            "date_filter_days": r.get("date_filter_days") or 0,
+            "keywords_filter": r.get("keywords_filter") or "",
+            "is_active": bool(r.get("is_active")),
+            "x": r.get("x") if r.get("x") is not None else 300,
+            "y": r.get("y") if r.get("y") is not None else 200,
+            "connected_agents": r.get("connected_agents") or "",
+            "last_fetched_at": r.get("last_fetched_at"),
+            "created_at": r.get("created_at"),
+        }
+    return {
+        "id": r[0] if len(r) > 0 else None,
+        "name": (r[1] if len(r) > 1 and r[1] is not None else ""),
+        "feed_urls": (r[2] if len(r) > 2 and r[2] is not None else ""),
+        "fetch_interval_minutes": (r[3] if len(r) > 3 and r[3] is not None else 15),
+        "output_limit": (r[4] if len(r) > 4 and r[4] is not None else 10),
+        "date_filter_days": (r[5] if len(r) > 5 and r[5] is not None else 0),
+        "keywords_filter": (r[6] if len(r) > 6 and r[6] is not None else ""),
+        "is_active": bool(r[7]) if len(r) > 7 and r[7] is not None else False,
+        "x": r[8] if len(r) > 8 and r[8] is not None else 300,
+        "y": r[9] if len(r) > 9 and r[9] is not None else 200,
+        "connected_agents": (r[10] if len(r) > 10 and r[10] is not None else ""),
+        "last_fetched_at": r[11] if len(r) > 11 else None,
+        "created_at": r[12] if len(r) > 12 else None,
+    }
+
+
 def db_get_all_rss_nodes() -> List[Dict[str, Any]]:
     """Retrieve all RSS nodes."""
     query = "SELECT id, name, feed_urls, fetch_interval_minutes, output_limit, date_filter_days, keywords_filter, is_active, x, y, connected_agents, last_fetched_at, created_at FROM rss_nodes ORDER BY created_at ASC"
     rows = _execute(query)
     result = []
     for r in rows:
-        result.append({
-            "id": r[0],
-            "name": r[1],
-            "feed_urls": r[2] or "",
-            "fetch_interval_minutes": r[3] or 15,
-            "output_limit": r[4] or 10,
-            "date_filter_days": r[5] or 0,
-            "keywords_filter": r[6] or "",
-            "is_active": bool(r[7]),
-            "x": r[8] if r[8] is not None else 300,
-            "y": r[9] if r[9] is not None else 200,
-            "connected_agents": r[10] or "",
-            "last_fetched_at": r[11],
-            "created_at": r[12]
-        })
+        node = _rss_node_from_row(r)
+        if node:
+            result.append(node)
     return result
 
 
@@ -3038,22 +3411,7 @@ def db_get_rss_node(node_id: str) -> Optional[Dict[str, Any]]:
     rows = _execute(query, (node_id,))
     if not rows:
         return None
-    r = rows[0]
-    return {
-        "id": r[0],
-        "name": r[1],
-        "feed_urls": r[2] or "",
-        "fetch_interval_minutes": r[3] or 15,
-        "output_limit": r[4] or 10,
-        "date_filter_days": r[5] or 0,
-        "keywords_filter": r[6] or "",
-        "is_active": bool(r[7]),
-        "x": r[8] if r[8] is not None else 300,
-        "y": r[9] if r[9] is not None else 200,
-        "connected_agents": r[10] or "",
-        "last_fetched_at": r[11],
-        "created_at": r[12]
-    }
+    return _rss_node_from_row(rows[0])
 
 
 def db_update_rss_node(node_id: str, name: Optional[str] = None, feed_urls: Optional[str] = None,

@@ -17,6 +17,27 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger("hermes.subagents")
 
+# Safe imports from llm_model_manager with fallback stubs
+try:
+    from backend.llm_model_manager import (
+        resolve_provider_model,
+        resolve_provider_models,
+        prioritize_healthy_models,
+        mark_model_rate_limited,
+        is_model_rate_limited
+    )
+except (ImportError, AttributeError):
+    def resolve_provider_model(model: Optional[str], api_base: Optional[str] = None) -> Optional[str]:
+        return model
+    def resolve_provider_models(models: List[str], api_base: Optional[str] = None) -> List[str]:
+        return models
+    def prioritize_healthy_models(models: List[str]) -> List[str]:
+        return models
+    def mark_model_rate_limited(model: Optional[str], cooldown_seconds: float = 60.0) -> None:
+        pass
+    def is_model_rate_limited(model: Optional[str]) -> bool:
+        return False
+
 # ─── Per-agent model helper ──────────────────────────────────────────────────
 
 def get_agent_model(agent_role: str, fallback_model: str) -> str:
@@ -30,6 +51,7 @@ def get_agent_model(agent_role: str, fallback_model: str) -> str:
         "code":     "AGENT_MODEL_CODE",
         "analyst":  "AGENT_MODEL_ANALYST",
         "planner":  "AGENT_MODEL_PLANNER",
+        "specialist": "AGENT_MODEL_SPECIALIST",
     }
     env_key = env_map.get(agent_role.lower())
     if env_key:
@@ -39,13 +61,22 @@ def get_agent_model(agent_role: str, fallback_model: str) -> str:
     return fallback_model
 
 
+def _resolve_model(model: Optional[str], api_base: Optional[str]) -> Optional[str]:
+    if not model:
+        return model
+    try:
+        resolved = resolve_provider_model(model, api_base)
+    except (ImportError, AttributeError):
+        return model
+    return resolved or model
+
+
 async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str, session_id: Optional[str] = None) -> str:
     from backend.governance import BudgetGuard, LLM_CALL_ESTIMATE_USD, budget_session
     BudgetGuard.check(session_id or budget_session.get(), LLM_CALL_ESTIMATE_USD)
 
     api_base = os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
-    from backend.llm_model_manager import resolve_provider_model
-    model = resolve_provider_model(model, api_base) or model
+    model = _resolve_model(model, api_base)
     is_openmodel = "openmodel.ai" in api_base
     
     headers = {
@@ -76,11 +107,10 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str, ses
         "google/gemini-2.5-pro",
         "deepseek/deepseek-chat",
     ]:
-        m = resolve_provider_model(m, api_base) if m else m
+        m = _resolve_model(m, api_base) if m else m
         if m and m.strip() and m not in fallback_candidates:
             fallback_candidates.append(m)
 
-    from backend.llm_model_manager import prioritize_healthy_models, mark_model_rate_limited, is_model_rate_limited
     fallback_candidates = prioritize_healthy_models(fallback_candidates)
     if is_model_rate_limited(model) and fallback_candidates:
         first_healthy = fallback_candidates[0]

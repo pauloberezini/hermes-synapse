@@ -23,6 +23,8 @@ OPENROUTER_API_KEY=your_key_here
 LLM_MODEL=ollama/llama3
 ```
 
+When a request needs a competence nobody on the staff has, the core can hire a specialist under the orchestrator that owns the chat. `AUTO_HIRE=ask` (the default) creates the agent and waits for confirmation. `on` hires and runs it in the same turn. `off` reports the gap and creates nothing. Hired agents never receive skills the parent does not already have.
+
 #### 🔍 Web Search Backend (SearXNG)
 Hermes uses [SearXNG](https://github.com/searxng/searxng) as its open-source, self-hosted metasearch engine. No paid search API key is required:
 ```env

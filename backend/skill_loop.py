@@ -165,9 +165,14 @@ class SkillDistiller:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             }
-            from backend.llm_model_manager import resolve_provider_model
+            model_to_use = self.model
+            try:
+                from backend.llm_model_manager import resolve_provider_model
+                model_to_use = resolve_provider_model(self.model, self.api_base) or self.model
+            except (ImportError, AttributeError):
+                pass
             payload = {
-                "model": resolve_provider_model(self.model, self.api_base),
+                "model": model_to_use,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
                 "max_tokens": 1500,

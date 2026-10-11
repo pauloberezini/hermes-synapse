@@ -115,6 +115,33 @@ def test_high_risk_tool_waits_for_human_then_runs_once():
         _execute("DELETE FROM approval_requests WHERE agent_id = ?", ("agent_1",))
 
 
+def test_mcp_tool_waits_for_human_then_runs_once():
+    payload = {"symbol": "EURUSD"}
+    from backend.mcp_client import mcp_tool_to_server
+    mcp_tool_to_server["get_positions"] = "ctrader"
+    try:
+        with patch("backend.mcp_client.handle_mcp_tool", new_callable=AsyncMock) as run:
+            raw = execute_tool("get_positions", payload, chat_id="agent_mcp")
+        run.assert_not_called()
+        pending = json.loads(raw)
+        assert pending["status"] == "PENDING_APPROVAL"
+
+        ApprovalQueue.resolve(pending["request_id"], "APPROVED")
+        with patch("backend.mcp_client.handle_mcp_tool", new_callable=AsyncMock, return_value='{"ok":true}') as run:
+            done = execute_tool("get_positions", payload, chat_id="agent_mcp")
+        run.assert_called_once()
+        assert "ok" in done
+
+        with patch("backend.mcp_client.handle_mcp_tool", new_callable=AsyncMock) as run_again:
+            again = execute_tool("get_positions", payload, chat_id="agent_mcp")
+        run_again.assert_not_called()
+        assert json.loads(again)["status"] == "PENDING_APPROVAL"
+    finally:
+        mcp_tool_to_server.pop("get_positions", None)
+        from backend.database import _execute
+        _execute("DELETE FROM approval_requests WHERE agent_id = ?", ("agent_mcp",))
+
+
 def test_safe_tool_skips_approval():
     before = ApprovalQueue.count_pending()
     raw = execute_tool("get_system_stats", {})

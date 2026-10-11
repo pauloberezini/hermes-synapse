@@ -87,6 +87,21 @@ async def test_call_llm_rewrites_ollama_llama3_on_openrouter(mock_post):
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+async def test_call_llm_survives_missing_resolve_provider_model(mock_post):
+    """Planner path must not die when resolve_provider_model cannot be imported."""
+    mock_post.return_value = _ok("ok")
+    with patch("backend.subagents.resolve_provider_model", side_effect=ImportError("cannot import name 'resolve_provider_model'")), \
+         patch.dict("os.environ", {"LLM_API_BASE": OPENROUTER, "LLM_MODEL": "deepseek/deepseek-chat"}):
+        text = await call_llm(
+            [{"role": "user", "content": "plan"}],
+            api_key="test-key",
+            model="deepseek/deepseek-chat",
+        )
+    assert text == "ok"
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.post", new_callable=AsyncMock)
 async def test_classifier_and_title_do_not_send_ollama_tag_to_openrouter(mock_post):
     mock_post.return_value = _ok("direct")
     with patch.dict("os.environ", {"COMPLEXITY_ROUTING": "auto", "LLM_MODEL": "ollama/llama3", "LLM_API_BASE": OPENROUTER}):

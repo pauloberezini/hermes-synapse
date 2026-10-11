@@ -4,6 +4,16 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ---
 
+## 🚀 [Unreleased]
+
+## 🚀 [v1.4.3] - 2026-10-11
+
+### 🧩 Auto-hire
+- The planner can declare a missing specialist in `hire`. The core creates it under the orchestrator that owns the chat, caps its skills to that parent, and runs it in the same turn.
+- A planner outage checks for a coverage gap before any plugin fallback pipeline. If nobody covers the request and nobody can be hired, the reply says so.
+- The default is now `AUTO_HIRE=ask`: a fresh install creates the specialist and waits for `POST /api/subagents/{id}/confirm` before it runs. Set `AUTO_HIRE=on` for the previous hands-free behaviour.
+- Gap vocabulary and specialist names come from plugins. Whether a hire can run is `hire_status`, and hiring tools follow `agent_type`.
+
 ## 🚀 [v1.4.1] - 2026-10-09
 
 ### 🛡️ Resilience

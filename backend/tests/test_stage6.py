@@ -85,7 +85,7 @@ def test_add_price_alert():
     res_str = tools.execute_tool("add_price_alert", {"symbol": "TON", "target_price": 6.5, "condition": "above"})
     data = json.loads(res_str)
     assert data["status"] == "success"
-    assert "Оповещение установлено" in data["message"]
+    assert "Alert set" in data["message"]
     assert data["alert"]["symbol"] == "the-open-network"
     assert data["alert"]["target_price"] == 6.5
     assert data["alert"]["condition"] == "above"

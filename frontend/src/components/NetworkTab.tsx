@@ -635,6 +635,7 @@ export function NetworkTab({
     setConnectingFrom(null);
   };
 
+  const unusedAuto = subagents.filter((a: { unused?: boolean }) => a.unused);
   const selectedSubagentNode = subagents.find(n => n.id === selectedNodeId);
   const selectedRssNode = rssNodes.find(n => n.id === selectedNodeId);
   const selectedNodeObject = selectedRssNode ? { ...selectedRssNode, isRssNode: true } : (selectedSubagentNode || null);
@@ -649,6 +650,11 @@ export function NetworkTab({
       position: 'relative',
       background: '#020617'
     }}>
+      {unusedAuto.length > 0 && (
+        <div style={{ fontSize: '11px', color: '#fbbf24', padding: '6px 12px', borderBottom: '1px solid rgba(251, 191, 36, 0.25)' }}>
+          Unused auto specialists: {unusedAuto.map((a: { name?: string; id: string }) => a.name || a.id).join(', ')}
+        </div>
+      )}
       {/* Top Layer & Control Bar */}
       <OrchestratorLayerBar
         viewMode={viewMode}
@@ -878,6 +884,9 @@ export function NetworkTab({
                       </div>
                       <div style={{ fontSize: '10px', color: isOrchestrator ? '#c084fc' : '#9ca3af', fontWeight: 500 }}>
                         {isOrchestrator ? 'Orchestrator' : 'Worker Agent'}
+                        {node.origin === 'auto' && (
+                          <span style={{ marginLeft: '6px', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.5)', borderRadius: '4px', padding: '0 4px' }}>auto</span>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -19,7 +19,7 @@ fi
 
 # Only files git would track (respects .gitignore: no .env, DBs, venvs, node_modules),
 # minus the private tree.
-PRIVATE_PATHS='^(backend/bcm/|\.github/workflows/private-ci\.yml$|backend/openapi/|scripts/ctrader_lookup\.py$|docs/specs/bcm-|docs/specs/plugin-boundary-plan\.md$|\.cursor/|[^/]*_TRADE_AUDIT_[^/]*\.md$)'
+PRIVATE_PATHS='^(backend/bcm/|\.github/workflows/private-ci\.yml$|backend/openapi/|scripts/ctrader_lookup\.py$|docs/specs/bcm-|docs/specs/dred-judge\.|docs/specs/plugin-boundary-plan\.md$|\.cursor/|[^/]*_TRADE_AUDIT_[^/]*\.md$)'
 FILES="$(mktemp)"
 git -C "$SRC" ls-files -co --exclude-standard | grep -vE "$PRIVATE_PATHS" > "$FILES"
 

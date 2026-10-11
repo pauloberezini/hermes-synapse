@@ -6,7 +6,7 @@ import re
 import time
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Optional
+from typing import Any, Optional, List
 try:
     from telegram import Update
     from telegram.ext import (
@@ -107,7 +107,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Session memory buffer: {history_len} messages\n"
         f"• Telemetry: Connection established"
     )
-    await update.message.reply_text(status_text, parse_mode="Markdown")
+    await safe_reply_helper(update, status_text)
 
 def get_report_filename(query: str) -> str:
     # Keep only alphanumeric characters, spaces, hyphens, and underscores.
@@ -117,6 +117,151 @@ def get_report_filename(query: str) -> str:
     if not clean:
         return "report.md"
     return f"{clean[:30].lower()}_report.md"
+
+
+def split_telegram_message(text: str, max_chars: int = 4000) -> List[str]:
+    """Splits a long message into sequential chunks, each adhering to Telegram limits.
+    
+    Prefers splitting on paragraph boundaries (\n\n), then line breaks (\n),
+    then spaces (' '), falling back to hard length splitting when unavoidable.
+    """
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    paragraphs = text.split("\n\n")
+
+    for para in paragraphs:
+        para_len = len(para)
+        needed = para_len + (2 if current_chunk else 0)
+        
+        if current_length + needed <= max_chars:
+            current_chunk.append(para)
+            current_length += needed
+        else:
+            if current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+                current_chunk = []
+                current_length = 0
+            
+            if len(para) <= max_chars:
+                current_chunk.append(para)
+                current_length = len(para)
+            else:
+                lines = para.split("\n")
+                line_chunk = []
+                line_length = 0
+                for line in lines:
+                    line_needed = len(line) + (1 if line_chunk else 0)
+                    if line_length + line_needed <= max_chars:
+                        line_chunk.append(line)
+                        line_length += line_needed
+                    else:
+                        if line_chunk:
+                            chunks.append("\n".join(line_chunk))
+                            line_chunk = []
+                            line_length = 0
+                        
+                        if len(line) <= max_chars:
+                            line_chunk.append(line)
+                            line_length = len(line)
+                        else:
+                            words = line.split(" ")
+                            word_chunk = []
+                            word_length = 0
+                            for word in words:
+                                word_needed = len(word) + (1 if word_chunk else 0)
+                                if word_length + word_needed <= max_chars:
+                                    word_chunk.append(word)
+                                    word_length += word_needed
+                                else:
+                                    if word_chunk:
+                                        chunks.append(" ".join(word_chunk))
+                                        word_chunk = []
+                                        word_length = 0
+                                    
+                                    if len(word) <= max_chars:
+                                        word_chunk.append(word)
+                                        word_length = len(word)
+                                    else:
+                                        start = 0
+                                        while start < len(word):
+                                            piece = word[start:start + max_chars]
+                                            chunks.append(piece)
+                                            start += max_chars
+                            if word_chunk:
+                                chunks.append(" ".join(word_chunk))
+                if line_chunk:
+                    current_chunk.append("\n".join(line_chunk))
+                    current_length = len("\n".join(line_chunk))
+
+    if current_chunk:
+        chunks.append("\n\n".join(current_chunk))
+
+    return [c for c in chunks if c.strip()] or [text[:max_chars]]
+
+
+async def safe_reply_helper(update: Update, text: str, assistant_msg_id: Optional[str] = None):
+    """Safely replies to a Telegram message, splitting long texts and handling parse errors."""
+    if not text:
+        return
+    chunks = split_telegram_message(text, max_chars=4000)
+    if not chunks:
+        return
+
+    for i, chunk in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
+        reply_chunk = chunk
+        if is_last and assistant_msg_id:
+            reply_chunk += f"\n\n`[ID: {assistant_msg_id}]`"
+        try:
+            await update.message.reply_text(reply_chunk, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Telegram failed to send markdown chunk {i+1}/{len(chunks)}: {e}. Retrying in plain text.")
+            plain_chunk = chunk
+            if is_last and assistant_msg_id:
+                plain_chunk += f"\n\n[ID: {assistant_msg_id}]"
+            try:
+                await update.message.reply_text(plain_chunk)
+            except Exception as e2:
+                logger.error(f"Telegram failed to send plain text chunk {i+1}/{len(chunks)}: {e2}")
+
+
+async def safe_reply_document_helper(
+    update: Update,
+    document: io.BytesIO,
+    filename: str,
+    caption: str,
+    fallback_text: str,
+    assistant_msg_id: Optional[str] = None
+):
+    """Sends a document with trimmed caption and markdown error recovery."""
+    clean_caption = caption[:1000] if caption else ""
+    try:
+        await update.message.reply_document(
+            document=document,
+            filename=filename,
+            caption=clean_caption,
+            parse_mode="Markdown"
+        )
+    except Exception as doc_err:
+        logger.warning(f"Telegram failed to send document with markdown caption: {doc_err}. Retrying with plain text caption.")
+        try:
+            document.seek(0)
+            await update.message.reply_document(
+                document=document,
+                filename=filename,
+                caption=clean_caption
+            )
+        except Exception as doc_err2:
+            logger.warning(f"Telegram failed to send document: {doc_err2}. Retrying inline chunked reply.")
+            await safe_reply_helper(update, fallback_text, assistant_msg_id=assistant_msg_id)
+
 
 @admin_only
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,11 +279,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             handled, response = hook("handle_fast_command", user_text, default=(False, None))
             if handled:
                 if response:
-                    await update.message.reply_text(response, parse_mode='Markdown')
+                    await safe_reply_helper(update, response)
                 return
         except Exception as e:
             logger.error(f"Error handling fast command with plugin: {e}", exc_info=True)
-            await update.message.reply_text(f"⚠️ Error executing command `{user_text.split()[0]}`: {e}", parse_mode='Markdown')
+            err_msg = f"⚠️ Error executing command `{user_text.split()[0]}`: {e}"
+            await safe_reply_helper(update, err_msg)
             return
     
     # Broadcast user's message to dashboard UI immediately
@@ -163,17 +309,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Reply back on Telegram
     async def safe_reply(text: str):
-        reply_text = text
-        if assistant_msg_id:
-            reply_text += f"\n\n`[ID: {assistant_msg_id}]`"
-        try:
-            await update.message.reply_text(reply_text, parse_mode="Markdown")
-        except Exception as e:
-            logger.warning(f"Telegram failed to send markdown: {e}. Retrying in plain text.")
-            plain_reply = text
-            if assistant_msg_id:
-                plain_reply += f"\n\n[ID: {assistant_msg_id}]"
-            await update.message.reply_text(plain_reply)
+        await safe_reply_helper(update, text, assistant_msg_id=assistant_msg_id)
 
     plot_matches = re.findall(r'!\[.*?\]\((?:https?://[^/]+)?/api/plots/(plot_[a-f0-9]+\.png)\)', response_text)
     
@@ -207,16 +343,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if assistant_msg_id:
             intro += f"\n\n[ID: {assistant_msg_id}]"
         
-        try:
-            await update.message.reply_document(
-                document=bio,
-                filename=filename,
-                caption=intro,
-                parse_mode="Markdown"
-            )
-        except Exception as doc_err:
-            logger.warning(f"Telegram failed to send document: {doc_err}. Retrying inline reply.")
-            await safe_reply(response_text)
+        await safe_reply_document_helper(
+            update,
+            document=bio,
+            filename=filename,
+            caption=intro,
+            fallback_text=response_text,
+            assistant_msg_id=assistant_msg_id
+        )
             
         # Send any plots if they exist
         if plot_matches:

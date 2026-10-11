@@ -119,3 +119,26 @@ def test_changelog_matches_package_version():
     )
     assert pkg_version in versions, f"Version {pkg_version} not found in CHANGELOG.md headers"
 
+
+def test_hire_path_does_not_import_private_execute():
+    for rel in ("backend/orchestrator.py", "backend/agent_factory.py", "backend/tools.py"):
+        text = (ROOT / rel).read_text()
+        assert "import _execute" not in text, rel
+        assert "_execute(" not in text, rel
+
+
+def test_agent_factory_has_no_domain_vocabulary():
+    text = (ROOT / "backend/agent_factory.py").read_text().lower()
+    for word in ("option", "опцион", "trade", "market"):
+        assert word not in text, word
+
+
+def test_privilege_does_not_come_from_an_id_suffix():
+    needle = "endswith(" + '"_orchestrator")'
+    hits = []
+    for path in (ROOT / "backend").rglob("*.py"):
+        for i, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            if needle in line:
+                hits.append(f"{path.relative_to(ROOT)}:{i}")
+    assert hits == []
+
