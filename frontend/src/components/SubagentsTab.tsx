@@ -23,7 +23,7 @@ const AVAILABLE_MODELS = [
   { value: 'anthropic/claude-opus-4',              label: 'Claude Opus 4 — strongest' },
   { value: 'openai/gpt-4o',                        label: 'GPT-4o — well-rounded' },
   { value: 'openai/gpt-4o-mini',                   label: 'GPT-4o Mini — cheap' },
-  { value: 'deepseek/deepseek-r1',                 label: 'DeepSeek R1 — reasoning' },
+  { value: 'deepseek/deepseek-r1-0528',            label: 'DeepSeek R1 (0528) — reasoning' },
   { value: 'deepseek/deepseek-v3-0324',            label: 'DeepSeek V3 — fast & cheap' },
   { value: 'meta-llama/llama-3.3-70b-instruct',   label: 'Llama 3.3 70B — open weights' },
   { value: '__custom__',                           label: 'Custom model…' },

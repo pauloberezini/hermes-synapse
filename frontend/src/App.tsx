@@ -49,6 +49,8 @@ import { TaskBoardTab } from './components/TaskBoardTab';
 import { RSSTab } from './components/RSSTab';
 import { MarketplaceTab } from './components/MarketplaceTab';
 import { AgentSelect } from './components/AgentSelect';
+import { ApprovalsBadge } from './components/ApprovalsBadge';
+import { ApprovalsModal } from './components/ApprovalsModal';
 
 // Initialize global fetch interceptor
 initFetchInterceptor();
@@ -158,6 +160,7 @@ export default function App() {
   
   const [inputValue, setInputValue] = useState('');
   const [selectedLog, setSelectedLog] = useState<DecisionLog | null>(null);
+  const [isApprovalsOpen, setIsApprovalsOpen] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>({ language: 'en' });
   const appSettingsRef = useRef<AppSettings>({ language: 'en' }); // always-current ref for WS/callbacks
@@ -1752,6 +1755,10 @@ export default function App() {
 
         {/* Status Box — minimalist */}
         <div className="sidebar-status-box sidebar-status">
+          <div style={{ marginBottom: '8px', display: 'flex', width: '100%', justifyContent: 'center' }}>
+            <ApprovalsBadge onOpen={() => setIsApprovalsOpen(true)} wsRef={wsRef} />
+          </div>
+
           {/* Connection */}
           <div className="sidebar-status-row" title={isConnected ? 'Network: connected' : 'Network: disconnected'}>
             <span className={`pulse-dot${isConnected ? '' : ' danger'}`} style={{ flexShrink: 0, width: 8, height: 8 }} />
@@ -2117,6 +2124,13 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Governance Approvals Modal */}
+      <ApprovalsModal
+        isOpen={isApprovalsOpen}
+        onClose={() => setIsApprovalsOpen(false)}
+      />
     </div>
   );
 }
+

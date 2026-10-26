@@ -4,7 +4,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, Response, Query, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -133,7 +133,11 @@ async def lifespan(app: FastAPI):
     from backend.price_monitor import price_monitor
     price_monitor.start()
     
-    bot_app = await init_bot()
+    try:
+        bot_app = await init_bot()
+    except Exception as e:
+        logger.warning(f"Telegram bot failed to initialize during startup ({e}). Continuing server boot.")
+        bot_app = None
     
     # Background Obsidian vault sync (non-blocking)
     import asyncio
@@ -211,7 +215,10 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to shutdown scheduler cleanly: {e}")
 
     # Shutdown: Stop Telegram bot
-    await shutdown_bot()
+    try:
+        await shutdown_bot()
+    except Exception as e:
+        logger.warning(f"Telegram bot shutdown encountered an error: {e}")
     
     # Stop price alert monitor background task
     price_monitor.stop()
@@ -252,7 +259,13 @@ async def auth_middleware(request: Request, call_next):
     token = auth_header.split(" ")[1]
     if not validate_session(token):
         return JSONResponse(status_code=401, content={"detail": "Unauthorized: Session expired or invalid"})
-        
+
+    try:
+        from backend.identity import principal_from_token
+        request.state.principal = principal_from_token(token)
+    except Exception:
+        pass
+
     return await call_next(request)
 
 @app.post("/api/auth/request-code")
@@ -849,6 +862,7 @@ class BudgetUpdateRequest(BaseModel):
 class ApprovalResolveRequest(BaseModel):
     decision: str  # "APPROVED" | "REJECTED"
     resolver_note: str = ""
+    bundle_hash: Optional[str] = None  # ignored by server
 
 @app.get("/api/governance/approvals")
 async def get_approvals_api(pending_only: bool = False):
@@ -862,12 +876,91 @@ async def get_pending_approvals_count_api():
     from backend.governance import ApprovalQueue
     return {"count": ApprovalQueue.count_pending()}
 
-@app.post("/api/governance/approvals/{request_id}/resolve")
-async def resolve_approval_api(request_id: int, payload: ApprovalResolveRequest):
+@app.get("/api/governance/approvals/{request_id}")
+async def get_approval_detail_api(request_id: int):
     from backend.governance import ApprovalQueue
-    ok = ApprovalQueue.resolve(request_id, payload.decision, payload.resolver_note)
+    from backend.decision_log import history
+    detail = ApprovalQueue.get_detail(request_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail=f"Approval request #{request_id} not found")
+    detail["decisions"] = history(request_id)
+    return detail
+
+@app.get("/api/governance/decisions")
+async def list_decisions_api(
+    limit: int = Query(default=50, ge=1, le=500),
+    before_seq: Optional[int] = Query(default=None),
+    tenant: str = "default",
+):
+    from backend.database import _execute
+    from backend.decision_log import _COLUMNS, _public_row
+    placeholders = ", ".join(_COLUMNS)
+    if before_seq is not None:
+        raws = _execute(
+            f"SELECT {placeholders} FROM approval_decisions WHERE tenant_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?",
+            (tenant, before_seq, limit),
+        )
+    else:
+        raws = _execute(
+            f"SELECT {placeholders} FROM approval_decisions WHERE tenant_id = ? ORDER BY seq DESC LIMIT ?",
+            (tenant, limit),
+        )
+    return [_public_row(dict(zip(_COLUMNS, raw))) for raw in raws]
+
+@app.get("/api/governance/decisions/verify")
+async def verify_decisions_api(tenant: str = "default"):
+    from backend.decision_log import verify
+    r = verify(tenant)
+    return {
+        "ok": r.ok,
+        "checked": r.checked,
+        "head_hash": r.head_hash,
+        "first_bad_seq": r.first_bad_seq,
+        "error": r.error,
+    }
+
+@app.get("/api/governance/decisions/export")
+async def export_decisions_api(
+    since: Optional[str] = Query(default=None, alias="from"),
+    until: Optional[str] = Query(default=None, alias="to"),
+    tenant: str = "default",
+) -> Response:
+    """Download one tenant's decision chain as a zip archive."""
+    from backend.decision_log import export_zip
+
+    body, filename = export_zip(tenant, since=since, until=until)
+    return Response(
+        content=body,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.post("/api/governance/approvals/{request_id}/resolve")
+async def resolve_approval_api(
+    request_id: int,
+    payload: ApprovalResolveRequest,
+    request: Request,
+):
+    from backend.governance import ApprovalQueue
+    from backend.identity import current_principal
+    principal = current_principal(request)
+    current_status = ApprovalQueue.get_status(request_id)
+    if current_status is None:
+        raise HTTPException(status_code=404, detail=f"Request #{request_id} not found")
+    if current_status != ApprovalQueue.STATUS_PENDING:
+        raise HTTPException(status_code=409, detail=f"Request #{request_id} is already {current_status}")
+    ok = ApprovalQueue.resolve(request_id, payload.decision, payload.resolver_note, principal=principal)
     if not ok:
-        return JSONResponse(status_code=404, content={"status": "failed", "error": f"Request #{request_id} not found"})
+        raise HTTPException(status_code=409, detail=f"Request #{request_id} could not be resolved")
+    try:
+        from backend.websocket_manager import manager
+        await manager.broadcast({
+            "type": "approval_update",
+            "id": request_id,
+            "status": payload.decision,
+        })
+    except Exception as e:
+        logger.debug(f"Approval broadcast error: {e}")
     return {"status": "success", "id": request_id, "decision": payload.decision}
 
 @app.get("/api/governance/budget/{session_id}")
@@ -1447,7 +1540,7 @@ async def get_models_api():
                         "anthropic/claude-opus-4.1",
                         "openai/gpt-4o",
                         "openai/gpt-4o-mini",
-                        "deepseek/deepseek-r1",
+                        "deepseek/deepseek-r1-0528",
                         "deepseek/deepseek-chat-v3-0324",
                         "meta-llama/llama-3.3-70b-instruct"
                     ]
@@ -1479,7 +1572,7 @@ async def get_models_api():
         {"id": "anthropic/claude-opus-4.1", "name": "Anthropic: Claude Opus 4.1"},
         {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},
         {"id": "openai/gpt-4o-mini", "name": "OpenAI: GPT-4o-Mini"},
-        {"id": "deepseek/deepseek-r1", "name": "DeepSeek: R1"},
+        {"id": "deepseek/deepseek-r1-0528", "name": "DeepSeek: R1 (0528)"},
         {"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
         {"id": "meta-llama/llama-3.3-70b-instruct", "name": "Meta Llama 3.3 70B"},
     ]
@@ -1519,7 +1612,7 @@ async def get_mcp_servers():
 async def add_mcp_server(server: MCPServerConfig):
     """Adds or updates an MCP server config and reconnects."""
     import json, os
-    from backend.mcp_client import mcp_clients, mcp_tool_to_server, MCPServerClient
+    from backend.mcp_client import mcp_clients, note_mcp_tool, MCPServerClient
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mcp_config.json")
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     config = {}
@@ -1544,7 +1637,7 @@ async def add_mcp_server(server: MCPServerConfig):
         from backend.tools import TOOLS_SCHEMA
         for tool in client.tools:
             tool_name = tool["name"]
-            mcp_tool_to_server[tool_name] = server.name
+            note_mcp_tool(server.name, tool)
             if not any(t.get("function", {}).get("name") == tool_name for t in TOOLS_SCHEMA):
                 TOOLS_SCHEMA.append({"type": "function", "function": {"name": tool_name, "description": tool.get("description", ""), "parameters": tool.get("inputSchema", {"type": "object", "properties": {}})}})
         return {"status": "success", "name": server.name, "tools": len(client.tools)}
@@ -1556,7 +1649,7 @@ async def add_mcp_server(server: MCPServerConfig):
 async def delete_mcp_server(name: str):
     """Removes an MCP server from config and disconnects it."""
     import json, os
-    from backend.mcp_client import mcp_clients, mcp_tool_to_server
+    from backend.mcp_client import mcp_clients, forget_mcp_server_tools
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mcp_config.json")
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
@@ -1567,10 +1660,7 @@ async def delete_mcp_server(name: str):
     if name in mcp_clients:
         await mcp_clients[name].shutdown()
         del mcp_clients[name]
-        # Remove its tools from registry
-        dead = [t for t, s in mcp_tool_to_server.items() if s == name]
-        for t in dead:
-            mcp_tool_to_server.pop(t, None)
+        forget_mcp_server_tools(name)
     return {"status": "success", "name": name}
 
 @app.get("/api/system/stats")

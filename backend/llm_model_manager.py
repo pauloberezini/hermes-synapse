@@ -28,6 +28,9 @@ __all__ = [
     "is_endpoint_unreachable",
     "mark_endpoint_down",
     "is_endpoint_down",
+    "is_model_unavailable_error",
+    "reset_model_rate_limits",
+    "reset_rate_limits",
 ]
 
 # Global in-process rate-limit cooldown timestamps: model_name -> expiration timestamp
@@ -112,6 +115,7 @@ def reset_model_cooldowns(model: Optional[str] = None) -> None:
 
 
 reset_rate_limits = reset_model_cooldowns
+reset_model_rate_limits = reset_model_cooldowns
 
 
 def prioritize_healthy_models(models: List[str]) -> List[str]:
@@ -303,9 +307,31 @@ def is_endpoint_unreachable(endpoint_or_host: Optional[str]) -> Tuple[bool, str]
 
 # ollama `llama3` is not an OpenRouter route (404 "No endpoints found").
 # Closest live slug: Llama 3.1 8B Instruct. Local Ollama keeps the tag.
+# `deepseek/deepseek-r1` was officially replaced on OpenRouter by `deepseek/deepseek-r1-0528`.
 _OPENROUTER_MODEL_ALIASES = {
     "ollama/llama3": "meta-llama/llama-3.1-8b-instruct",
+    "deepseek/deepseek-r1": "deepseek/deepseek-r1-0528",
+    "deepseek/deepseek-r1:free": "deepseek/deepseek-r1-0528",
 }
+
+
+def is_model_unavailable_error(status_code: Optional[int], response_text: Optional[str]) -> bool:
+    """Returns True if the response indicates the model is deprecated, nonexistent, or unserved."""
+    if status_code in (404, 410):
+        return True
+    if not response_text:
+        return False
+    txt = str(response_text).lower()
+    return any(k in txt for k in (
+        "no provider serves this model",
+        "is no longer available",
+        "no endpoints found",
+        "model not found",
+        "model does not exist",
+        "unsupported model",
+        "invalid model",
+        "model_not_found",
+    ))
 
 
 def resolve_provider_model(model: Optional[str], api_base: Optional[str] = None) -> Optional[str]:
@@ -313,7 +339,7 @@ def resolve_provider_model(model: Optional[str], api_base: Optional[str] = None)
     if not model or not isinstance(model, str):
         return model
     clean = model.strip()
-    base = api_base if api_base is not None else os.getenv("LLM_API_BASE", "")
+    base = api_base if api_base is not None else os.getenv("LLM_API_BASE", "https://openrouter.ai/api/v1")
     if "openrouter.ai" not in str(base).lower():
         return clean
     return _OPENROUTER_MODEL_ALIASES.get(clean, clean)

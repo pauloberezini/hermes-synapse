@@ -50,3 +50,14 @@ class ConnectionManager:
 
 # Singleton manager
 manager = ConnectionManager()
+websocket_manager = manager
+
+
+def broadcast_sync(message: Dict[str, Any]) -> None:
+    """Best-effort broadcast from synchronous code if an event loop is running."""
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(manager.broadcast(message))
+    except RuntimeError:
+        pass

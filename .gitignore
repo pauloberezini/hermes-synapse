@@ -59,6 +59,8 @@ Thumbs.db
 
 # IDEs and Editors
 .vscode/
+.cursor/
+skills-lock.json
 .idea/
 *.swp
 *.swo

@@ -24,7 +24,8 @@ try:
         resolve_provider_models,
         prioritize_healthy_models,
         mark_model_rate_limited,
-        is_model_rate_limited
+        is_model_rate_limited,
+        is_model_unavailable_error,
     )
 except (ImportError, AttributeError):
     def resolve_provider_model(model: Optional[str], api_base: Optional[str] = None) -> Optional[str]:
@@ -37,6 +38,8 @@ except (ImportError, AttributeError):
         pass
     def is_model_rate_limited(model: Optional[str]) -> bool:
         return False
+    def is_model_unavailable_error(status_code: Optional[int], response_text: Optional[str]) -> bool:
+        return status_code in (404, 410)
 
 # ─── Per-agent model helper ──────────────────────────────────────────────────
 
@@ -66,7 +69,7 @@ def _resolve_model(model: Optional[str], api_base: Optional[str]) -> Optional[st
         return model
     try:
         resolved = resolve_provider_model(model, api_base)
-    except (ImportError, AttributeError):
+    except Exception:
         return model
     return resolved or model
 
@@ -170,11 +173,14 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str, ses
                 continue
 
             if response.status_code != 200:
-                if response.status_code in (429, 502, 503, 504, 408):
+                is_unavail = is_model_unavailable_error(response.status_code, response.text)
+                if response.status_code in (429, 502, 503, 504, 408) or is_unavail:
                     last_err = Exception(f"LLM API error {response.status_code}: {response.text}")
                     current_m = payload.get("model")
                     is_rate_limit = response.status_code == 429 or "rate-limit" in response.text.lower()
-                    if is_rate_limit:
+                    if is_unavail:
+                        mark_model_rate_limited(current_m, 86400.0)
+                    elif is_rate_limit:
                         retry_after = response.headers.get("retry-after")
                         if retry_after and attempt == 0:
                             try:
@@ -194,19 +200,26 @@ async def call_llm(messages: List[Dict[str, str]], api_key: str, model: str, ses
 
                     attempted_models.add(current_m)
                     next_model = None
-                    if is_rate_limit or attempt >= 1 or current_m != model:
+                    if is_rate_limit or is_unavail or attempt >= 1 or current_m != model:
                         next_model = next((m for m in fallback_candidates if m not in attempted_models and not is_model_rate_limited(m)), None)
                         if not next_model:
                             next_model = next((m for m in fallback_candidates if m not in attempted_models), None)
                     if next_model:
-                        logger.info(
-                            f"call_llm model '{current_m}' transient error ({response.status_code}). Falling back to model '{next_model}'..."
+                        log_fn = logger.warning if is_unavail else logger.info
+                        log_fn(
+                            f"call_llm model '{current_m}' {'unavailable' if is_unavail else 'transient error'} ({response.status_code}). "
+                            f"Falling back to model '{next_model}'..."
                         )
                         payload["model"] = next_model
                         actual_payload = translate_to_anthropic_payload(payload) if is_openmodel else payload
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.2 if is_unavail else 0.5)
                         continue
                     else:
+                        if is_unavail:
+                            logger.warning(
+                                f"call_llm model '{current_m}' unavailable (HTTP {response.status_code}): {response.text[:200]}"
+                            )
+                            raise last_err
                         if attempt < max_retries - 1 and not is_rate_limit:
                             logger.info(
                                 f"call_llm transient HTTP {response.status_code} (attempt {attempt+1}/{max_retries}): {response.text[:200]}"

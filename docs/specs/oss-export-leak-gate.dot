@@ -1,0 +1,33 @@
+digraph OssExportLeakGate {
+  graph [fontname="Helvetica" rankdir=LR splines=ortho]
+  node  [fontname="Helvetica" shape=box style=rounded]
+  edge  [fontname="Helvetica"]
+
+  subgraph cluster_src {
+    label="Private checkout" style=dashed color=gray
+    SRC [label="git ls-files -co\n--exclude-standard" shape=component]
+  }
+
+  subgraph cluster_filter {
+    label="scripts/export_oss.sh" style=dashed color=steelblue
+    PRIV [label="PRIVATE_PATHS" shape=component]
+    COPY [label="rsync into DEST" shape=component]
+  }
+
+  subgraph cluster_gate {
+    label="backend/oss_export.py" style=dashed color=darkgreen
+    RULES [shape=record label="{ scripts/export_oss.sh | PRIVATE_PATHS | leak grep }"]
+    SCAN [label="scan()" shape=component]
+  }
+
+  subgraph cluster_out {
+    label="Publish" style=dashed color=darkorange
+    OK [label="exit 0\ncommit / push" shape=component]
+    BAD [label="exit 1\nLEAK paths" shape=component]
+  }
+
+  SRC -> PRIV -> COPY -> SCAN
+  RULES -> SCAN
+  SCAN -> OK [label="no hit"]
+  SCAN -> BAD [label="hit"]
+}

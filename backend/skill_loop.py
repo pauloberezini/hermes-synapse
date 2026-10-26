@@ -26,7 +26,8 @@ def _is_scheduled_automation_log(log_entry: Dict[str, Any]) -> bool:
         msg.startswith("execute scheduled task:") or
         "scheduled task" in msg or
         "scheduled automation" in msg or
-        "scheduled run" in msg
+        "scheduled run" in msg or
+        "autonomous ai hedge fund manager" in msg
     )
 
 
@@ -308,23 +309,38 @@ class SkillDistiller:
 
         distills them, and indexes the resulting skills.
         """
-        from backend.database import db_get_undistilled_successful_logs
+        from backend.database import db_get_undistilled_successful_logs, db_mark_log_undistillable
         undistilled_logs = db_get_undistilled_successful_logs(min_steps=min_steps, limit=limit)
         
         distilled_results = []
         for log in undistilled_logs:
+            log_id = log.get("id")
             if _is_scheduled_automation_log(log):
-                logger.info("Skipping skill distillation for scheduled automation log #%s", log.get("id"))
+                logger.info("Skipping skill distillation for scheduled automation log #%s", log_id)
+                if log_id:
+                    db_mark_log_undistillable(log_id, "scheduled_automation")
                 continue
             try:
                 skill_dict = self.distill_log_entry(log)
                 saved_skill = self.save_and_index_skill(skill_dict)
-                distilled_results.append(saved_skill)
-                logger.info(f"Distilled log #{log['id']} into skill '{saved_skill['skill_name']}'")
+                if saved_skill.get("id") == -1:
+                    logger.info("Skill for log #%s was rejected by database filters", log_id)
+                    if log_id:
+                        db_mark_log_undistillable(log_id, "rejected_by_db_filters")
+                else:
+                    distilled_results.append(saved_skill)
+                    logger.info(f"Distilled log #{log['id']} into skill '{saved_skill['skill_name']}'")
             except ValueError as e:
-                logger.info(f"Skipping skill distillation for log #{log.get('id')}: {e}")
+                logger.info(f"Skipping skill distillation for log #{log_id}: {e}")
+                if log_id:
+                    db_mark_log_undistillable(log_id, str(e))
             except Exception as e:
-                logger.error(f"Error distilling log #{log.get('id')}: {e}")
+                if any(k in str(e).lower() for k in ("scheduled", "invalid", "reject", "auth")):
+                    logger.info(f"Skipping skill distillation for log #{log_id}: {e}")
+                    if log_id:
+                        db_mark_log_undistillable(log_id, str(e))
+                else:
+                    logger.error(f"Error distilling log #{log_id}: {e}")
 
         return distilled_results
 

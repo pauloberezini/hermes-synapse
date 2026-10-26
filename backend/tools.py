@@ -1589,31 +1589,28 @@ def call_subagent(subagent_id: str, query: str) -> str:
     
     # Read parent_message_id from threading.local context (set by parent agent before tool dispatch)
     parent_msg_id = getattr(_call_context, "parent_message_id", None)
-        
+    from backend.governance import current_agent_tools
+    caller_tools = current_agent_tools.get()
+
+    call = agent_instance._respond_as_subagent(
+        query,
+        subagent,
+        chat_id=clean_id,
+        parent_message_id=parent_msg_id,
+        caller_tools=caller_tools,
+    )
     try:
-        # Run the async agent respond call inside sync context
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        # caller_tools was captured above so a worker thread cannot widen the parent.
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not None:
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                response = pool.submit(
-                    asyncio.run,
-                    agent_instance._respond_as_subagent(
-                        query,
-                        subagent,
-                        chat_id=clean_id,
-                        parent_message_id=parent_msg_id
-                    )
-                ).result(timeout=45)
+                response = pool.submit(asyncio.run, call).result(timeout=45)
         else:
-            response = loop.run_until_complete(
-                agent_instance._respond_as_subagent(
-                    query,
-                    subagent,
-                    chat_id=clean_id,
-                    parent_message_id=parent_msg_id
-                )
-            )
+            response = asyncio.run(call)
         return json.dumps({
             "subagent_id": clean_id,
             "query": query,
@@ -1845,7 +1842,11 @@ def sync_obsidian_vault() -> str:
     return json.dumps(result, ensure_ascii=False)
 
 def execute_command(command: str) -> str:
-    """Executes a shell command in the local environment and returns its stdout/stderr."""
+    """Run a shell command in a local subprocess and return stdout/stderr.
+
+    ponytail: this subprocess is the sandbox. Docker or gVisor is a deploy
+    profile, not a requirement for tests or Compose.
+    """
     import subprocess
     try:
         res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=15)
@@ -1895,6 +1896,26 @@ def is_invalid_tool_name(name: Any) -> bool:
     if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-\.:]*$', name_str):
         return True
     return False
+
+
+def _root_tool_names() -> frozenset[str]:
+    """Tools the human's root agent may delegate. Nested agents must not use this."""
+    names = {
+        t["function"]["name"]
+        for t in TOOLS_SCHEMA
+        if isinstance(t, dict) and (t.get("function") or {}).get("name")
+    }
+    try:
+        from backend.mcp_client import mcp_tool_to_server
+        names.update(mcp_tool_to_server.keys())
+    except Exception:
+        logger.debug("root tool names skipped MCP catalog", exc_info=True)
+    try:
+        from backend.plugins import hook
+        names.update(hook("all_plugin_tool_names", default=[]) or [])
+    except Exception:
+        logger.debug("root tool names skipped plugin catalog", exc_info=True)
+    return frozenset(names)
 
 
 def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default") -> str:
@@ -2040,9 +2061,20 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
         )
 
     elif name == "call_subagent":
+        from backend.governance import current_agent_tools
+        # Root chat has no parent envelope. Nested agents already set current_agent_tools.
+        if current_agent_tools.get() is None:
+            token = current_agent_tools.set(_root_tool_names())
+            try:
+                return call_subagent(
+                    subagent_id=arguments.get("subagent_id", ""),
+                    query=arguments.get("query", ""),
+                )
+            finally:
+                current_agent_tools.reset(token)
         return call_subagent(
             subagent_id=arguments.get("subagent_id", ""),
-            query=arguments.get("query", "")
+            query=arguments.get("query", ""),
         )
 
     elif name == "list_subagents":

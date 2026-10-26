@@ -1,0 +1,37 @@
+digraph DialogContinuationCycleGuard {
+  graph [fontname="Helvetica" rankdir="LR" splines="ortho"]
+  node  [fontname="Helvetica" shape="box" style="rounded"]
+  edge  [fontname="Helvetica"]
+
+  subgraph cluster_context {
+    label="context_manager" style="dashed" color="darkgreen"
+    WRAP [label="continuation_query\n(shipped)" shape="component"]
+    SCAN [label="continuation_scan_text\n(new)" shape="component"]
+  }
+
+  subgraph cluster_orch {
+    label="run_orchestration" style="dashed" color="purple"
+    PLAN [label="Planner\nsees the full marked query" shape="component"]
+    FLAG [label="is_operational /\nempty-plan gate\nscan the user line only" shape="component"]
+    DIRECT [label="direct tool fallback\n_respond_as_subagent" shape="component"]
+    SYNTH [label="Synthesis\nempty non-operational plan" shape="component"]
+  }
+
+  subgraph cluster_plugin {
+    label="BCM plugin (private)" style="dashed" color="darkorange"
+    RULE [label="planner_trading_rule\nsentence (shipped)" shape="component"]
+    FALL [label="fallback_plan_steps\nno cycle from the tail" shape="component"]
+    ANN [label="annotate_plan_steps\nno BTC inject from the tail" shape="component"]
+  }
+
+  WRAP -> PLAN
+  RULE -> PLAN
+  WRAP -> SCAN
+  SCAN -> FLAG
+  SCAN -> FALL
+  SCAN -> ANN
+  FLAG -> FALL [label="only if the user line is operational"]
+  FLAG -> DIRECT [label="same gate"]
+  FLAG -> SYNTH [label="continuation, user line quiet"]
+  FALL -> ANN
+}

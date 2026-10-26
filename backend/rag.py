@@ -292,6 +292,8 @@ def get_note_text_by_path(note_path: str) -> Optional[str]:
         return None
     try:
         client = get_qdrant_client()
+        if client is None or models is None:
+            return None
         records, _ = client.scroll(
             collection_name=COLLECTION_NAME,
             scroll_filter=models.Filter(
@@ -319,6 +321,8 @@ def raw_index_vector(doc_id: Any, vector: List[float], payload: Dict[str, Any], 
     """Index a raw vector directly to Qdrant."""
     try:
         client = get_qdrant_client()
+        if client is None or models is None:
+            return False
         point_id = doc_id
         if isinstance(doc_id, str):
             try:
@@ -351,6 +355,8 @@ def raw_search_vector(vector: List[float], limit: int, collection_name: str) -> 
     """Search Qdrant using a raw vector directly."""
     try:
         client = get_qdrant_client()
+        if client is None:
+            return []
         
         # Try query_points (newer versions) then search (older versions)
         if hasattr(client, "query_points"):

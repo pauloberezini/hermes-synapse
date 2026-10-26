@@ -2052,3 +2052,17 @@ main.vexa-main {
   border-top: 1px dashed rgba(255, 255, 255, 0.1);
   padding-top: 12px;
 }
+
+/* ==========================================================================
+   Governance Approvals & Evidence Modal Styles
+   ========================================================================== */
+.approvals-modal-dialog::backdrop {
+  background: rgba(5, 8, 18, 0.85);
+  backdrop-filter: blur(10px);
+}
+
+.approvals-badge-btn:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+

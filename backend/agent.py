@@ -62,11 +62,20 @@ async def _dispatch_execute_tool_async(tool_name: str, tool_args: dict, chat_id:
         target = tools_exec
 
     if target and (inspect.iscoroutinefunction(target) or isinstance(target, unittest.mock.AsyncMock)):
-        return await target(tool_name, tool_args, chat_id=chat_id)
+        res = await target(tool_name, tool_args, chat_id=chat_id)
+    else:
+        res = await asyncio.to_thread(_dispatch_execute_tool, tool_name, tool_args, chat_id=chat_id)
+        if inspect.isawaitable(res):
+            res = await res
 
-    res = await asyncio.to_thread(_dispatch_execute_tool, tool_name, tool_args, chat_id=chat_id)
-    if inspect.isawaitable(res):
-        return await res
+    try:
+        from backend.evidence import evidence_ctx
+        ctx = evidence_ctx.get()
+        if ctx is not None and res is not None:
+            ctx.add_tool_result(tool_name, str(res))
+    except Exception:
+        pass
+
     return res
 
 
@@ -215,7 +224,7 @@ async def generate_chat_title(user_message: str, api_key: str, api_base: str, mo
         try:
             from backend.llm_model_manager import resolve_provider_model
             model = resolve_provider_model(model, api_base) or model
-        except (ImportError, AttributeError):
+        except Exception:
             pass
         payload = {
             "model": model,
@@ -283,7 +292,7 @@ async def classify_complexity(user_message: str, api_key: str, api_base: str, mo
     try:
         from backend.llm_model_manager import resolve_provider_model
         classifier_model = resolve_provider_model(raw_classifier_model, api_base) or raw_classifier_model
-    except (ImportError, AttributeError):
+    except Exception:
         classifier_model = raw_classifier_model
 
     if not api_key:
@@ -379,7 +388,7 @@ CRITICAL RULES FOR TIMERS AND ALARMS:
 CRITICAL RULES FOR CREATING SUB-AGENTS:
 - If the user asks to "create an agent," "make a sub-agent," "add a subagent," or "write an assistant," you MUST IMMEDIATELY call the `create_subagent` tool to persist it in the database. NEVER state or confirm that you created an agent unless the `create_subagent` tool call was executed and returned success!
 - When calling `create_subagent`, you MUST explicitly specify the `model` argument, selecting the model according to the FUGU principle:
-  * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1` model.
+  * For sub-agents writing code, performing complex math calculations, programming, or requiring deep reasoning — choose the `deepseek/deepseek-r1-0528` model.
   * For sub-agents oriented toward quick data analysis, formatting, or plotting (matplotlib) — choose the `ollama/llama3` model.
   * For sub-agents managing document indexing, processing research papers, knowledge curation, or RAG tasks (which require a large context window and robust tool calling) — choose the `ollama/llama3` model.
   * For simple tasks, quick web search, RSS news reading, or basic Q&A — choose the `deepseek/deepseek-v4-flash` model.
@@ -522,9 +531,16 @@ class JarvisAgent:
         max_len = getattr(self, "max_history_len", 20)
         return db.get_chat_history(session_id, limit=max_len)
 
-    def clear_history(self, session_id: str):
+    def clear_history(self, session_id: str, *, human: bool = False) -> Optional[str]:
+        """Clear one chat. Agent calls wait for approval; a human operator passes human=True."""
         from backend import database as db
+        if not human:
+            from backend.governance import gate_tool
+            blocked = gate_tool(session_id or "default", "clear_history", {"session_id": session_id})
+            if blocked is not None:
+                return blocked
         db.clear_chat_history(session_id)
+        return None
 
     async def respond(self, user_message: str, session_id: str = "default", override_agent_id: Optional[str] = None) -> str:
         """Sends chat request to OpenRouter LLM model with memory context and system prompt."""
@@ -934,9 +950,14 @@ class JarvisAgent:
                         if fallback_m and fallback_m.strip() and fallback_m.strip() not in candidate_models:
                             candidate_models.append(fallback_m.strip())
                     try:
-                        from backend.llm_model_manager import resolve_provider_model, resolve_provider_models
+                        from backend.llm_model_manager import (
+                            resolve_provider_model,
+                            resolve_provider_models,
+                            mark_model_rate_limited,
+                            is_model_unavailable_error,
+                        )
                         candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
-                    except (ImportError, AttributeError):
+                    except Exception:
                         pass
 
                     data = None
@@ -992,11 +1013,18 @@ class JarvisAgent:
                         provider_name = "OpenModel" if is_openmodel else "OpenRouter"
 
                         if response.status_code != 200:
-                            is_retryable_status = response.status_code in (408, 429, 500, 502, 503, 504)
+                            is_unavail = is_model_unavailable_error(response.status_code, response.text)
+                            if is_unavail:
+                                try:
+                                    mark_model_rate_limited(model_cand, cooldown_seconds=86400.0)
+                                except Exception:
+                                    pass
+                            is_retryable_status = response.status_code in (408, 429, 500, 502, 503, 504) or is_unavail
                             if next_cand and is_retryable_status:
                                 log_fn = logger.info if response.status_code == 429 else logger.warning
                                 log_fn(
-                                    f"JarvisAgent model '{model_cand}' returned HTTP {response.status_code}. "
+                                    f"JarvisAgent model '{model_cand}' returned HTTP {response.status_code} "
+                                    f"({'unavailable' if is_unavail else 'transient error'}). "
                                     f"Falling back to model '{next_cand}' from fallback chain..."
                                 )
                                 continue
@@ -1053,9 +1081,19 @@ class JarvisAgent:
                             or any(k in str(err_text).lower() for k in ("timeout", "timed out", "provider error", "temporarily unavailable", "overloaded", "bad gateway", "service unavailable"))
                             or (isinstance(err_detail, dict) and isinstance(err_detail.get("metadata"), dict) and err_detail.get("metadata", {}).get("error_type") in ("timeout", "provider_error"))
                         )
+                        is_model_unavail = is_model_unavailable_error(numeric_code, err_text)
+                        if is_model_unavail:
+                            try:
+                                mark_model_rate_limited(model_cand, cooldown_seconds=86400.0)
+                            except Exception:
+                                pass
 
-                        if next_cand and (is_rate_limit or is_timeout_or_5xx):
-                            reason_desc = "rate-limited in response body" if is_rate_limit else "provider error/timeout in response body"
+                        if next_cand and (is_rate_limit or is_timeout_or_5xx or is_model_unavail):
+                            reason_desc = (
+                                "unavailable in response body"
+                                if is_model_unavail
+                                else ("rate-limited in response body" if is_rate_limit else "provider error/timeout in response body")
+                            )
                             log_fn = logger.info if is_rate_limit else logger.warning
                             log_fn(
                                 f"JarvisAgent model '{model_cand}' {reason_desc} ({err_text}). "
@@ -1063,7 +1101,7 @@ class JarvisAgent:
                             )
                             continue
                         else:
-                            log_fn = logger.warning if (is_rate_limit or is_timeout_or_5xx) else logger.error
+                            log_fn = logger.warning if (is_rate_limit or is_timeout_or_5xx or is_model_unavail) else logger.error
                             log_fn(f"JarvisAgent model '{model_cand}' API error response from {provider_name}: {raw_data}")
                             error_msg = f"LLM API Error: {err_text}"
                             response_text = f"Apologies. Difficulties occurred while communicating with the server {provider_name}: {err_text}."
@@ -1112,7 +1150,7 @@ class JarvisAgent:
                                 try:
                                     from backend.llm_model_manager import resolve_provider_model
                                     fb_model = resolve_provider_model(self.model, self.api_base) or self.model
-                                except (ImportError, AttributeError):
+                                except Exception:
                                     pass
                                 fb_resp = await client.post(
                                     url,
@@ -1634,7 +1672,7 @@ class JarvisAgent:
 
         return sanitized if sanitized else None
 
-    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None, parent_message_id: Optional[int] = None, session_id: Optional[str] = None, include_history: bool = True) -> str:
+    async def _respond_as_subagent(self, user_message: str, subagent: Dict[str, Any], parent_skills: Optional[str] = None, current_user_msg_id: Optional[int] = None, chat_id: Optional[str] = None, parent_message_id: Optional[int] = None, session_id: Optional[str] = None, include_history: bool = True, caller_tools: Optional[frozenset] = None) -> str:
         """Runs response generation loop specifically tailored for a dynamic subagent session."""
         session_id = session_id or chat_id or subagent.get("id", "subagent")
         from backend.governance import BudgetExceededError, BudgetGuard, LLM_CALL_ESTIMATE_USD, budget_session
@@ -1804,14 +1842,17 @@ class JarvisAgent:
             child_allowed.update(mcp_tool_to_server.keys())
             child_allowed.update(hook("all_plugin_tool_names", default=[]) or [])
 
-        # Intersect with parent_skills if the parent orchestrator has specified restrictions.
         # "" is an empty cap (disjoint skills), not an absent one.
+        # No parent context fails closed: a child cannot invent a wider tool set.
+        from backend.governance import CORE_READONLY_TOOLS, current_agent_tools
+        if caller_tools is None:
+            caller_tools = current_agent_tools.get()
         if parent_skills is not None:
             if isinstance(parent_skills, list):
                 enabled_parent_skills = [str(s).strip() for s in parent_skills if str(s).strip()]
             else:
                 enabled_parent_skills = [s.strip() for s in str(parent_skills).split(",") if s.strip()]
-            parent_allowed = set()
+            parent_allowed: set[str] = set()
             for skill in enabled_parent_skills:
                 if skill in skill_to_tools:
                     parent_allowed.update(skill_to_tools[skill])
@@ -1820,18 +1861,31 @@ class JarvisAgent:
                     parent_allowed.update([t["name"] for t in mcp_clients[skill].tools])
                 elif skill == "mcp_all":
                     parent_allowed.update(mcp_tool_to_server.keys())
-                
+
                 extra_tools = hook("tools_for_skill", skill)
                 if extra_tools:
                     parent_allowed.update(extra_tools)
-            allowed_tools = child_allowed.intersection(parent_allowed)
+        elif caller_tools is not None:
+            parent_allowed = set(caller_tools)
         else:
-            allowed_tools = child_allowed
+            parent_allowed = None
 
-        allowed_tools.update(["save_subagent_memory", "get_subagent_memory"])
-        allowed_tools.update(management_tools_for(subagent))
-        if subagent.get("agent_type") in _ORCHESTRATOR_TYPES:
-            allowed_tools.add("web_search")
+        if parent_allowed is not None:
+            allowed_tools = child_allowed.intersection(parent_allowed)
+            for extra in ("save_subagent_memory", "get_subagent_memory"):
+                if extra in parent_allowed:
+                    allowed_tools.add(extra)
+            for tool_name in management_tools_for(subagent):
+                if tool_name in parent_allowed:
+                    allowed_tools.add(tool_name)
+            if subagent.get("agent_type") in _ORCHESTRATOR_TYPES and "web_search" in parent_allowed:
+                allowed_tools.add("web_search")
+        else:
+            allowed_tools = set(child_allowed)
+            allowed_tools.update(["save_subagent_memory", "get_subagent_memory"])
+            allowed_tools.update(management_tools_for(subagent))
+            if subagent.get("agent_type") in _ORCHESTRATOR_TYPES:
+                allowed_tools.add("web_search")
         subagent_tools = [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed_tools]
 
         start_time = time.time()
@@ -1868,6 +1922,7 @@ class JarvisAgent:
                     sanitized.append(m_copy)
             return sanitized
 
+        _tools_token = current_agent_tools.set(frozenset(allowed_tools))
         try:
             subagent_timeout = 90.0 if any(k in (subagent_model or "").lower() for k in ("deepseek-r1", "r1", "o1", "o3")) else 45.0
             subagent_turn = 0
@@ -1925,13 +1980,14 @@ class JarvisAgent:
                             mark_model_rate_limited,
                             mark_model_success,
                             is_model_rate_limited,
+                            is_model_unavailable_error,
                             resolve_provider_model,
                             resolve_provider_models,
                         )
                         candidate_models = resolve_provider_models(candidate_models, self.api_base) or candidate_models
                         candidate_models = prioritize_healthy_models(candidate_models)
                         resolved_subagent = resolve_provider_model(subagent_model, self.api_base)
-                    except (ImportError, AttributeError):
+                    except Exception:
                         resolved_subagent = subagent_model
                     if candidate_models and candidate_models[0] != resolved_subagent:
                         logger.info(
@@ -2076,8 +2132,11 @@ class JarvisAgent:
                                     or any(k in str(err_text).lower() for k in ("timeout", "timed out", "provider error", "temporarily unavailable", "overloaded", "bad gateway", "service unavailable"))
                                     or (isinstance(err_detail, dict) and isinstance(err_detail.get("metadata"), dict) and err_detail.get("metadata", {}).get("error_type") in ("timeout", "provider_error"))
                                 )
+                                is_body_unavail = is_model_unavailable_error(numeric_code, err_text)
 
-                                if is_rate_limit:
+                                if is_body_unavail:
+                                    mark_model_rate_limited(current_model, 86400.0)
+                                elif is_rate_limit:
                                     cooldown_secs = 60.0
                                     if retry_after:
                                         try:
@@ -2088,11 +2147,11 @@ class JarvisAgent:
 
                                 last_error_desc = err_text
 
-                                if next_cand:
+                                if next_cand and (is_body_unavail or is_rate_limit or is_timeout_or_5xx):
                                     reason_desc = (
-                                        "rate-limited in response body"
-                                        if is_rate_limit
-                                        else ("provider error/timeout in response body" if is_timeout_or_5xx else f"API error in response body ({str(err_text)[:80]})")
+                                        "unavailable in response body"
+                                        if is_body_unavail
+                                        else ("rate-limited in response body" if is_rate_limit else "provider error/timeout in response body")
                                     )
                                     log_fn = logger.info if is_rate_limit else logger.warning
                                     log_fn(
@@ -2100,7 +2159,12 @@ class JarvisAgent:
                                         f"Falling back to model '{next_cand}' from fallback chain..."
                                     )
                                     import asyncio
-                                    await asyncio.sleep(0.5)
+                                    await asyncio.sleep(0.2 if is_body_unavail else 0.5)
+                                    break
+                                elif is_body_unavail:
+                                    logger.warning(
+                                        f"Subagent '{subagent_name}' ({current_model}) unavailable in response body: {raw_data}"
+                                    )
                                     break
                                 else:
                                     if attempt < max_attempts - 1:
@@ -2117,7 +2181,23 @@ class JarvisAgent:
                                         break
 
                             last_error_desc = f"HTTP Error {response.status_code}: {response.text[:200]}"
-                            if response.status_code == 429 or "rate-limited" in response.text.lower() or "engine_overloaded" in response.text.lower():
+                            is_model_unavail = is_model_unavailable_error(response.status_code, response.text)
+                            if is_model_unavail:
+                                mark_model_rate_limited(current_model, 86400.0)
+                                if next_cand:
+                                    logger.warning(
+                                        f"Subagent '{subagent_name}' model '{current_model}' unavailable (HTTP {response.status_code}). "
+                                        f"Fast-falling back to model '{next_cand}' without wasteful retries..."
+                                    )
+                                    import asyncio
+                                    await asyncio.sleep(0.2)
+                                    break
+                                else:
+                                    logger.warning(
+                                        f"Subagent '{subagent_name}' ({current_model}) unavailable (HTTP {response.status_code}): {response.text[:200]}"
+                                    )
+                                    break
+                            elif response.status_code == 429 or "rate-limited" in response.text.lower() or "engine_overloaded" in response.text.lower():
                                 if retry_after and attempt == 0:
                                     try:
                                         delay = max(float(retry_after), 1.0)
@@ -2398,6 +2478,8 @@ class JarvisAgent:
             error_msg = str(e)
             logger.exception("Error during OpenRouter subagent chat completion call")
             response_text = "Apologies. A failure occurred while processing the subagent\'s request."
+        finally:
+            current_agent_tools.reset(_tools_token)
 
         # Add call record to global decision logs
         prompt_est = sum(len(m.get("content") or "") for m in messages) // 4

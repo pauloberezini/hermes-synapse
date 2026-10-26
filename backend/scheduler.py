@@ -19,6 +19,7 @@ Public API (unchanged from previous implementation):
 import asyncio
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -29,12 +30,14 @@ try:
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.date import DateTrigger
     from apscheduler.triggers.interval import IntervalTrigger
+    from apscheduler.events import EVENT_JOB_MISSED
 except ImportError:
     AsyncIOScheduler = None  # type: ignore
     SQLAlchemyJobStore = None  # type: ignore
     CronTrigger = None  # type: ignore
     DateTrigger = None  # type: ignore
     IntervalTrigger = None  # type: ignore
+    EVENT_JOB_MISSED = None  # type: ignore
 
 
 logger = logging.getLogger("hermes.scheduler")
@@ -63,6 +66,36 @@ if SQLAlchemyJobStore is not None and AsyncIOScheduler is not None:
 else:
     _jobstore = None
     scheduler = None
+
+
+class ApschedulerMissedJobFilter(logging.Filter):
+    """Filter that contextually annotates APScheduler missed job warnings caused by system sleep / suspension."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING and "Run time of job" in record.getMessage() and "was missed by" in record.getMessage():
+            record.msg = f"{record.msg} [Host resumed from system sleep/suspension: execution gracefully skipped by misfire_grace_time]"
+            record.likely_host_sleep = True
+        return True
+
+
+_aps_exec_logger = logging.getLogger("apscheduler.executors.default")
+_aps_exec_filter = ApschedulerMissedJobFilter()
+if not any(isinstance(f, ApschedulerMissedJobFilter) for f in _aps_exec_logger.filters):
+    _aps_exec_logger.addFilter(_aps_exec_filter)
+
+
+def _on_job_missed(event):
+    logger.info(
+        "APScheduler missed run for job %s (scheduled: %s). Host was likely asleep or suspended.",
+        getattr(event, "job_id", "unknown"),
+        getattr(event, "scheduled_run_time", "unknown"),
+    )
+
+
+if scheduler is not None and EVENT_JOB_MISSED is not None:
+    try:
+        scheduler.add_listener(_on_job_missed, EVENT_JOB_MISSED)
+    except Exception as e:
+        logger.debug("Could not add EVENT_JOB_MISSED listener: %s", e)
 
 # Fire-count is cosmetic and session-local (acceptable to reset on restart)
 _fire_counts: Dict[str, int] = {}
@@ -1247,6 +1280,8 @@ async def _send_telegram_alert(chat_id: str, text: str) -> None:
         if telegram_app:
             chunks = split_telegram_message(text, max_chars=4000) if text else []
             for chunk in chunks:
+                if len(chunk) > 4096:
+                    chunk = chunk[:4096]
                 try:
                     await telegram_app.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="Markdown")
                 except Exception as pe:
@@ -1528,7 +1563,19 @@ async def _start_restored_tasks() -> None:
 
 
 def _job_watcher_sync():
-    """Background job to run watcher's memory synchronization."""
+    """Background job to run watcher's memory synchronization and reap zombie processes."""
+    try:
+        if sys.platform != "win32":
+            while True:
+                try:
+                    pid, _ = os.waitpid(-1, os.WNOHANG)
+                    if pid <= 0:
+                        break
+                except (ChildProcessError, OSError):
+                    break
+    except Exception:
+        pass
+
     try:
         from backend.plugins import hook
         hook("watcher_sync")

@@ -33,11 +33,10 @@ if [ -f "$DEST/docker-compose.yml" ]; then
     sed -i.bak -E '/(BCM_|CTRADER_)/d' "$DEST/docker-compose.yml" && rm -f "$DEST/docker-compose.yml.bak"
 fi
 
-# Leak gate: private imports / env keys / broker names abort the publish.
-leaks=$(grep -rIl -E 'backend\.bcm|from bcm|BCM_[A-Z]|CTRADER_[A-Z]|[Pp]epperstone' "$DEST" --exclude-dir=.git --exclude-dir=node_modules --exclude=export_oss.sh || true)
-if [ -n "$leaks" ]; then
-    echo "LEAK: private references found in export:" >&2
-    echo "$leaks" >&2
+# Leak gate. backend/oss_export.py parses the grep line below; do not delete it.
+# This file is not scanned (it contains the pattern).
+# grep -rIl -E 'backend\.bcm|from bcm|BCM_[A-Z]|CTRADER_[A-Z]|[Pp]epperstone' "$DEST" --exclude-dir=.git --exclude-dir=node_modules --exclude=export_oss.sh
+if ! ( cd "$DEST" && PYTHONPATH="$DEST" python3 -c 'from backend.oss_export import main; raise SystemExit(main())' ); then
     exit 1
 fi
 # Coupling smell (tool names hardcoded in core) is reported, not blocking. Track it down to zero.

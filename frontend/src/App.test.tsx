@@ -11,6 +11,8 @@ class MockWebSocket {
   onmessage: ((event: any) => void) | null = null;
   send = vi.fn();
   close = vi.fn();
+  addEventListener = vi.fn((_event: string, _cb: any) => {});
+  removeEventListener = vi.fn((_event: string, _cb: any) => {});
 
   constructor(url: string) {
     this.url = url;

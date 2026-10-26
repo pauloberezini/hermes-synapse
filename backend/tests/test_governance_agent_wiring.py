@@ -118,7 +118,7 @@ def test_high_risk_tool_waits_for_human_then_runs_once():
 def test_mcp_tool_waits_for_human_then_runs_once():
     payload = {"symbol": "EURUSD"}
     from backend.mcp_client import mcp_tool_to_server
-    mcp_tool_to_server["get_positions"] = "ctrader"
+    mcp_tool_to_server["get_positions"] = "example_broker"
     try:
         with patch("backend.mcp_client.handle_mcp_tool", new_callable=AsyncMock) as run:
             raw = execute_tool("get_positions", payload, chat_id="agent_mcp")
@@ -140,6 +140,35 @@ def test_mcp_tool_waits_for_human_then_runs_once():
         mcp_tool_to_server.pop("get_positions", None)
         from backend.database import _execute
         _execute("DELETE FROM approval_requests WHERE agent_id = ?", ("agent_mcp",))
+
+
+def test_readonly_mcp_annotation_skips_approval():
+    from backend.mcp_client import forget_mcp_server_tools, mcp_tool_needs_approval, note_mcp_tool
+
+    note_mcp_tool("quotes", {"name": "zz_ro_tool", "annotations": {"readOnlyHint": True}})
+    note_mcp_tool("quotes", {"name": "zz_safe_write", "annotations": {"destructiveHint": False}})
+    try:
+        assert mcp_tool_needs_approval("zz_ro_tool") is False
+        assert mcp_tool_needs_approval("zz_safe_write") is False
+        before = ApprovalQueue.count_pending()
+        with patch("backend.mcp_client.handle_mcp_tool", new_callable=AsyncMock, return_value='{"ok":true}') as run:
+            raw = execute_tool("zz_ro_tool", {"symbol": "EURUSD"}, chat_id="agent_ro")
+        run.assert_called_once()
+        assert "PENDING_APPROVAL" not in raw
+        assert ApprovalQueue.count_pending() == before
+    finally:
+        forget_mcp_server_tools("quotes")
+
+
+def test_plugin_high_risk_name_waits_for_approval():
+    from backend.governance import gate_tool
+
+    with patch("backend.plugins.collect", return_value=["plugin_purge"]):
+        blocked = gate_tool("plugin_gate", "plugin_purge", {"id": 1})
+    body = json.loads(blocked)
+    assert body["status"] == "PENDING_APPROVAL"
+    from backend.database import _execute
+    _execute("DELETE FROM approval_requests WHERE agent_id = ?", ("plugin_gate",))
 
 
 def test_safe_tool_skips_approval():

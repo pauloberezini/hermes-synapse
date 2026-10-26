@@ -1,0 +1,47 @@
+digraph DialogFollowupContext {
+  graph [fontname="Helvetica" rankdir="LR" splines="ortho"]
+  node  [fontname="Helvetica" shape="box" style="rounded"]
+  edge  [fontname="Helvetica"]
+
+  subgraph cluster_entry {
+    label="Entry" style="dashed" color="gray"
+    CHAT [label="Human chat\nbot.py / main.py" shape="component"]
+    CRON [label="scheduler._trigger_agent_task\nsession task_{job_id}" shape="component"]
+  }
+
+  subgraph cluster_agent {
+    label="JarvisAgent.respond" style="dashed" color="steelblue"
+    RESP [label="save user message\nthen orchestrate" shape="component"]
+  }
+
+  subgraph cluster_context {
+    label="context_manager" style="dashed" color="darkgreen"
+    CONT [label="continuation_query\n(new)" shape="component"]
+  }
+
+  subgraph cluster_orch {
+    label="run_orchestration" style="dashed" color="purple"
+    PLAN [label="Planner\nQuery: ..." shape="component"]
+    SYNTH [label="Synthesis\nOriginal query" shape="component"]
+    SUB [label="Subagent step\ninclude_history=false" shape="component"]
+  }
+
+  subgraph cluster_plugin {
+    label="BCM plugin (private)" style="dashed" color="darkorange"
+    RULE [label="planner_trading_rule\ncontinuation exception" shape="component"]
+  }
+
+  subgraph cluster_db {
+    label="messages" style="dashed" color="#336699"
+    MSG [shape="record" label="{ messages | id | session_id | role | content }"]
+  }
+
+  CHAT -> RESP
+  CRON -> RESP
+  RESP -> CONT
+  CONT -> MSG [label="read parent session"]
+  CONT -> PLAN
+  RULE -> PLAN
+  PLAN -> SUB
+  SUB -> SYNTH
+}

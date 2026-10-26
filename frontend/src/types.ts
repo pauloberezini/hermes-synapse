@@ -144,3 +144,69 @@ export interface AgentModel {
   recent_events?: AgentEvent[];
 }
 
+export interface UpstreamItem {
+  kind: 'plan_step' | 'tool_result' | 'document';
+  name: string;
+  excerpt: string;
+  sha256: string;
+  truncated: boolean;
+  reason?: string | null;
+}
+
+export interface PlanRef {
+  agent: string;
+  instructions: string;
+  step_index: number;
+  step_count: number;
+}
+
+export interface EvidenceBundle {
+  schema_ver?: number;
+  description?: string;
+  agent_id?: string;
+  action_name?: string;
+  inputs?: Record<string, any>;
+  step_context?: string | null;
+  plan?: PlanRef | null;
+  upstream?: UpstreamItem[];
+  flags?: string[];
+  links?: Record<string, any>;
+}
+
+export interface DecisionEntry {
+  seq: number;
+  tenant_id: string;
+  request_id: number;
+  event: string;
+  actor_subject: string;
+  actor_roles: string;
+  auth_method: string;
+  action_name: string;
+  payload_hash: string;
+  bundle_hash?: string | null;
+  reason?: string;
+  occurred_at: string;
+  prev_hash: string;
+  entry_hash: string;
+}
+
+export interface ApprovalSummary {
+  id: number;
+  agent_id: string;
+  action_name: string;
+  payload: string;
+  description: string;
+  status: string;
+  created_at: string;
+  resolved_at?: string | null;
+  resolver_note?: string | null;
+  bundle_hash?: string;
+  flags?: string[];
+}
+
+export interface ApprovalDetail extends ApprovalSummary {
+  bundle?: EvidenceBundle | null;
+  decisions?: DecisionEntry[];
+}
+
+

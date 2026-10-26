@@ -102,6 +102,8 @@ class QdrantMemoryEngine(MemoryEngine):
         try:
             from backend.rag import get_qdrant_client, COLLECTION_NAME
             client = get_qdrant_client()
+            if client is None:
+                return False
             client.delete_collection(collection_name=COLLECTION_NAME)
             self.init_memory()
             logger.info("Cleared Qdrant flat vector memory.")

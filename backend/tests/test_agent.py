@@ -37,7 +37,7 @@ def test_clear_history(agent):
     database.save_message(session_id, "user", "Hi")
     
     assert len(agent.get_history(session_id)) == 1
-    agent.clear_history(session_id)
+    agent.clear_history(session_id, human=True)
     assert len(agent.get_history(session_id)) == 0
 
 @pytest.mark.asyncio

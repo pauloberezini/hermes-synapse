@@ -443,6 +443,8 @@ Rules:
     allowed_agent_ids = {a["id"] for a in children} | {a["id"] for a in all_subagents}
     
     try:
+        from backend.context_manager import continuation_query
+        query = continuation_query(query, chat_id)
         current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
         planner_messages = [
             {"role": "system", "content": dynamic_planner_prompt + f"\n\n[System Information]:\nCurrent date and time: {current_time_str}"},
@@ -652,7 +654,25 @@ Rules:
             if step_prefix:
                 contextual_instructions = step_prefix + contextual_instructions
             state.add_trace("Router", "Route", f"Step {state.current_step_idx+1}/{len(state.steps)}: Delegating to agent '{child_name}' ({agent_type})")
-            
+
+            from backend.evidence import EvidenceContext, PlanRef, evidence_ctx
+            plan_ref = PlanRef(
+                agent=agent_type,
+                instructions=str(instructions or ""),
+                step_index=state.current_step_idx,
+                step_count=len(state.steps),
+            )
+            ev_context = EvidenceContext(plan=plan_ref, step_context=context_str)
+            for prev_res in state.results:
+                out_text = str(prev_res.get("output") or "")
+                truncated = len(out_text) > 3000
+                ev_context.add_step_result(
+                    str(prev_res.get("agent") or "step"),
+                    out_text[:3000] if truncated else out_text,
+                    truncated=truncated,
+                )
+            ev_token = evidence_ctx.set(ev_context)
+
             # Check node execution type
             is_sub_orch = child_agent.get("agent_type") in ("orchestrator", "sub-orchestrator")
             
@@ -660,8 +680,8 @@ Rules:
                 try:
                     # Recursive dynamic orchestration call!
                     logger.info(f"Triggering recursive sub-orchestration for '{agent_type}'")
-                    # Cap the child by this orchestrator's intersection. None only when there is no ceiling.
-                    nested_skills = None if parent_skills is None and not active_skills else active_skills
+                    # Cap the child by this orchestrator's skills. "" is an empty ceiling.
+                    nested_skills = active_skills
                     sub_orch_res = await run_orchestration(contextual_instructions, api_key, model, chat_id=agent_type, parent_skills=nested_skills, _stack=_stack)
                     state.results.append({"step": state.current_step_idx, "agent": agent_type, "output": sub_orch_res["response"]})
                     # Add child traces to parent traces
@@ -712,9 +732,6 @@ Rules:
                 try:
                     scoped_subagent_session_id = f"{state.chat_id}_{child_agent['id']}"
                     subagent_kwargs = {
-                        # Top-level (parent_skills is None) leaves keep their own skills.
-                        # Under a cap, pass the intersection so a nested tree cannot widen it.
-                        # Hired steps carry the parent's skill cap even when this orch is the root.
                         "parent_skills": step.get("skill_cap") if step.get("skill_cap") is not None else (None if parent_skills is None else active_skills),
                         "chat_id": scoped_subagent_session_id,
                     }
@@ -832,6 +849,7 @@ Rules:
                     state.results.append({"step": state.current_step_idx, "agent": agent_type, "error": f"Agent {child_name} failed with error: {str(e)}"})
                     state.add_trace(child_name, "Error", f"Error: {str(e)}", "error")
                     
+            evidence_ctx.reset(ev_token)
             state.current_step_idx += 1
             
         # 3. SYNTHESIZE NODE

@@ -18,6 +18,16 @@ from typing import Optional
 budget_session: contextvars.ContextVar[str] = contextvars.ContextVar(
     "hermes_budget_session", default="default"
 )
+# Tools the agent currently running is allowed to delegate. None = caller unknown.
+current_agent_tools: contextvars.ContextVar[Optional[frozenset[str]]] = contextvars.ContextVar(
+    "current_agent_tools", default=None
+)
+# Fail-closed floor when a subagent is entered with no parent capability.
+CORE_READONLY_TOOLS = frozenset({
+    "get_current_time_israel",
+    "get_weather",
+    "web_search",
+})
 # ponytail: flat floor so a near-full cap blocks the next call; token price if this gets noisy
 LLM_CALL_ESTIMATE_USD = 0.01
 
@@ -25,6 +35,15 @@ HIGH_RISK_TOOLS = frozenset({
     "execute_command",
     "create_obsidian_note",
     "delete_todoist_task",
+    "create_subagent",
+    "update_subagent",
+    "delete_subagent",
+    "change_agent_skills",
+    "assign_role",
+    "clear_history",
+    "clear_decision_logs",
+    "set_log_level",
+    "export_or_purge_audit",
 })
 
 logger = logging.getLogger("hermes.governance")
@@ -225,17 +244,31 @@ class ApprovalQueue:
         action_name: str,
         payload: dict,
         description: str = "",
+        bundle=None,
+        session_id: str | None = None,
     ) -> int:
         """
         Create a new approval request row. Returns the request ID.
-        Agents should persist this ID and poll with ``is_approved(request_id)``.
+        When ``bundle`` is set, the evidence row is inserted in the same transaction.
         """
-        from backend.database import _lastrowid
+        from backend.database import PostgresBackend, _get_backend
+        from backend.evidence import bundle_hash as _bundle_hash
+
         now = datetime.now(timezone.utc).isoformat()
-        sql = """
-            INSERT INTO approval_requests (agent_id, action_name, payload, description, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """
+        stored_hash = _bundle_hash(bundle) if bundle is not None else None
+        bundle_json = None
+        schema_ver = 1
+        if bundle is not None:
+            bundle_json = json.dumps(bundle.model_dump(mode="json"), ensure_ascii=False)
+            schema_ver = bundle.schema_ver
+            if not description:
+                description = bundle.description
+        backend = _get_backend()
+        insert_sql = backend.translate_placeholder(
+            "INSERT INTO approval_requests "
+            "(agent_id, action_name, payload, description, status, created_at, bundle_hash, session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
         params = (
             agent_id,
             action_name,
@@ -243,30 +276,128 @@ class ApprovalQueue:
             description,
             ApprovalQueue.STATUS_PENDING,
             now,
+            stored_hash,
+            session_id,
         )
-        request_id = _lastrowid(sql, params)
+        with backend.connect() as conn:
+            cur = conn.cursor()
+            if isinstance(backend, PostgresBackend):
+                cur.execute(insert_sql.rstrip(";") + " RETURNING id", params)
+                request_id = cur.fetchone()[0]
+            else:
+                cur.execute(insert_sql, params)
+                request_id = cur.lastrowid
+            if bundle_json is not None and request_id:
+                ev_sql = backend.translate_placeholder(
+                    "INSERT INTO approval_evidence "
+                    "(request_id, bundle_json, bundle_hash, schema_ver, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)"
+                )
+                cur.execute(ev_sql, (request_id, bundle_json, stored_hash, schema_ver, now))
+
+            from backend.decision_log import _tx_conn, append as dl_append
+
+            token = _tx_conn.set(conn)
+            try:
+                dl_append(
+                    "REQUESTED",
+                    request_id=request_id or 0,
+                    actor=f"agent:{agent_id}",
+                    action_name=action_name,
+                    payload=payload,
+                    bundle_hash=stored_hash,
+                    auth_method="agent",
+                )
+            finally:
+                _tx_conn.reset(token)
+
+            conn.commit()
+
         logger.info(
             f"[ApprovalQueue] New request #{request_id}: agent={agent_id} "
             f"action={action_name}"
         )
+        try:
+            from backend.websocket_manager import broadcast_sync
+            broadcast_sync({"type": "approval_update", "id": request_id or 0, "status": ApprovalQueue.STATUS_PENDING})
+        except Exception:
+            pass
         return request_id or 0
 
     @staticmethod
-    def resolve(request_id: int, decision: str, resolver_note: str = "") -> bool:
+    def resolve(
+        request_id: int,
+        decision: str,
+        resolver_note: str = "",
+        *,
+        principal: Optional[Any] = None,
+    ) -> bool:
         """
-        Resolve an approval request.  decision must be 'APPROVED' or 'REJECTED'.
+        Resolve an approval request. decision must be 'APPROVED' or 'REJECTED'.
         Returns True on success.
         """
         if decision not in (ApprovalQueue.STATUS_APPROVED, ApprovalQueue.STATUS_REJECTED):
             raise ValueError(f"Invalid decision '{decision}'. Must be APPROVED or REJECTED.")
-        from backend.database import _rowcount
+
+        if principal is None:
+            logger.warning("[ApprovalQueue] resolve called without explicit principal; falling back to system admin")
+            from backend.identity import Principal
+            principal = Principal("system", ("admin",))
+
+        from backend.database import _get_backend
+        from backend.decision_log import _tx_conn, append as dl_append
+
         now = datetime.now(timezone.utc).isoformat()
-        sql = "UPDATE approval_requests SET status = ?, resolver_note = ?, resolved_at = ? WHERE id = ?"
-        params = (decision, resolver_note, now, request_id)
-        changed = _rowcount(sql, params) > 0
-        if changed:
-            logger.info(f"[ApprovalQueue] Request #{request_id} → {decision}")
-        return changed
+        backend = _get_backend()
+        with backend.connect() as conn:
+            cur = conn.cursor()
+            # Resolve-once rule: only PENDING rows can be resolved
+            check_sql = backend.translate_placeholder(
+                "SELECT status, action_name, payload, bundle_hash FROM approval_requests WHERE id = ?"
+            )
+            cur.execute(check_sql, (request_id,))
+            row = cur.fetchone()
+            if not row or row[0] != ApprovalQueue.STATUS_PENDING:
+                return False
+
+            action_name = row[1]
+            raw_payload = row[2]
+            bundle_hash = row[3]
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload or {})
+            except Exception:
+                payload = {}
+
+            sql = backend.translate_placeholder(
+                "UPDATE approval_requests SET status = ?, resolver_note = ?, resolved_at = ? WHERE id = ? AND status = ?"
+            )
+            cur.execute(sql, (decision, resolver_note, now, request_id, ApprovalQueue.STATUS_PENDING))
+            if cur.rowcount <= 0:
+                return False
+
+            token = _tx_conn.set(conn)
+            try:
+                dl_append(
+                    decision,
+                    request_id=request_id,
+                    actor=principal,
+                    action_name=action_name,
+                    payload=payload,
+                    bundle_hash=bundle_hash,
+                    reason=resolver_note,
+                )
+            finally:
+                _tx_conn.reset(token)
+
+            conn.commit()
+
+        logger.info(f"[ApprovalQueue] Request #{request_id} → {decision}")
+        try:
+            from backend.websocket_manager import broadcast_sync
+            broadcast_sync({"type": "approval_update", "id": request_id, "status": decision})
+        except Exception:
+            pass
+        return True
 
     @staticmethod
     def get_pending() -> list[dict]:
@@ -276,13 +407,29 @@ class ApprovalQueue:
         with backend.connect() as conn:
             cursor = conn.cursor()
             sql = backend.translate_placeholder(
-                "SELECT id, agent_id, action_name, payload, description, status, created_at "
-                "FROM approval_requests WHERE status = ? ORDER BY id DESC"
+                "SELECT r.id, r.agent_id, r.action_name, r.payload, r.description, r.status, r.created_at, "
+                "r.bundle_hash, e.bundle_json "
+                "FROM approval_requests r "
+                "LEFT JOIN approval_evidence e ON e.request_id = r.id "
+                "WHERE r.status = ? ORDER BY r.id DESC"
             )
             cursor.execute(sql, (ApprovalQueue.STATUS_PENDING,))
-            cols = ["id", "agent_id", "action_name", "payload", "description", "status", "created_at"]
+            cols = ["id", "agent_id", "action_name", "payload", "description", "status", "created_at", "bundle_hash", "bundle_json"]
             rows = cursor.fetchall()
-        return [dict(zip(cols, row)) for row in rows]
+        result = []
+        for row in rows:
+            d = dict(zip(cols, row))
+            raw_b = d.pop("bundle_json")
+            flags = []
+            if raw_b:
+                try:
+                    flags = (json.loads(raw_b).get("flags") or [])[:5]
+                except Exception:
+                    pass
+            d["flags"] = flags
+            d["bundle_hash"] = d["bundle_hash"] or ""
+            result.append(d)
+        return result
 
     @staticmethod
     def get_all(limit: int = 50) -> list[dict]:
@@ -292,14 +439,57 @@ class ApprovalQueue:
         with backend.connect() as conn:
             cursor = conn.cursor()
             sql = backend.translate_placeholder(
-                "SELECT id, agent_id, action_name, payload, description, status, created_at, resolved_at, resolver_note "
-                "FROM approval_requests ORDER BY id DESC LIMIT ?"
+                "SELECT r.id, r.agent_id, r.action_name, r.payload, r.description, r.status, r.created_at, "
+                "r.resolved_at, r.resolver_note, r.bundle_hash, e.bundle_json "
+                "FROM approval_requests r "
+                "LEFT JOIN approval_evidence e ON e.request_id = r.id "
+                "ORDER BY r.id DESC LIMIT ?"
             )
             cursor.execute(sql, (limit,))
             cols = ["id", "agent_id", "action_name", "payload", "description", "status",
-                    "created_at", "resolved_at", "resolver_note"]
+                    "created_at", "resolved_at", "resolver_note", "bundle_hash", "bundle_json"]
             rows = cursor.fetchall()
-        return [dict(zip(cols, row)) for row in rows]
+        result = []
+        for row in rows:
+            d = dict(zip(cols, row))
+            raw_b = d.pop("bundle_json")
+            flags = []
+            if raw_b:
+                try:
+                    flags = (json.loads(raw_b).get("flags") or [])[:5]
+                except Exception:
+                    pass
+            d["flags"] = flags
+            d["bundle_hash"] = d["bundle_hash"] or ""
+            result.append(d)
+        return result
+
+    @staticmethod
+    def get_detail(request_id: int) -> Optional[dict]:
+        """Request row plus the stored evidence bundle. None if the id is missing."""
+        from backend.database import _get_backend
+        backend = _get_backend()
+        with backend.connect() as conn:
+            cursor = conn.cursor()
+            sql = backend.translate_placeholder(
+                "SELECT r.id, r.agent_id, r.action_name, r.payload, r.description, r.status, "
+                "r.created_at, r.resolved_at, r.resolver_note, r.bundle_hash, r.session_id, e.bundle_json "
+                "FROM approval_requests r LEFT JOIN approval_evidence e ON e.request_id = r.id "
+                "WHERE r.id = ?"
+            )
+            cursor.execute(sql, (request_id,))
+            row = cursor.fetchone()
+        if not row:
+            return None
+        cols = [
+            "id", "agent_id", "action_name", "payload", "description", "status",
+            "created_at", "resolved_at", "resolver_note", "bundle_hash", "session_id",
+            "bundle_json",
+        ]
+        detail = dict(zip(cols, row))
+        raw = detail.pop("bundle_json")
+        detail["bundle"] = json.loads(raw) if raw else None
+        return detail
 
     @staticmethod
     def get_status(request_id: int) -> Optional[str]:
@@ -353,12 +543,56 @@ class ApprovalQueue:
     @staticmethod
     def consume(request_id: int) -> None:
         """One approval authorizes one execution."""
-        from backend.database import _rowcount
+        from backend.database import _get_backend
+        from backend.decision_log import _tx_conn, append as dl_append
+
         now = datetime.now(timezone.utc).isoformat()
-        _rowcount(
-            "UPDATE approval_requests SET status = ?, resolved_at = ? WHERE id = ? AND status = ?",
-            ("CONSUMED", now, request_id, ApprovalQueue.STATUS_APPROVED),
-        )
+        backend = _get_backend()
+        with backend.connect() as conn:
+            cur = conn.cursor()
+            check_sql = backend.translate_placeholder(
+                "SELECT status, action_name, payload, bundle_hash FROM approval_requests WHERE id = ?"
+            )
+            cur.execute(check_sql, (request_id,))
+            row = cur.fetchone()
+            if not row or row[0] != ApprovalQueue.STATUS_APPROVED:
+                return
+
+            action_name = row[1]
+            raw_payload = row[2]
+            bundle_hash = row[3]
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload or {})
+            except Exception:
+                payload = {}
+
+            sql = backend.translate_placeholder(
+                "UPDATE approval_requests SET status = ?, resolved_at = ? WHERE id = ? AND status = ?"
+            )
+            cur.execute(sql, ("CONSUMED", now, request_id, ApprovalQueue.STATUS_APPROVED))
+            if cur.rowcount <= 0:
+                return
+
+            token = _tx_conn.set(conn)
+            try:
+                dl_append(
+                    "CONSUMED",
+                    request_id=request_id,
+                    actor="system",
+                    action_name=action_name,
+                    payload=payload,
+                    bundle_hash=bundle_hash,
+                    auth_method="system",
+                )
+            finally:
+                _tx_conn.reset(token)
+
+            conn.commit()
+        try:
+            from backend.websocket_manager import broadcast_sync
+            broadcast_sync({"type": "approval_update", "id": request_id, "status": "CONSUMED"})
+        except Exception:
+            pass
 
 
 def _payload_key(payload: dict) -> str:
@@ -375,12 +609,24 @@ def _payload_key_stored(raw: str) -> str:
         return raw or ""
 
 
+def _high_risk_names() -> frozenset[str]:
+    """Core names plus whatever each plugin contributes via high_risk_tools()."""
+    names = set(HIGH_RISK_TOOLS)
+    from backend.plugins import collect
+    for extra in collect("high_risk_tools"):
+        if isinstance(extra, str):
+            names.add(extra)
+        else:
+            names.update(str(n) for n in extra)
+    return frozenset(names)
+
+
 def _requires_approval(action_name: str) -> bool:
-    if action_name in HIGH_RISK_TOOLS:
+    if action_name in _high_risk_names():
         return True
-    # MCP tool names are registered at runtime, so they cannot sit in HIGH_RISK_TOOLS.
-    from backend.mcp_client import mcp_tool_to_server
-    return action_name in mcp_tool_to_server
+    # MCP names arrive at runtime. Gate from the tool's own annotations.
+    from backend.mcp_client import mcp_tool_needs_approval
+    return mcp_tool_needs_approval(action_name)
 
 
 def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
@@ -405,11 +651,18 @@ def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
             "error": f"Human rejected {action_name}.",
         }, ensure_ascii=False)
     else:
+        from backend.evidence import build_bundle, cap_bundle, evidence_ctx, redact_bundle
+        bundle = cap_bundle(redact_bundle(build_bundle(
+            agent_id, action_name, payload, evidence_ctx.get(),
+        )))
+        bundle.links = {**bundle.links, "session_id": agent_id}
         request_id = ApprovalQueue.request_approval(
             agent_id=agent_id,
             action_name=action_name,
             payload=payload,
-            description=action_name,
+            description=bundle.description,
+            bundle=bundle,
+            session_id=agent_id,
         )
     return json.dumps({
         "status": "PENDING_APPROVAL",

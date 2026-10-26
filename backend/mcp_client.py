@@ -44,6 +44,31 @@ def _find_executable(cmd: str) -> str:
 
 _server_offline_cooldowns: Dict[str, float] = {}
 
+def _is_transient_network_err(exc: BaseException) -> bool:
+    """Helper to detect transient DNS and socket network failures in MCP HTTP clients."""
+    err_str = f"{type(exc).__name__}: {exc}".lower()
+    net_keywords = (
+        "temporary failure in name resolution",
+        "no address associated with hostname",
+        "name or service not known",
+        "connecterror",
+        "connecttimeout",
+        "networkerror",
+        "connection refused",
+        "connection reset",
+        "network is unreachable",
+        "host is down",
+        "all connection attempts failed",
+        "remote protocol error",
+        "gaierror",
+        "errno -3",
+        "errno -5",
+        "errno -2",
+        "timed out",
+        "timeout",
+    )
+    return any(k in err_str for k in net_keywords)
+
 def mark_server_offline(name: str, cooldown_seconds: float = 300.0) -> None:
     """Mark an MCP server as offline until the cooldown period expires."""
     _server_offline_cooldowns[name] = time.time() + cooldown_seconds
@@ -145,12 +170,19 @@ class MCPServerClient:
                 or any(k in type(e).__name__ for k in ("ConnectError", "ConnectTimeout", "ConnectionRefused", "NetworkError", "RemoteProtocolError"))
                 or any(k in err_str.lower() for k in ("connection refused", "not known", "all connection attempts failed", "connect timeout", "gaierror"))
             )
+            cmd_str = " ".join(self.command) if isinstance(self.command, list) else (str(self.command) if self.command else "unknown")
+            endpoint_str = self.url or cmd_str
             if getattr(self, "optional", False):
                 _server_offline_cooldowns[self.name] = time.time() + 300.0
-                logger.info(f"Optional MCP server '{self.name}' is unavailable or offline ({self.url or self.command}): {e}")
+                logger.info(f"Optional MCP server '{self.name}' is unavailable or offline ({endpoint_str}): {e}")
             elif is_connection_error:
-                _server_offline_cooldowns[self.name] = time.time() + 300.0
-                logger.warning(f"MCP server '{self.name}' is unavailable or failed to connect ({self.url or self.command}): {e}")
+                is_net = _is_transient_network_err(e)
+                cd_secs = 60.0 if is_net else 300.0
+                cd_str = "60s" if is_net else "5m"
+                _server_offline_cooldowns[self.name] = time.time() + cd_secs
+                logger.warning(
+                    f"MCP server '{self.name}' is unavailable or failed to connect ({endpoint_str}): {e}. Entering {cd_str} cooldown."
+                )
             else:
                 logger.error(f"Failed to start MCP server '{self.name}': {e}")
 
@@ -192,8 +224,27 @@ class MCPServerClient:
                     try:
                         await self._initialize_http()
                     except Exception as init_err:
-                        self._reinit_cooldown_until = time.time() + 300.0
-                        logger.warning(f"MCP server '{self.name}' initial HTTP session establishment failed: {init_err}. Entering 5m cooldown.")
+                        is_net = _is_transient_network_err(init_err)
+                        cd_secs = 60.0 if is_net else 300.0
+                        cd_str = "60s" if is_net else "5m"
+                        self._reinit_cooldown_until = time.time() + cd_secs
+
+                        now_t = time.time()
+                        last_t = getattr(self, "_last_reinit_warn_time", 0.0)
+                        last_err_s = getattr(self, "_last_reinit_warn_msg", "")
+                        curr_err_s = str(init_err)
+                        suppressed = getattr(self, "_suppressed_reinit_warns", 0)
+
+                        if is_net and curr_err_s == last_err_s and (now_t - last_t) < 300.0:
+                            self._suppressed_reinit_warns = suppressed + 1
+                        else:
+                            suppressed_note = f" (suppressed {suppressed} repetitive errors)" if suppressed > 0 else ""
+                            self._suppressed_reinit_warns = 0
+                            self._last_reinit_warn_time = now_t
+                            self._last_reinit_warn_msg = curr_err_s
+                            logger.warning(
+                                f"MCP server '{self.name}' initial HTTP session establishment failed: {init_err}{suppressed_note}. Entering {cd_str} cooldown."
+                            )
                         raise
         elif (
             bool(self.session_id)
@@ -209,8 +260,27 @@ class MCPServerClient:
                     try:
                         await self._initialize_http()
                     except Exception as init_err:
-                        self._reinit_cooldown_until = time.time() + 300.0
-                        logger.warning(f"MCP server '{self.name}' proactive re-initialization failed: {init_err}. Entering 5m cooldown.")
+                        is_net = _is_transient_network_err(init_err)
+                        cd_secs = 60.0 if is_net else 300.0
+                        cd_str = "60s" if is_net else "5m"
+                        self._reinit_cooldown_until = time.time() + cd_secs
+
+                        now_t = time.time()
+                        last_t = getattr(self, "_last_reinit_warn_time", 0.0)
+                        last_err_s = getattr(self, "_last_reinit_warn_msg", "")
+                        curr_err_s = str(init_err)
+                        suppressed = getattr(self, "_suppressed_reinit_warns", 0)
+
+                        if is_net and curr_err_s == last_err_s and (now_t - last_t) < 300.0:
+                            self._suppressed_reinit_warns = suppressed + 1
+                        else:
+                            suppressed_note = f" (suppressed {suppressed} repetitive errors)" if suppressed > 0 else ""
+                            self._suppressed_reinit_warns = 0
+                            self._last_reinit_warn_time = now_t
+                            self._last_reinit_warn_msg = curr_err_s
+                            logger.warning(
+                                f"MCP server '{self.name}' proactive re-initialization failed: {init_err}{suppressed_note}. Entering {cd_str} cooldown."
+                            )
                         raise
 
         self.req_id += 1
@@ -245,7 +315,7 @@ class MCPServerClient:
         is_session_expired = (
             (
                 (bool(self.session_id) and resp.status_code in (401, 404))
-                or (bool(self.session_id) and resp.status_code == 400 and ("session" in resp_lower or "bad request" in resp_lower))
+                or (bool(self.session_id) and resp.status_code == 400 and ("session" in resp_lower or has_session_err_keyword))
                 or (resp.status_code in (400, 401, 404) and has_session_err_keyword)
                 or (resp.status_code >= 400 and has_session_err_keyword)
             )
@@ -263,19 +333,43 @@ class MCPServerClient:
                     try:
                         await self._initialize_http()
                     except Exception as init_err:
-                        self._reinit_cooldown_until = time.time() + 300.0
-                        logger.warning(f"MCP server '{self.name}' re-initialization failed: {init_err}. Entering 5m cooldown.")
+                        is_net = _is_transient_network_err(init_err)
+                        cd_secs = 60.0 if is_net else 300.0
+                        cd_str = "60s" if is_net else "5m"
+                        self._reinit_cooldown_until = time.time() + cd_secs
+                        logger.warning(
+                            f"MCP server '{self.name}' re-initialization failed: {init_err}. Entering {cd_str} cooldown."
+                        )
                         raise
             try:
                 res = await self.send_request_http(method, params, _is_retry=True)
                 self._reinit_cooldown_until = 0.0
                 return res
             except Exception as retry_err:
-                self._reinit_cooldown_until = time.time() + 300.0
-                logger.warning(f"MCP server '{self.name}' request failed after re-initialization: {retry_err}. Entering 5m cooldown.")
+                is_net = _is_transient_network_err(retry_err)
+                cd_secs = 60.0 if is_net else 300.0
+                cd_str = "60s" if is_net else "5m"
+                self._reinit_cooldown_until = time.time() + cd_secs
+                logger.warning(
+                    f"MCP server '{self.name}' request failed after re-initialization: {retry_err}. Entering {cd_str} cooldown."
+                )
                 raise
 
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as err:
+            err_body = ""
+            try:
+                err_body = resp.text.strip()
+            except Exception:
+                pass
+            if err_body:
+                raise httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code}: {err_body}",
+                    request=err.request,
+                    response=err.response
+                ) from err
+            raise
         if "mcp-session-id" in resp.headers:
             self.session_id = resp.headers["mcp-session-id"]
         self._last_used_at = time.time()
@@ -410,9 +504,15 @@ class MCPServerClient:
             return json.dumps({"error": f"MCP server '{self.name}' tool '{tool_name}' failed: {err_desc}"}, ensure_ascii=False)
         if "error" in res:
             return json.dumps({"error": res["error"]}, ensure_ascii=False)
+        is_error = bool(res.get("result", {}).get("isError", False))
         content_list = res.get("result", {}).get("content", [])
         if content_list and content_list[0].get("type") == "text":
-            return content_list[0].get("text")
+            text = content_list[0].get("text")
+            if is_error:
+                return json.dumps({"error": text}, ensure_ascii=False)
+            return text
+        if is_error:
+            return json.dumps({"error": res.get("result", {})}, ensure_ascii=False)
         return json.dumps(res.get("result", {}), ensure_ascii=False)
 
     async def shutdown(self):
@@ -428,6 +528,40 @@ class MCPServerClient:
 # Global registry
 mcp_clients: Dict[str, MCPServerClient] = {}
 mcp_tool_to_server: Dict[str, str] = {}
+mcp_tool_annotations: Dict[str, dict] = {}
+
+
+def note_mcp_tool(server_name: str, tool: dict) -> None:
+    """Record one MCP tool and its annotations. Schema registration stays with the caller."""
+    tool_name = tool["name"]
+    mcp_tool_to_server[tool_name] = server_name
+    ann = tool.get("annotations")
+    if isinstance(ann, dict):
+        mcp_tool_annotations[tool_name] = ann
+    else:
+        mcp_tool_annotations.pop(tool_name, None)
+
+
+def forget_mcp_server_tools(server_name: str) -> None:
+    dead = [t for t, s in mcp_tool_to_server.items() if s == server_name]
+    for tool_name in dead:
+        mcp_tool_to_server.pop(tool_name, None)
+        mcp_tool_annotations.pop(tool_name, None)
+
+
+def mcp_tool_needs_approval(name: str) -> bool:
+    """True when an MCP tool is not marked read-only.
+
+    Omitted annotations follow the MCP defaults: readOnlyHint false,
+    destructiveHint true. A tool opts out with readOnlyHint true or
+    destructiveHint false.
+    """
+    if name not in mcp_tool_to_server:
+        return False
+    ann = mcp_tool_annotations.get(name) or {}
+    if ann.get("readOnlyHint") is True:
+        return False
+    return ann.get("destructiveHint", True) is not False
 
 async def init_mcp_servers(target_servers: Optional[Iterable[str]] = None):
     backend_dir = os.path.dirname(os.path.abspath(__file__))
@@ -477,8 +611,8 @@ async def init_mcp_servers(target_servers: Optional[Iterable[str]] = None):
                 _server_offline_cooldowns.pop(name, None)
                 for tool in client.tools:
                     tool_name = tool["name"]
-                    mcp_tool_to_server[tool_name] = name
-                    
+                    note_mcp_tool(name, tool)
+
                     # Dynamically register tool schema in tools.py TOOLS_SCHEMA
                     from backend.tools import TOOLS_SCHEMA
                     if not any(t.get("function", {}).get("name") == tool_name for t in TOOLS_SCHEMA):
@@ -506,3 +640,4 @@ async def shutdown_mcp_servers():
         await client.shutdown()
     mcp_clients.clear()
     mcp_tool_to_server.clear()
+    mcp_tool_annotations.clear()

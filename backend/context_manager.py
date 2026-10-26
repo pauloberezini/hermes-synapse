@@ -184,3 +184,48 @@ def build_subagent_messages(
     return final_messages
 
 
+def continuation_query(query: str, chat_id: str) -> str:
+    """Prepend the previous assistant question when a short reply answers it.
+
+    Scheduled sessions, messages that already name a symbol, replies longer
+    than 400 characters, and turns whose previous assistant text has no
+    question mark are returned unchanged. A database failure returns ``query``.
+
+    Args:
+        query: Text about to be planned. May include a RAG block.
+        chat_id: Parent session id.
+
+    Returns:
+        ``query``, or that text under a ``[Dialog continuation]`` tail.
+    """
+    try:
+        session = chat_id or ""
+        if (
+            session.startswith("task_")
+            or "scheduled" in session
+            or query.startswith("Execute scheduled task:")
+            or len(query) > 400
+        ):
+            return query
+        from backend.plugins import tool_hints
+        pattern = (tool_hints() or {}).get("symbol_pattern") or ""
+        if pattern and re.search(pattern, query):
+            return query
+        from backend.database import get_chat_history
+        history = list(get_chat_history(session, limit=20) or [])
+        if history and history[-1].get("role") == "user" and (history[-1].get("content") or "") == query:
+            history.pop()
+        previous = ""
+        for msg in reversed(history):
+            if msg.get("role") == "assistant" and (msg.get("content") or "").strip():
+                previous = msg["content"]
+                break
+        if "?" not in previous:
+            return query
+        tail = previous[-1500:]
+        return f"[Dialog continuation]\n{tail}\n\n[Current user message]:\n{query}"
+    except Exception as exc:
+        logger.error("continuation_query failed: %s", exc)
+        return query
+
+

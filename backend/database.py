@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("hermes.database")
@@ -186,6 +187,10 @@ class PostgresBackend(DatabaseBackend):
             s = s.replace("INSERT OR IGNORE INTO app_settings", "INSERT INTO app_settings")
             if "ON CONFLICT" not in s:
                 s = s.rstrip().rstrip(";") + " ON CONFLICT (key) DO NOTHING"
+        elif "INSERT OR IGNORE INTO undistillable_logs" in s:
+            s = s.replace("INSERT OR IGNORE INTO undistillable_logs", "INSERT INTO undistillable_logs")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (decision_log_id) DO NOTHING"
         elif "INSERT OR REPLACE INTO subagents" in s:
             s = s.replace("INSERT OR REPLACE INTO subagents", "INSERT INTO subagents")
             if "ON CONFLICT" not in s:
@@ -263,6 +268,98 @@ def _set_backend_for_tests(backend: Optional[DatabaseBackend]) -> None:
     global _backend, _schema_initialized
     _backend = backend
     _schema_initialized = False
+
+
+def install_approval_decisions(cursor) -> None:
+    """Create the append-only approval decision table and its SQLite guards."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS approval_decisions (
+            seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id     TEXT NOT NULL DEFAULT 'default',
+            request_id    INTEGER NOT NULL,
+            event         TEXT NOT NULL,
+            actor_subject TEXT NOT NULL,
+            actor_roles   TEXT NOT NULL,
+            auth_method   TEXT NOT NULL,
+            action_name   TEXT NOT NULL,
+            payload_hash  TEXT NOT NULL,
+            bundle_hash   TEXT,
+            reason        TEXT,
+            occurred_at   TEXT NOT NULL,
+            prev_hash     TEXT NOT NULL,
+            entry_hash    TEXT NOT NULL UNIQUE
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decisions_request ON approval_decisions(request_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decisions_tenant_seq ON approval_decisions(tenant_id, seq)"
+    )
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS approval_decisions_no_update
+        BEFORE UPDATE ON approval_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'approval_decisions is append-only');
+        END
+    """)
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS approval_decisions_no_delete
+        BEFORE DELETE ON approval_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'approval_decisions is append-only');
+        END
+    """)
+
+
+def install_approval_decisions_postgres(cursor) -> None:
+    """Postgres twin of install_approval_decisions. UPDATE and DELETE raise."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS approval_decisions (
+            seq           BIGSERIAL PRIMARY KEY,
+            tenant_id     TEXT NOT NULL DEFAULT 'default',
+            request_id    BIGINT NOT NULL,
+            event         TEXT NOT NULL,
+            actor_subject TEXT NOT NULL,
+            actor_roles   TEXT NOT NULL,
+            auth_method   TEXT NOT NULL,
+            action_name   TEXT NOT NULL,
+            payload_hash  TEXT NOT NULL,
+            bundle_hash   TEXT,
+            reason        TEXT,
+            occurred_at   TEXT NOT NULL,
+            prev_hash     TEXT NOT NULL,
+            entry_hash    TEXT NOT NULL UNIQUE
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decisions_request ON approval_decisions(request_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decisions_tenant_seq ON approval_decisions(tenant_id, seq)"
+    )
+    cursor.execute("""
+        CREATE OR REPLACE FUNCTION approval_decisions_append_only()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'approval_decisions is append-only';
+        END;
+        $$
+    """)
+    cursor.execute("DROP TRIGGER IF EXISTS approval_decisions_no_update ON approval_decisions")
+    cursor.execute("DROP TRIGGER IF EXISTS approval_decisions_no_delete ON approval_decisions")
+    cursor.execute("""
+        CREATE TRIGGER approval_decisions_no_update
+        BEFORE UPDATE ON approval_decisions
+        FOR EACH ROW EXECUTE PROCEDURE approval_decisions_append_only()
+    """)
+    cursor.execute("""
+        CREATE TRIGGER approval_decisions_no_delete
+        BEFORE DELETE ON approval_decisions
+        FOR EACH ROW EXECUTE PROCEDURE approval_decisions_append_only()
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +613,15 @@ def _do_init_sqlite_schema(conn):
         )
     """)
 
+    # Create undistillable logs table (records skipped automation runs or rejected logs)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS undistillable_logs (
+            decision_log_id INTEGER PRIMARY KEY,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
     # Run migrations for dynamic agent network
     for col, definition in [
         ("agent_type", "TEXT DEFAULT 'agent'"),
@@ -632,6 +738,25 @@ def _do_init_sqlite_schema(conn):
             resolver_note TEXT
         )
     """)
+
+    cursor.execute("PRAGMA table_info(approval_requests)")
+    approval_cols = [row[1] for row in cursor.fetchall()]
+    for col_name, col_type in (("bundle_hash", "TEXT"), ("session_id", "TEXT")):
+        if col_name not in approval_cols:
+            cursor.execute(f"ALTER TABLE approval_requests ADD COLUMN {col_name} {col_type}")
+
+    # ponytail: ON DELETE CASCADE — foreign_keys=ON, and callers DELETE the parent row
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS approval_evidence (
+            request_id   INTEGER PRIMARY KEY REFERENCES approval_requests(id) ON DELETE CASCADE,
+            bundle_json  TEXT NOT NULL,
+            bundle_hash  TEXT NOT NULL,
+            schema_ver   INTEGER NOT NULL DEFAULT 1,
+            created_at   TEXT NOT NULL
+        )
+    """)
+
+    install_approval_decisions(cursor)
 
     # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
     cursor.execute("""
@@ -1019,6 +1144,15 @@ def _init_postgres_schema():
                 )
             """)
 
+            # Create undistillable logs table (records skipped automation runs or rejected logs)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS undistillable_logs (
+                    decision_log_id INTEGER PRIMARY KEY,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
             # PostgreSQL Migration helper: verify and add subagents columns
             for col, definition in [
                 ("agent_type", "TEXT DEFAULT 'agent'"),
@@ -1132,6 +1266,21 @@ def _init_postgres_schema():
                     resolver_note TEXT
                 )
             """)
+
+            for col, definition in (("bundle_hash", "TEXT"), ("session_id", "TEXT")):
+                _postgres_add_column_if_not_exists(cursor, conn, "approval_requests", col, definition)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS approval_evidence (
+                    request_id   INTEGER PRIMARY KEY REFERENCES approval_requests(id) ON DELETE CASCADE,
+                    bundle_json  TEXT NOT NULL,
+                    bundle_hash  TEXT NOT NULL,
+                    schema_ver   INTEGER NOT NULL DEFAULT 1,
+                    created_at   TEXT NOT NULL
+                )
+            """)
+
+            install_approval_decisions_postgres(cursor)
 
             # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
             cursor.execute("""
@@ -1388,8 +1537,28 @@ def _delete_retired_subagents(cursor, placeholder: str):
         cursor.execute(f"DELETE FROM subagents WHERE id = {placeholder}", (agent_id,))
 
 
+def _migrate_deprecated_subagent_models(cursor, placeholder: str):
+    """
+    Migrate deprecated or retired model identifiers to active equivalents
+    across all existing subagents in the database.
+    """
+    deprecated_model_map = {
+        "deepseek/deepseek-r1": "deepseek/deepseek-r1-0528",
+        "deepseek/deepseek-r1:free": "deepseek/deepseek-r1-0528",
+    }
+    for old_m, new_m in deprecated_model_map.items():
+        try:
+            cursor.execute(
+                f"UPDATE subagents SET model = {placeholder} WHERE model = {placeholder}",
+                (new_m, old_m)
+            )
+        except Exception as e:
+            logger.debug(f"Migrate deprecated subagent model {old_m} -> {new_m} failed: {e}")
+
+
 def _migrate_existing_subagents_sqlite(cursor):
     _delete_retired_subagents(cursor, "?")
+    _migrate_deprecated_subagent_models(cursor, "?")
     upserts = _get_default_agents_migrations()
     default_model = os.environ.get("LLM_MODEL", "ollama/llama3")
     for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
@@ -1405,6 +1574,7 @@ def _migrate_existing_subagents_sqlite(cursor):
 
 def _migrate_existing_subagents_postgres(cursor):
     _delete_retired_subagents(cursor, "%s")
+    _migrate_deprecated_subagent_models(cursor, "%s")
     upserts = _get_default_agents_migrations()
     default_model = os.environ.get("LLM_MODEL", "ollama/llama3")
     for agent_id, name, prompt, agent_type, parent_id, skills, x, y in upserts:
@@ -2983,7 +3153,8 @@ def purge_invalid_distilled_skills() -> int:
             "authentication required", "re-authentication required", "trades blocked",
             "trading execution blocked", "trade execution: blocked", "trade execution blocked",
             "execution blocked", "autonomous execution cycle: failed", "compliance verdict: failed",
-            "execute scheduled", "scheduled task execution",
+            "execute scheduled", "scheduled task execution", "trading paused",
+            "execution halted", "order value exceeded", "tool unavailable",
         )
         purged_count = 0
         for r in rows:
@@ -2991,7 +3162,7 @@ def purge_invalid_distilled_skills() -> int:
                 continue
             if isinstance(r, dict):
                 skill_id = r.get("id")
-                s_name = str(r.get("skill_name") or "")
+                s_name = str(r.get("skill_name") or r.get("name") or "")
                 s_title = str(r.get("title") or "")
                 s_path = r.get("file_path")
                 s_content = str(r.get("content") or "")
@@ -3028,7 +3199,7 @@ def purge_invalid_distilled_skills() -> int:
                     engine.delete_document(doc_id)
                 except Exception:
                     pass
-                logger.info(f"Purged contaminated distilled skill #{skill_id} ('{r[2]}')")
+                logger.info(f"Purged contaminated distilled skill #{skill_id} ('{s_name}')")
         return purged_count
     except Exception as e:
         logger.error(f"Error purging invalid distilled skills: {e}")
@@ -3071,6 +3242,198 @@ def db_is_log_distilled(decision_log_id: int) -> bool:
         logger.error(f"Error checking if decision log is distilled: {e}")
         return False
 
+def db_mark_log_undistillable(decision_log_id: int, reason: str = "") -> bool:
+    """Marks a decision log as undistillable so it is never re-evaluated by the distillation loop."""
+    if not decision_log_id:
+        return False
+    try:
+        now_ts = datetime.now().isoformat()
+        reason_str = str(reason or "skipped")[:255]
+        _execute("""
+            INSERT OR IGNORE INTO undistillable_logs (decision_log_id, reason, created_at)
+            VALUES (?, ?, ?)
+        """, (decision_log_id, reason_str, now_ts))
+        return True
+    except Exception as e:
+        logger.warning(f"Error marking log #{decision_log_id} undistillable: {e}")
+        return False
+
+def _parse_decision_log_candidate(r: Any, min_steps: int = 2) -> Optional[Dict[str, Any]]:
+    """Parse and validate a decision log row into a candidate dict, isolating all errors."""
+    try:
+        if isinstance(r, dict):
+            r_id = r.get("id")
+            r_ts = r.get("timestamp")
+            r_session_id = str(r.get("session_id") or "")
+            r_model = r.get("model")
+            r_latency = r.get("latency_ms")
+            r_success = bool(r.get("success"))
+            r_error = r.get("error")
+            r_prompt_tokens = r.get("prompt_tokens_estimate")
+            r_user_msg = str(r.get("user_message") or "")
+            r_resp = str(r.get("assistant_response") or "")
+            raw_traces = r.get("traces")
+            r_agent_id = r.get("agent_id") or "jarvis"
+            r_comp_tokens = r.get("completion_tokens_estimate") or 0
+            r_cost = r.get("cost_usd") or 0.0
+        elif hasattr(r, "keys") and callable(r.keys):
+            try:
+                r_dict = dict(r)
+            except Exception:
+                r_dict = {}
+            r_id = r_dict.get("id")
+            r_ts = r_dict.get("timestamp")
+            r_session_id = str(r_dict.get("session_id") or "")
+            r_model = r_dict.get("model")
+            r_latency = r_dict.get("latency_ms")
+            r_success = bool(r_dict.get("success"))
+            r_error = r_dict.get("error")
+            r_prompt_tokens = r_dict.get("prompt_tokens_estimate")
+            r_user_msg = str(r_dict.get("user_message") or "")
+            r_resp = str(r_dict.get("assistant_response") or "")
+            raw_traces = r_dict.get("traces")
+            r_agent_id = r_dict.get("agent_id") or "jarvis"
+            r_comp_tokens = r_dict.get("completion_tokens_estimate") or 0
+            r_cost = r_dict.get("cost_usd") or 0.0
+        elif isinstance(r, Mapping):
+            r_id = r.get("id")
+            r_ts = r.get("timestamp")
+            r_session_id = str(r.get("session_id") or "")
+            r_model = r.get("model")
+            r_latency = r.get("latency_ms")
+            r_success = bool(r.get("success"))
+            r_error = r.get("error")
+            r_prompt_tokens = r.get("prompt_tokens_estimate")
+            r_user_msg = str(r.get("user_message") or "")
+            r_resp = str(r.get("assistant_response") or "")
+            raw_traces = r.get("traces")
+            r_agent_id = r.get("agent_id") or "jarvis"
+            r_comp_tokens = r.get("completion_tokens_estimate") or 0
+            r_cost = r.get("cost_usd") or 0.0
+        elif isinstance(r, (list, tuple, Sequence)):
+            if len(r) < 11:
+                return None
+            r_id = r[0] if len(r) > 0 else None
+            r_ts = r[1] if len(r) > 1 else None
+            r_session_id = str(r[2] or "") if len(r) > 2 else ""
+            r_model = r[3] if len(r) > 3 else None
+            r_latency = r[4] if len(r) > 4 else None
+            r_success = bool(r[5]) if len(r) > 5 and r[5] is not None else False
+            r_error = r[6] if len(r) > 6 else None
+            r_prompt_tokens = r[7] if len(r) > 7 else None
+            r_user_msg = str(r[8] or "") if len(r) > 8 else ""
+            r_resp = str(r[9] or "") if len(r) > 9 else ""
+            raw_traces = r[10] if len(r) > 10 else []
+            r_agent_id = r[11] if len(r) > 11 and r[11] is not None else "jarvis"
+            r_comp_tokens = r[12] if len(r) > 12 and r[12] is not None else 0
+            r_cost = r[13] if len(r) > 13 and r[13] is not None else 0.0
+        else:
+            return None
+
+        err_text = str(r_error or "").lower()
+        resp_text = r_resp.lower()
+
+        # Check for error or failure markers in text
+        failure_markers = [
+            "ошибка исполнения", "170140", "order value exceeded",
+            "autonomous execution cycle: failed", "compliance verdict: failed",
+            "execution cycle: failed", "execution halted", "cycle failed",
+            "apologies, sir.", "rate limit exceeded", "too many requests",
+            "trading paused", "tool seems to be unavailable", "tool unavailable",
+            "blocked gate", "trades blocked", "compliance check: rejected",
+            "ch_access_token_invalid", "critical authentication failure",
+            "critical authentication", "authentication failure",
+            "authentication expired", "authentication required",
+            "re-authentication required", "trading execution blocked",
+            "execution blocked", "trade execution: blocked", "trade execution blocked",
+            "cannot perform a comprehensive", "api offline", "not authorized",
+            "invalid access token",
+        ]
+        try:
+            from backend.plugins import collect as _collect_markers
+            failure_markers.extend(_collect_markers("broker_failure_markers"))
+        except Exception:
+            pass
+        if err_text or match_failure_marker(resp_text, failure_markers):
+            if r_id:
+                db_mark_log_undistillable(r_id, "failure_marker_in_response")
+            return None
+
+        r_sid_lower = r_session_id.lower()
+        r_msg_lower = r_user_msg.strip().lower()
+        if (
+            r_sid_lower.startswith("task_")
+            or "scheduled" in r_sid_lower
+            or r_msg_lower.startswith("execute scheduled task:")
+            or "scheduled task" in r_msg_lower
+            or "scheduled automation" in r_msg_lower
+            or "scheduled run" in r_msg_lower
+            or "autonomous ai hedge fund manager" in r_msg_lower
+        ):
+            if r_id:
+                db_mark_log_undistillable(r_id, "scheduled_automation_log")
+            return None
+
+        try:
+            traces = json.loads(raw_traces) if isinstance(raw_traces, str) else raw_traces
+        except Exception:
+            traces = []
+
+        if not isinstance(traces, list):
+            return None
+
+        # Reject logs with any error/failed status in traces or failure indicators
+        has_trace_failure = False
+        for t in traces:
+            if isinstance(t, dict):
+                if t.get("status") in ("error", "failed"):
+                    has_trace_failure = True
+                    break
+                t_msg = str(t.get("message") or "").lower()
+                if any(marker in t_msg for marker in (
+                    "tool seems to be unavailable", "tool unavailable", "trading paused",
+                    "ch_access_token_invalid", "trades blocked", "authentication required",
+                    "authentication failure", "re-authentication required", "trading execution blocked",
+                    "execution blocked", "trade execution: blocked", "not authorized",
+                    "cannot perform a comprehensive"
+                )):
+                    has_trace_failure = True
+                    break
+        if has_trace_failure:
+            if r_id:
+                db_mark_log_undistillable(r_id, "trace_failure")
+            return None
+
+        # Require at least min_steps actual worker/subagent/execution traces
+        worker_traces = [
+            t for t in traces
+            if isinstance(t, dict) and (
+                t.get("agent") not in ("Orchestrator", "Router") or
+                t.get("action") in ("Execute", "Tool", "Search", "Plot")
+            )
+        ]
+        if len(worker_traces) >= min_steps:
+            return {
+                "id": r_id,
+                "timestamp": r_ts,
+                "session_id": r_session_id,
+                "model": r_model,
+                "latency_ms": r_latency,
+                "success": r_success,
+                "error": r_error,
+                "prompt_tokens_estimate": r_prompt_tokens,
+                "user_message": r_user_msg,
+                "assistant_response": r_resp,
+                "traces": traces,
+                "agent_id": r_agent_id,
+                "completion_tokens_estimate": r_comp_tokens,
+                "cost_usd": r_cost
+            }
+        return None
+    except Exception as e:
+        logger.debug("Error parsing decision log candidate row: %s", e)
+        return None
+
 def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> List[Dict[str, Any]]:
     """Retrieves successful decision logs with at least min_steps execution traces that haven't been distilled yet."""
     try:
@@ -3082,144 +3445,34 @@ def db_get_undistilled_successful_logs(min_steps: int = 3, limit: int = 20) -> L
             WHERE success = 1
               AND (error IS NULL OR error = '')
               AND id NOT IN (SELECT decision_log_id FROM distilled_skills WHERE decision_log_id IS NOT NULL)
-              AND (session_id NOT LIKE ? AND session_id NOT LIKE ? OR session_id IS NULL)
-              AND (LOWER(user_message) NOT LIKE ? AND LOWER(user_message) NOT LIKE ? AND LOWER(user_message) NOT LIKE ? OR user_message IS NULL)
+              AND id NOT IN (SELECT decision_log_id FROM undistillable_logs)
+              AND (session_id IS NULL OR (session_id NOT LIKE ? AND session_id NOT LIKE ?))
+              AND (user_message IS NULL OR (
+                  LOWER(user_message) NOT LIKE ?
+                  AND LOWER(user_message) NOT LIKE ?
+                  AND LOWER(user_message) NOT LIKE ?
+                  AND LOWER(user_message) NOT LIKE ?
+                  AND LOWER(user_message) NOT LIKE ?
+              ))
             ORDER BY id DESC LIMIT ?
-        """, ("task_%", "%scheduled%", "%execute scheduled task:%", "%scheduled task%", "%scheduled automation%", limit * 3))
+        """, (
+            "task_%",
+            "%scheduled%",
+            "%execute scheduled task:%",
+            "%scheduled task%",
+            "%scheduled automation%",
+            "%scheduled run%",
+            "%autonomous ai hedge fund manager%",
+            limit * 3
+        ))
         
         candidates = []
         for r in rows:
             if not r:
                 continue
-
-            if isinstance(r, dict):
-                r_id = r.get("id")
-                r_ts = r.get("timestamp")
-                r_session_id = str(r.get("session_id") or "")
-                r_model = r.get("model")
-                r_latency = r.get("latency_ms")
-                r_success = bool(r.get("success"))
-                r_error = r.get("error")
-                r_prompt_tokens = r.get("prompt_tokens_estimate")
-                r_user_msg = str(r.get("user_message") or "")
-                r_resp = str(r.get("assistant_response") or "")
-                raw_traces = r.get("traces")
-                r_agent_id = r.get("agent_id") or "jarvis"
-                r_comp_tokens = r.get("completion_tokens_estimate") or 0
-                r_cost = r.get("cost_usd") or 0.0
-            elif isinstance(r, (list, tuple)):
-                if len(r) < 11:
-                    # Incomplete row — cannot distill reliably
-                    continue
-                r_id = r[0]
-                r_ts = r[1]
-                r_session_id = str(r[2] or "")
-                r_model = r[3]
-                r_latency = r[4]
-                r_success = bool(r[5])
-                r_error = r[6]
-                r_prompt_tokens = r[7]
-                r_user_msg = str(r[8] or "")
-                r_resp = str(r[9] or "")
-                raw_traces = r[10]
-                r_agent_id = r[11] if len(r) > 11 and r[11] is not None else "jarvis"
-                r_comp_tokens = r[12] if len(r) > 12 and r[12] is not None else 0
-                r_cost = r[13] if len(r) > 13 and r[13] is not None else 0.0
-            else:
-                continue
-
-            err_text = str(r_error or "").lower()
-            resp_text = r_resp.lower()
-            
-            # Check for error or failure markers in text
-            failure_markers = [
-                "ошибка исполнения", "170140", "order value exceeded",
-                "autonomous execution cycle: failed", "compliance verdict: failed",
-                "execution cycle: failed", "execution halted", "cycle failed",
-                "apologies, sir.", "rate limit exceeded", "too many requests",
-                "trading paused", "tool seems to be unavailable", "tool unavailable",
-                "blocked gate", "trades blocked", "compliance check: rejected",
-                "ch_access_token_invalid", "critical authentication failure",
-                "critical authentication", "authentication failure",
-                "authentication expired", "authentication required",
-                "re-authentication required", "trading execution blocked",
-                "execution blocked", "trade execution: blocked", "trade execution blocked",
-                "cannot perform a comprehensive", "api offline", "not authorized",
-                "invalid access token",
-            ]
-            try:
-                from backend.plugins import collect as _collect_markers
-                failure_markers.extend(_collect_markers("broker_failure_markers"))
-            except Exception:
-                pass
-            if err_text or match_failure_marker(resp_text, failure_markers):
-                continue
-
-            r_sid_lower = r_session_id.lower()
-            r_msg_lower = r_user_msg.strip().lower()
-            if (
-                r_sid_lower.startswith("task_")
-                or "scheduled" in r_sid_lower
-                or r_msg_lower.startswith("execute scheduled task:")
-                or "scheduled task" in r_msg_lower
-                or "scheduled automation" in r_msg_lower
-                or "scheduled run" in r_msg_lower
-            ):
-                continue
-
-            try:
-                traces = json.loads(raw_traces) if isinstance(raw_traces, str) else raw_traces
-            except Exception:
-                traces = []
-            
-            if not isinstance(traces, list):
-                continue
-
-            # Reject logs with any error/failed status in traces or failure indicators
-            has_trace_failure = False
-            for t in traces:
-                if isinstance(t, dict):
-                    if t.get("status") in ("error", "failed"):
-                        has_trace_failure = True
-                        break
-                    t_msg = str(t.get("message") or "").lower()
-                    if any(marker in t_msg for marker in (
-                        "tool seems to be unavailable", "tool unavailable", "trading paused",
-                        "ch_access_token_invalid", "trades blocked", "authentication required",
-                        "authentication failure", "re-authentication required", "trading execution blocked",
-                        "execution blocked", "trade execution: blocked", "not authorized",
-                        "cannot perform a comprehensive"
-                    )):
-                        has_trace_failure = True
-                        break
-            if has_trace_failure:
-                continue
-
-            # Require at least min_steps actual worker/subagent/execution traces
-            worker_traces = [
-                t for t in traces
-                if isinstance(t, dict) and (
-                    t.get("agent") not in ("Orchestrator", "Router") or
-                    t.get("action") in ("Execute", "Tool", "Search", "Plot")
-                )
-            ]
-            if len(worker_traces) >= min_steps:
-                candidates.append({
-                    "id": r_id,
-                    "timestamp": r_ts,
-                    "session_id": r_session_id,
-                    "model": r_model,
-                    "latency_ms": r_latency,
-                    "success": r_success,
-                    "error": r_error,
-                    "prompt_tokens_estimate": r_prompt_tokens,
-                    "user_message": r_user_msg,
-                    "assistant_response": r_resp,
-                    "traces": traces,
-                    "agent_id": r_agent_id,
-                    "completion_tokens_estimate": r_comp_tokens,
-                    "cost_usd": r_cost
-                })
+            cand = _parse_decision_log_candidate(r, min_steps)
+            if cand:
+                candidates.append(cand)
                 if len(candidates) >= limit:
                     break
         return candidates
@@ -3276,7 +3529,16 @@ def db_checkout_task(task_id: int, agent_id: str, lock_duration_seconds: int = 3
     if not rows:
         return {"status": "error", "message": f"Task #{task_id} not found."}
 
-    existing_lock, existing_agent = rows[0]
+    row = rows[0]
+    if isinstance(row, dict):
+        existing_lock = row.get("checkout_lock_until")
+        existing_agent = row.get("assigned_agent_id")
+    elif isinstance(row, (tuple, list)):
+        existing_lock = row[0] if len(row) > 0 else None
+        existing_agent = row[1] if len(row) > 1 else None
+    else:
+        existing_lock = getattr(row, "checkout_lock_until", None)
+        existing_agent = getattr(row, "assigned_agent_id", None)
     # Check if active lock by another agent exists
     if existing_lock and existing_lock > now_str and existing_agent and existing_agent != agent_id:
         return {
