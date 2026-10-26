@@ -90,7 +90,8 @@ graph TD
     * Decentralized inter-agent communication engine (`backend/mesh.py`, `AgentMeshRouter`) enabling P2P capability matching, peer discovery, and task delegation.
 16. **Stage 16: Paperclip Governance Control Plane & Resumable Task Engine**
     * `BudgetGuard` real-time token/dollar spend enforcement per session and globally across all sessions (`backend/governance.py`).
-    * Human-in-the-loop action approval queue for high-stakes tool executions (`frontend/src/components/ApprovalsModal.tsx`).
+    * Human-in-the-loop action approval queue for high-stakes tool executions with Claim/Source split modal & real-time badge (`frontend/src/components/ApprovalsModal.tsx`, `ApprovalsBadge.tsx`).
+    * **Phase 1 Context for Approvals & Immutable Audit Log** ([spec](docs/specs/roadmap/phase-1-approval-context.md)): RFC 8785 canonical JSON hashing (`backend/canonical.py`), PII redaction and Evidence Bundle capture (`backend/governance.py`), hash-chained append-only decision log (`backend/decision_log.py`, `backend/identity.py`), offline independent verifier (`scripts/verify_decision_log.py`), and in-flight plan context propagation (`backend/orchestrator.py`).
     * 1-Click company archetype presets (Engineering Shop, OSINT Bureau; plugins may add more) (`backend/presets.py`).
     * Org Chart hierarchy (CEO, Director, Worker) & automatic escalation routing (`escalate_task`).
     * Atomic task checkout locks & Kanban ticket board (`frontend/src/components/TaskBoardTab.tsx`).

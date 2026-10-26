@@ -569,8 +569,8 @@ def test_reason_is_pii_redacted():
 
 ## Phase 1 exit criteria
 
-- [ ] PR 1: `canonical.py` + item 1a (schema, stub capture, hash), with tests.
-- [ ] PR 2: `identity.py` + item 3, with tests.
-- [ ] PR 3: item 1b API + item 2 UI + WS events, with tests.
-- [ ] PR 4: item 1c in-flight context, with tests.
-- [ ] Demo script in `docs/guide/approvals.md`: trigger, review evidence, approve, run once, export, verify.
+- [x] PR 1: `canonical.py` + item 1a (schema, stub capture, hash), with tests (Completed in PR #11 / PR #12).
+- [x] PR 2: `identity.py` + item 3, with tests (Completed in PR #11 / PR #12).
+- [x] PR 3: item 1b API + item 2 UI + WS events, with tests (Completed in PR #12).
+- [x] PR 4: item 1c in-flight context, with tests (Completed in PR #12).
+- [x] Demo script in `docs/guide/approvals.md`: trigger, review evidence, approve, run once, export, verify (Completed in PR #12).

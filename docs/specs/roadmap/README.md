@@ -2,12 +2,12 @@
 
 Design spec for the 12 roadmap items. It sticks to the current code: every "current state" claim names a file and symbol. Each item spells out its tests first (TDD), then the minimal implementation that makes them pass.
 
-| Phase | File | Items |
-| --- | --- | --- |
-| 1. Context for approvals (2–4 weeks) | [phase-1-approval-context.md](./phase-1-approval-context.md) | 1 Evidence bundle · 2 ApprovalsModal · 3 Immutable decision log |
-| 2. Less approval fatigue (1–2 months) | [phase-2-approval-fatigue.md](./phase-2-approval-fatigue.md) | 4 Risk tiers · 5 Read-only connections · 6 Intent records |
-| 3. Team readiness (2–3 months) | [phase-3-team-readiness.md](./phase-3-team-readiness.md) | 7 RBAC · 8 Multi-tenant · 9 Mid-session revocation |
-| 4. Ecosystem | [phase-4-ecosystem.md](./phase-4-ecosystem.md) | 10 MCP gateway · 11 Partner integrations · 12 Agent Mesh |
+| Phase | File | Items | Status |
+| --- | --- | --- | --- |
+| 1. Context for approvals (2–4 weeks) | [phase-1-approval-context.md](./phase-1-approval-context.md) | 1 Evidence bundle · 2 ApprovalsModal · 3 Immutable decision log | ✅ **Completed** (PR #11, PR #12) |
+| 2. Less approval fatigue (1–2 months) | [phase-2-approval-fatigue.md](./phase-2-approval-fatigue.md) | 4 Risk tiers · 5 Read-only connections · 6 Intent records | 📋 Planned |
+| 3. Team readiness (2–3 months) | [phase-3-team-readiness.md](./phase-3-team-readiness.md) | 7 RBAC · 8 Multi-tenant · 9 Mid-session revocation | 📋 Planned |
+| 4. Ecosystem | [phase-4-ecosystem.md](./phase-4-ecosystem.md) | 10 MCP gateway · 11 Partner integrations · 12 Agent Mesh | 📋 Planned |
 
 The evidence bundle design is already written in `docs/specs/approval-evidence-bundle.md` on branch `origin/cursor/approval-evidence-bundle-84db` (commit `88ed008`). Phase 1 does not redo that design. It turns it into test-first work packages and adds the parts the branch leaves open.
 
