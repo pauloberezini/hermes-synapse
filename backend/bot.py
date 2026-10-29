@@ -1,5 +1,6 @@
 import os
 import asyncio
+import inspect
 import logging
 import io
 import re
@@ -446,8 +447,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 _polling_watchdog_task: Optional[asyncio.Task] = None
 _last_conflict_detected_at: float = 0.0
-_conflict_backoff: float = 35.0
-_min_conflict_backoff: float = 35.0
+_conflict_backoff: float = 15.0
+_min_conflict_backoff: float = 15.0
 _max_conflict_backoff: float = 300.0
 _updater_running_since: float = 0.0
 _last_network_error_at: float = 0.0
@@ -666,7 +667,7 @@ async def _telegram_polling_watchdog(
 
             now = time.time()
             effective_cooldown = conflict_cooldown if conflict_cooldown is not None else _conflict_backoff
-            effective_net_cooldown = network_cooldown if network_cooldown is not None else _network_error_cooldown
+            effective_net_cooldown = network_cooldown if network_cooldown is not None else (conflict_cooldown if conflict_cooldown is not None else _network_error_cooldown)
 
             # If conflict was recently detected, back off before recovery attempt
             if (now - _last_conflict_detected_at) < effective_cooldown:
@@ -677,19 +678,37 @@ async def _telegram_polling_watchdog(
                 continue
 
             # Ensure application is initialized and started before polling
-            if not getattr(telegram_app, "_initialized", False):
-                try:
-                    await telegram_app.initialize()
-                except Exception as init_err:
-                    logger.warning(f"Telegram polling watchdog initialization retry deferred: {init_err}")
-                    continue
+            if getattr(telegram_app, "_initialized", None) is False:
+                init_fn = getattr(telegram_app, "initialize", None)
+                if callable(init_fn):
+                    try:
+                        init_res = init_fn()
+                        if inspect.isawaitable(init_res):
+                            await init_res
+                    except Exception as init_err:
+                        err_str = str(init_err).lower()
+                        if "conflict" in err_str or "terminated by other getupdates" in err_str or type(init_err).__name__ == "Conflict":
+                            report_telegram_conflict()
+                        else:
+                            report_telegram_network_error()
+                        logger.warning(f"Telegram polling watchdog initialization retry deferred: {init_err}")
+                        continue
 
-            if not getattr(telegram_app, "running", False):
-                try:
-                    await telegram_app.start()
-                except Exception as start_err:
-                    logger.warning(f"Telegram polling watchdog start retry deferred: {start_err}")
-                    continue
+            if getattr(telegram_app, "running", None) is False:
+                start_fn = getattr(telegram_app, "start", None)
+                if callable(start_fn):
+                    try:
+                        start_res = start_fn()
+                        if inspect.isawaitable(start_res):
+                            await start_res
+                    except Exception as start_err:
+                        err_str = str(start_err).lower()
+                        if "conflict" in err_str or "terminated by other getupdates" in err_str or type(start_err).__name__ == "Conflict":
+                            report_telegram_conflict()
+                        else:
+                            report_telegram_network_error()
+                        logger.warning(f"Telegram polling watchdog start retry deferred: {start_err}")
+                        continue
 
             updater = getattr(telegram_app, "updater", None)
             if updater is not None:
@@ -716,19 +735,20 @@ async def _telegram_polling_watchdog(
 
                         # Check reachability and clear any hanging webhook with timeout
                         if getattr(telegram_app, "bot", None):
-                            try:
-                                await asyncio.wait_for(
-                                    telegram_app.bot.delete_webhook(drop_pending_updates=True),
-                                    timeout=10.0,
-                                )
-                            except Exception as del_err:
-                                e_str = str(del_err).lower()
-                                if "conflict" in e_str or "terminated by other getupdates" in e_str or type(del_err).__name__ == "Conflict":
-                                    report_telegram_conflict()
-                                else:
-                                    report_telegram_network_error()
-                                logger.warning(f"Telegram delete_webhook error during recovery: {del_err}. Deferring recovery.")
-                                continue
+                            del_webhook_fn = getattr(telegram_app.bot, "delete_webhook", None)
+                            if callable(del_webhook_fn):
+                                try:
+                                    del_res = del_webhook_fn(drop_pending_updates=True)
+                                    if inspect.isawaitable(del_res):
+                                        await asyncio.wait_for(del_res, timeout=10.0)
+                                except Exception as del_err:
+                                    e_str = str(del_err).lower()
+                                    if "conflict" in e_str or "terminated by other getupdates" in e_str or type(del_err).__name__ == "Conflict":
+                                        report_telegram_conflict()
+                                    else:
+                                        report_telegram_network_error()
+                                    logger.warning(f"Telegram delete_webhook error during recovery: {del_err}. Deferring recovery.")
+                                    continue
 
                         await updater.start_polling(drop_pending_updates=True)
                         logger.info("Telegram polling watchdog successfully recovered polling loop.")

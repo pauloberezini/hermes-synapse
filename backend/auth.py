@@ -31,6 +31,25 @@ def generate_otp() -> str:
     logger.info(f"Generated new OTP code. Expires in 5 minutes.")
     return code
 
+def write_emergency_otp_file(code: str) -> bool:
+    """
+    Writes the active OTP to backend/data/.current_otp with restricted permissions (0600).
+    Used as an emergency fallback during network/DNS isolation or Telegram API outages.
+    """
+    try:
+        data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        os.makedirs(data_dir, exist_ok=True)
+        otp_file = os.path.join(data_dir, ".current_otp")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        mode = 0o600
+        fd = os.open(otp_file, flags, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(code.strip())
+        return True
+    except Exception as e:
+        logger.debug(f"Failed to write emergency OTP file: {e}")
+        return False
+
 def verify_otp(code: str) -> bool:
     """Verifies if the code is correct and not expired."""
     global current_otp
@@ -46,6 +65,13 @@ def verify_otp(code: str) -> bool:
     if current_otp.get("code") == code.strip():
         # Clear code after successful verify to prevent reuse
         current_otp = {}
+        # Clean up emergency file if present
+        try:
+            otp_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".current_otp")
+            if os.path.exists(otp_file):
+                os.remove(otp_file)
+        except Exception:
+            pass
         logger.info("OTP verification successful.")
         return True
         

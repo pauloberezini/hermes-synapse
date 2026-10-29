@@ -270,14 +270,29 @@ async def auth_middleware(request: Request, call_next):
 
 @app.post("/api/auth/request-code")
 async def request_code():
-    from backend.auth import generate_otp
+    from backend.auth import generate_otp, write_emergency_otp_file
     import backend.bot
     import os
+    import asyncio
     
     code = generate_otp()
     logger.info(f"Generated OTP Code: {code}")
+
+    allow_fallback = (
+        os.getenv("ALLOW_LOCAL_AUTH_FALLBACK", "").lower() in ("1", "true", "yes")
+        or os.getenv("ENV", "").lower() in ("development", "dev", "test")
+    )
+    if allow_fallback:
+        write_emergency_otp_file(code)
+
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not chat_id:
+        if allow_fallback:
+            return {
+                "status": "success",
+                "message": "TELEGRAM_CHAT_ID is not configured; access code saved to local emergency fallback.",
+                "fallback": True
+            }
         return {"status": "error", "message": "TELEGRAM_CHAT_ID is not configured on backend."}
         
     msg = (
@@ -288,20 +303,48 @@ async def request_code():
         f"This code is valid for 5 minutes."
     )
     
-    try:
-        if backend.bot.telegram_app and backend.bot.telegram_app.bot:
-            await backend.bot.telegram_app.bot.send_message(
-                chat_id=int(chat_id),
-                text=msg,
-                parse_mode="Markdown"
-            )
-            return {"status": "success", "message": "Code sent to Telegram."}
-        else:
-            logger.error("Telegram bot is not initialized.")
-            return {"status": "error", "message": "Telegram bot is not initialized."}
-    except Exception as e:
-        logger.error(f"Failed to send auth code to Telegram: {e}")
-        return {"status": "error", "message": f"Failed to send code: {str(e)}"}
+    max_attempts = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if backend.bot.telegram_app and backend.bot.telegram_app.bot:
+                await backend.bot.telegram_app.bot.send_message(
+                    chat_id=int(chat_id),
+                    text=msg,
+                    parse_mode="Markdown"
+                )
+                return {"status": "success", "message": "Code sent to Telegram."}
+            else:
+                logger.warning("Telegram bot is not initialized.")
+                if allow_fallback:
+                    return {
+                        "status": "success",
+                        "message": "Telegram bot uninitialized; access code saved to local emergency fallback.",
+                        "fallback": True
+                    }
+                return {"status": "error", "message": "Telegram bot is not initialized."}
+        except Exception as e:
+            from backend.mcp_client import _is_transient_network_err
+            is_transient = _is_transient_network_err(e) or isinstance(e, (OSError, asyncio.TimeoutError))
+            if is_transient and attempt < max_attempts:
+                logger.info(f"Transient network issue sending auth code to Telegram (attempt {attempt}/{max_attempts}): {e}. Retrying...")
+                await asyncio.sleep(0.5)
+                continue
+
+            if is_transient:
+                logger.warning(f"Telegram network unavailable while sending auth code ({type(e).__name__}): {e}")
+                if allow_fallback:
+                    return {
+                        "status": "success",
+                        "message": "Telegram network unavailable; access code saved to local emergency fallback.",
+                        "fallback": True
+                    }
+                return {
+                    "status": "error",
+                    "message": "Telegram service temporarily unreachable due to network error. Please try again in a few moments."
+                }
+            else:
+                logger.error(f"Failed to send auth code to Telegram: {e}")
+                return {"status": "error", "message": f"Failed to send code: {str(e)}"}
 
 @app.post("/api/auth/verify-code")
 async def verify_code(req: AuthVerifyRequest):

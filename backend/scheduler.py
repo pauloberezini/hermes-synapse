@@ -57,7 +57,17 @@ if _DB_URL.startswith("postgres://"):
     _DB_URL = _DB_URL.replace("postgres://", "postgresql://", 1)
 
 if SQLAlchemyJobStore is not None and AsyncIOScheduler is not None:
-    _jobstore = SQLAlchemyJobStore(url=_DB_URL, tablename="apscheduler_jobs")
+    jobstore_kwargs = {"url": _DB_URL, "tablename": "apscheduler_jobs"}
+    if ":memory:" in _DB_URL:
+        try:
+            from sqlalchemy.pool import StaticPool
+            jobstore_kwargs["engine_options"] = {
+                "poolclass": StaticPool,
+                "connect_args": {"check_same_thread": False},
+            }
+        except Exception:
+            pass
+    _jobstore = SQLAlchemyJobStore(**jobstore_kwargs)
     scheduler = AsyncIOScheduler(
         jobstores={"default": _jobstore},
         job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 14400},
@@ -441,13 +451,15 @@ def _register_scheduled_session(
     }
     if extra:
         info_dict.update(extra)
+    sched_val = 0 if status in ("completed", "cancelled") else 1
     save_scheduled_session_metadata(
         session_id=session_id,
         title=title,
         agent_id=agent_id or "jarvis",
         job_id=job_id,
         schedule_type=task_type,
-        schedule_info=json.dumps(info_dict)
+        schedule_info=json.dumps(info_dict),
+        is_scheduled=sched_val,
     )
 
 
@@ -1393,6 +1405,9 @@ def shutdown_scheduler(wait: bool = False) -> None:
 
 def restore_state() -> None:
     """Populate _timer_meta and restore scheduled jobs from PostgreSQL session_metadata DB table."""
+    if scheduler is None:
+        logger.info("Scheduler instance is not available, skipping restore_state.")
+        return
     try:
         from backend.database import _execute
         rows = _execute("SELECT session_id, title, agent_id, job_id, schedule_type, schedule_info FROM session_metadata WHERE is_scheduled = 1")
@@ -1426,18 +1441,32 @@ def restore_state() -> None:
                 )
                 _drop_scheduled_job(job_id, session_id=session_id)
                 continue
+
+            from backend.plugins import hook
+            if hook("should_retire_restored_job", job_id, label=label, task_type=task_type, default=False):
+                logger.info(
+                    "Skipping restore and retiring past/one-shot event job '%s' (%s)",
+                    label, job_id,
+                )
+                _drop_scheduled_job(job_id, session_id=session_id)
+                continue
+
             status = info.get("status") or "running"
             chat_id = info.get("chat_id", "dashboard")
-            created_at = info.get("created_at") or datetime.now(scheduler.timezone).strftime("%Y-%m-%d %H:%M:%S")
+            sched_tz = getattr(scheduler, "timezone", timezone.utc) if scheduler is not None else timezone.utc
+            created_at = info.get("created_at") or datetime.now(sched_tz).strftime("%Y-%m-%d %H:%M:%S")
 
             cron_expr_raw = info.get("cron_expr")
             cron_healed = False
             if task_type == "cron":
                 if not cron_expr_raw or cron_expr_raw.strip() in ("* * * * *", "* * * * * *"):
-                    cron_healed = True
                     from backend.plugins import hook
                     healed = hook("heal_cron_expr", job_id)
-                    cron_expr_raw = healed or "0 * * * *"
+                    if healed:
+                        cron_healed = True
+                        cron_expr_raw = healed
+                    else:
+                        cron_expr_raw = "0 * * * *"
 
             _timer_meta[job_id] = {
                 "type": task_type,

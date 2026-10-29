@@ -32,9 +32,9 @@ class PriceMonitor:
 
     def save_alerts(self):
         try:
-            os.makedirs(os.path.dirname(ALERTS_PATH), exist_ok=True)
-            with open(ALERTS_PATH, "w") as f:
-                json.dump(self.alerts, f, indent=2)
+            from backend.file_utils import atomic_write_json
+            if not atomic_write_json(ALERTS_PATH, self.alerts, indent=2):
+                logger.error("Failed to save price alerts via atomic write.")
         except Exception as e:
             logger.error(f"Failed to save price alerts: {e}")
 
