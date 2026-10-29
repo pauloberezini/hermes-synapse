@@ -1,0 +1,70 @@
+digraph ApprovalsHardeningPhase2 {
+  graph [fontname="Helvetica" rankdir=LR splines=ortho]
+  node  [fontname="Helvetica" shape=box style=rounded]
+  edge  [fontname="Helvetica"]
+
+  subgraph cluster_frontend {
+    label="Frontend (React)" style=dashed color=gray
+    UI_app    [label="App.tsx\n(changed: onResolved fallback)"]
+    UI_badge  [label="ApprovalsBadge\n(changed: icon + count when collapsed)"]
+    UI_modal  [label="ApprovalsModal\n(changed: shows agent_name)"]
+  }
+
+  subgraph cluster_agents {
+    label="Agent runtime" style=dashed color=purple
+    AG_resp   [label="respond()\n(changed: sets context)" shape=component]
+    AG_sub    [label="_respond_as_subagent()\n(changed: sets context)" shape=component]
+    AG_ctx    [label="ContextVars\nagent name, evidence_ctx" shape=component]
+    AG_orch   [label="Orchestrator\nsets evidence_ctx (unchanged)" shape=component]
+    AG_thread [label="asyncio.to_thread" shape=component]
+  }
+
+  subgraph cluster_api {
+    label="FastAPI (/api/governance/*)" style=dashed color=steelblue
+    EP_list   [label="GET approvals\nGET approvals/{id}\n(changed: agent_name)" shape=component]
+    EP_res    [label="POST approvals/{id}/resolve\n(changed: no own broadcast)" shape=component]
+    EP_exp    [label="GET decisions/export\n(+ alias export.zip)" shape=component]
+    EP_ver    [label="GET decisions/verify\n(changed: checks evidence)" shape=component]
+  }
+
+  subgraph cluster_gov {
+    label="Governance core" style=dashed color=darkgreen
+    GV_gate   [label="gate_tool\n(unchanged signature)" shape=component]
+    GV_queue  [label="ApprovalQueue\nsole broadcaster" shape=component]
+    GV_log    [label="decision_log\nverify + export_zip" shape=component]
+  }
+
+  subgraph cluster_db {
+    label="SQLite / Postgres" style=dashed color="#336699"
+    T_req [shape=record, label="{ approval_requests | agent_id (session key) | payload (raw) }"]
+    T_ev  [shape=record, label="{ approval_evidence | bundle_json | (new: UPDATE trigger) }"]
+    T_dec [shape=record, label="{ approval_decisions | entry_hash | prev_hash }"]
+  }
+
+  subgraph cluster_tools {
+    label="Offline + docs" style=dashed color=darkorange
+    SC_ver  [label="scripts/verify_decision_log.py\n(changed: --pin)"]
+    DOC     [label="docs/guide/approvals.md\n(changed)"]
+  }
+
+  AG_resp -> AG_ctx
+  AG_sub -> AG_ctx
+  AG_orch -> AG_sub
+  AG_ctx -> AG_thread -> GV_gate
+  GV_gate -> GV_queue
+  GV_queue -> T_req
+  GV_queue -> T_ev
+  GV_queue -> T_dec
+  GV_queue -> UI_app [label="approval_update (once)"]
+  UI_app -> UI_badge
+  UI_modal -> EP_res -> GV_queue
+  UI_modal -> EP_list -> T_req
+  EP_list -> T_ev [label="links.agent"]
+  EP_ver -> GV_log
+  GV_log -> T_dec
+  GV_log -> T_ev [label="recompute bundle hash"]
+  EP_exp -> GV_log
+  SC_ver -> EP_exp [style=dotted label="export zip"]
+  DOC -> EP_exp [style=dotted]
+  DOC -> SC_ver [style=dotted]
+}

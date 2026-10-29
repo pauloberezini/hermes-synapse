@@ -312,6 +312,37 @@ def install_approval_decisions(cursor) -> None:
     """)
 
 
+def install_approval_evidence(cursor) -> None:
+    """Reject UPDATE on approval_evidence. DELETE stays so request cleanup can cascade."""
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS approval_evidence_no_update
+        BEFORE UPDATE ON approval_evidence
+        BEGIN
+            SELECT RAISE(ABORT, 'approval_evidence is append-only');
+        END
+    """)
+
+
+def install_approval_evidence_postgres(cursor) -> None:
+    """Postgres twin of install_approval_evidence. UPDATE raises. DELETE does not."""
+    cursor.execute("""
+        CREATE OR REPLACE FUNCTION approval_evidence_append_only()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'approval_evidence is append-only';
+        END;
+        $$
+    """)
+    cursor.execute("DROP TRIGGER IF EXISTS approval_evidence_no_update ON approval_evidence")
+    cursor.execute("""
+        CREATE TRIGGER approval_evidence_no_update
+        BEFORE UPDATE ON approval_evidence
+        FOR EACH ROW EXECUTE PROCEDURE approval_evidence_append_only()
+    """)
+
+
 def install_approval_decisions_postgres(cursor) -> None:
     """Postgres twin of install_approval_decisions. UPDATE and DELETE raise."""
     cursor.execute("""
@@ -756,6 +787,7 @@ def _do_init_sqlite_schema(conn):
         )
     """)
 
+    install_approval_evidence(cursor)
     install_approval_decisions(cursor)
 
     # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
@@ -1280,6 +1312,7 @@ def _init_postgres_schema():
                 )
             """)
 
+            install_approval_evidence_postgres(cursor)
             install_approval_decisions_postgres(cursor)
 
             # Create tasks table (Paperclip Atomic Task Engine / Kanban Board)
@@ -2773,7 +2806,7 @@ def save_session_metadata(
     session_id: str,
     title: Any,
     agent_id: Optional[str] = None,
-    is_scheduled: int = 0,
+    is_scheduled: Optional[int] = None,
     job_id: Optional[str] = None,
     schedule_type: Optional[str] = None,
     schedule_info: Optional[Any] = None,
@@ -2795,7 +2828,7 @@ def save_session_metadata(
             dict_title = title.get("title") or title.get("label")
             if not final_agent_id and title.get("agent_id"):
                 final_agent_id = title.get("agent_id")
-            if final_is_scheduled == 0 and title.get("scheduled"):
+            if final_is_scheduled is None and "scheduled" in title:
                 final_is_scheduled = int(title.get("scheduled"))
             if not final_job_id and title.get("job_id"):
                 final_job_id = title.get("job_id")
@@ -2811,7 +2844,7 @@ def save_session_metadata(
         if rows:
             if final_agent_id is None:
                 final_agent_id = rows[0][0]
-            if final_is_scheduled == 0 and rows[0][1]:
+            if final_is_scheduled is None:
                 final_is_scheduled = rows[0][1]
             if final_job_id is None:
                 final_job_id = rows[0][2]
@@ -2819,6 +2852,9 @@ def save_session_metadata(
                 final_schedule_type = rows[0][3]
             if final_schedule_info is None:
                 final_schedule_info = rows[0][4]
+
+        if final_is_scheduled is None:
+            final_is_scheduled = 0
 
         _execute("""
             INSERT INTO session_metadata (session_id, title, agent_id, is_scheduled, job_id, schedule_type, schedule_info, updated_at)
@@ -2842,14 +2878,15 @@ def save_scheduled_session_metadata(
     agent_id: Optional[str],
     job_id: str,
     schedule_type: str,
-    schedule_info: Optional[str] = None
+    schedule_info: Optional[str] = None,
+    is_scheduled: int = 1,
 ):
     """Convenience helper to register or update a scheduled task session."""
     save_session_metadata(
         session_id=session_id,
         title=title,
         agent_id=agent_id,
-        is_scheduled=1,
+        is_scheduled=is_scheduled,
         job_id=job_id,
         schedule_type=schedule_type,
         schedule_info=schedule_info

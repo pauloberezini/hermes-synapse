@@ -784,6 +784,8 @@ export default function App() {
                 .then(msgs => { if (Array.isArray(msgs)) setMessages(msgs); })
                 .catch(err => console.error('Error refreshing session history on reminder fired:', err));
             }
+          } else if (data.type === 'approval_update') {
+            window.dispatchEvent(new CustomEvent('approval_update', { detail: data }));
           } else if (data.type === 'trace_update') {
             const traceSessionId = data.session_id || data.chat_id;
             if (data.trace.agent !== 'Router') {
@@ -1756,7 +1758,7 @@ export default function App() {
         {/* Status Box — minimalist */}
         <div className="sidebar-status-box sidebar-status">
           <div style={{ marginBottom: '8px', display: 'flex', width: '100%', justifyContent: 'center' }}>
-            <ApprovalsBadge onOpen={() => setIsApprovalsOpen(true)} wsRef={wsRef} />
+            <ApprovalsBadge onOpen={() => setIsApprovalsOpen(true)} />
           </div>
 
           {/* Connection */}
@@ -2129,6 +2131,9 @@ export default function App() {
       <ApprovalsModal
         isOpen={isApprovalsOpen}
         onClose={() => setIsApprovalsOpen(false)}
+        onResolved={() => {
+          window.dispatchEvent(new CustomEvent('approval_update'));
+        }}
       />
     </div>
   );

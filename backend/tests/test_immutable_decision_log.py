@@ -13,7 +13,7 @@ def _append(i: int) -> str:
         actor="agent:a",
         action_name="execute_command",
         payload={"command": f"echo {i}"},
-        bundle_hash="b" * 64,
+        bundle_hash=None,
     )
 
 

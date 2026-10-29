@@ -188,4 +188,70 @@ describe('App Component', () => {
 
     expect(screen.getByText(/Plan of 3 steps generated/)).toBeInTheDocument();
   });
+
+  it('re-emits approval_update as a window event', async () => {
+    localStorage.setItem('jarvis_auth_token', 'mock_token');
+    stubAuthenticatedFetch();
+    const seen: Event[] = [];
+    const onUpdate = (event: Event) => {
+      seen.push(event);
+    };
+    window.addEventListener('approval_update', onUpdate);
+
+    render(<App />);
+    await waitFor(() => {
+      expect(typeof lastWs?.onmessage).toBe('function');
+    });
+
+    act(() => {
+      fireWs({ type: 'approval_update', id: 3, status: 'PENDING' });
+    });
+
+    expect(seen).toHaveLength(1);
+    window.removeEventListener('approval_update', onUpdate);
+  });
+
+  it('refetches the approvals badge after Approve when the socket is down', async () => {
+    localStorage.setItem('jarvis_auth_token', 'mock_token');
+    let count = 1;
+    const pending = [{
+      id: 7,
+      agent_id: 'chat42_sysops',
+      agent_name: 'Sys Ops',
+      action_name: 'execute_command',
+      payload: '{}',
+      description: 'run it',
+      status: 'PENDING',
+      created_at: '2026-10-29T00:00:00Z',
+    }];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/approvals/count')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ count }) });
+      }
+      if (path.includes('/approvals/7/resolve')) {
+        count = 0;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ status: 'success', id: 7, decision: 'APPROVED' }),
+        });
+      }
+      if (path.endsWith('/approvals/7')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(pending[0]) });
+      }
+      if (path.includes('/approvals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(pending) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }));
+
+    render(<App />);
+    expect(await screen.findByTestId('approvals-count')).toHaveTextContent('1');
+    fireEvent.click(screen.getByRole('button', { name: /approvals/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /show evidence #7/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^approve$/i }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('approvals-count')).not.toBeInTheDocument();
+    });
+  });
 });

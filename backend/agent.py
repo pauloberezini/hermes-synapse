@@ -5,6 +5,9 @@ import re
 import json
 import time
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -14,6 +17,46 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger("hermes.agent")
 from backend.tools import execute_tool, is_invalid_tool_name
+
+# Display name only. The approval match key stays the session id passed to gate_tool.
+agent_name_ctx: ContextVar[str] = ContextVar("agent_name", default="")
+
+
+@contextmanager
+def approval_context(display_name: str, user_message: str, plan_agent: str) -> Iterator[None]:
+    """Bind the agent name shown on an approval.
+
+    When no planner context is set, also bind a one-step plan from the user
+    message and the ``direct_route`` flag. An existing planner context is left
+    in place. Reset happens on the way out, including on error.
+
+    Args:
+        display_name: Name written to ``bundle.links.agent``.
+        user_message: Instructions for the direct-route plan.
+        plan_agent: ``PlanRef.agent`` for that one-step plan.
+    """
+    from backend.evidence import EvidenceContext, PlanRef, evidence_ctx
+
+    name_token = agent_name_ctx.set(display_name)
+    evidence_token = None
+    if evidence_ctx.get() is None:
+        evidence_token = evidence_ctx.set(
+            EvidenceContext(
+                plan=PlanRef(
+                    agent=plan_agent,
+                    instructions=user_message or "",
+                    step_index=0,
+                    step_count=1,
+                ),
+                flags={"direct_route"},
+            )
+        )
+    try:
+        yield
+    finally:
+        if evidence_token is not None:
+            evidence_ctx.reset(evidence_token)
+        agent_name_ctx.reset(name_token)
 
 
 def _dispatch_execute_tool(tool_name: str, tool_args: dict, chat_id: Optional[str] = None):
@@ -1259,7 +1302,8 @@ class JarvisAgent:
                             source="Agent",
                             message=f"🛠️ Execution: \'{tool_name}\' with arguments {tool_args_str}"
                         )
-                        result_str = await _dispatch_execute_tool_async(tool_name, tool_args, chat_id=session_id)
+                        with approval_context("Jarvis", user_message, "jarvis"):
+                            result_str = await _dispatch_execute_tool_async(tool_name, tool_args, chat_id=session_id)
                         
                         single_tool_calls_log.append({
                             "name": tool_name,
@@ -2431,7 +2475,9 @@ class JarvisAgent:
                             source=subagent_name,
                             message=f"🛠️ Execution (subagent): '{tool_name}' with arguments {tool_args_str}"
                         )
-                        result_str = await _dispatch_execute_tool_async(tool_name, tool_args, chat_id=session_id)
+                        plan_agent = str(subagent.get("id") or subagent_name)
+                        with approval_context(str(subagent_name), user_message, plan_agent):
+                            result_str = await _dispatch_execute_tool_async(tool_name, tool_args, chat_id=session_id)
                         if not isinstance(result_str, str):
                             import json
                             try:

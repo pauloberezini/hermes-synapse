@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import pytest
 
@@ -18,7 +19,7 @@ def _append(i: int, event: str = "REQUESTED") -> str:
         actor="agent:a",
         action_name="execute_command",
         payload={"command": f"echo {i}"},
-        bundle_hash="b" * 64,
+        bundle_hash=None,
     )
 
 
@@ -72,6 +73,57 @@ def test_concurrent_appends_keep_linear_chain() -> None:
     for t in ts:
         t.join()
     assert dl.verify().ok
+
+
+def test_evidence_update_is_rejected_and_delete_is_allowed() -> None:
+    from backend.evidence import build_bundle
+    from backend.governance import ApprovalQueue
+
+    bundle = build_bundle("agent", "execute_command", {"command": "echo hi"}, None)
+    request_id = ApprovalQueue.request_approval(
+        "agent",
+        "execute_command",
+        {"command": "echo hi"},
+        bundle=bundle,
+    )
+    with pytest.raises(Exception, match="append-only"):
+        from backend.database import _execute
+
+        _execute(
+            "UPDATE approval_evidence SET bundle_hash = ? WHERE request_id = ?",
+            ("x", request_id),
+        )
+    from backend.database import _execute
+
+    _execute("DELETE FROM approval_evidence WHERE request_id = ?", (request_id,))
+    left = _execute("SELECT request_id FROM approval_evidence WHERE request_id = ?", (request_id,))
+    assert left == []
+
+
+def test_verify_detects_edited_evidence() -> None:
+    from backend.database import _execute
+    from backend.evidence import build_bundle
+    from backend.governance import ApprovalQueue
+
+    bundle = build_bundle("agent", "execute_command", {"command": "echo hi"}, None)
+    request_id = ApprovalQueue.request_approval(
+        "agent",
+        "execute_command",
+        {"command": "echo hi"},
+        bundle=bundle,
+    )
+    assert dl.verify().ok
+    stored = _execute("SELECT bundle_json FROM approval_evidence WHERE request_id = ?", (request_id,))
+    edited = json.loads(stored[0][0])
+    edited["inputs"] = {"command": "tampered"}
+    _execute("DROP TRIGGER IF EXISTS approval_evidence_no_update")
+    _execute(
+        "UPDATE approval_evidence SET bundle_json = ? WHERE request_id = ?",
+        (json.dumps(edited), request_id),
+    )
+    result = dl.verify()
+    assert result.ok is False
+    assert result.error == "bundle_hash mismatch"
 
 
 def test_reason_is_pii_redacted() -> None:

@@ -3,6 +3,34 @@ import { ShieldAlert, CheckCircle, XCircle, RefreshCw, X, ChevronDown, ChevronRi
 import type { ApprovalDetail, ApprovalSummary } from '../types';
 import { getApproval, listApprovals, resolveApproval } from '../api/governance';
 
+const STATUS_CHIP: Record<string, { backgroundColor: string; color: string; border: string }> = {
+  PENDING: {
+    backgroundColor: 'rgba(245,158,11,0.15)',
+    color: '#f59e0b',
+    border: 'rgba(245,158,11,0.3)',
+  },
+  APPROVED: {
+    backgroundColor: 'rgba(16,185,129,0.15)',
+    color: '#10b981',
+    border: 'rgba(16,185,129,0.3)',
+  },
+  REJECTED: {
+    backgroundColor: 'rgba(239,68,68,0.15)',
+    color: '#ef4444',
+    border: 'rgba(239,68,68,0.3)',
+  },
+};
+
+const SLATE_CHIP = {
+  backgroundColor: 'rgba(148,163,184,0.15)',
+  color: '#94a3b8',
+  border: 'rgba(148,163,184,0.3)',
+};
+
+function statusChip(status: string) {
+  return STATUS_CHIP[status] ?? SLATE_CHIP;
+}
+
 export interface ApprovalsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -47,6 +75,15 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
         dialogRef.current.close?.();
       }
     }
+  }, [isOpen, fetchRequests]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onUpdate = () => {
+      void fetchRequests();
+    };
+    window.addEventListener('approval_update', onUpdate);
+    return () => window.removeEventListener('approval_update', onUpdate);
   }, [isOpen, fetchRequests]);
 
   const toggleExpand = async (id: number) => {
@@ -237,6 +274,7 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
           ) : (
             requests.map((req) => {
               const isPending = req.status === 'PENDING';
+              const tone = statusChip(req.status);
               const isExpanded = expandedId === req.id;
               const detail = details[req.id];
 
@@ -291,7 +329,11 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>
-                            #{req.id} · <span style={{ color: '#00f0ff' }}>{req.agent_id}</span> → {req.action_name}
+                            #{req.id} · <span style={{ color: '#00f0ff' }}>{req.agent_name || req.agent_id}</span>
+                            {req.agent_name ? (
+                              <span style={{ color: '#64748b', fontWeight: 500 }}> {req.agent_id}</span>
+                            ) : null}{' '}
+                            → {req.action_name}
                           </span>
                           {/* Truncation chips / Flags */}
                           {req.flags?.map((flag) => (
@@ -323,25 +365,9 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
                           fontWeight: 700,
                           padding: '3px 10px',
                           borderRadius: '12px',
-                          backgroundColor:
-                            req.status === 'PENDING'
-                              ? 'rgba(245,158,11,0.15)'
-                              : req.status === 'APPROVED'
-                              ? 'rgba(16,185,129,0.15)'
-                              : 'rgba(239,68,68,0.15)',
-                          color:
-                            req.status === 'PENDING'
-                              ? '#f59e0b'
-                              : req.status === 'APPROVED'
-                              ? '#10b981'
-                              : '#ef4444',
-                          border: `1px solid ${
-                            req.status === 'PENDING'
-                              ? 'rgba(245,158,11,0.3)'
-                              : req.status === 'APPROVED'
-                              ? 'rgba(16,185,129,0.3)'
-                              : 'rgba(239,68,68,0.3)'
-                          }`,
+                          backgroundColor: tone.backgroundColor,
+                          color: tone.color,
+                          border: `1px solid ${tone.border}`,
                         }}
                       >
                         {req.status}
@@ -367,8 +393,11 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
                           CLAIM
                         </div>
                         <div style={{ fontSize: '0.78rem', color: '#f8fafc' }}>
-                          #{req.id} {req.agent_id} → {req.action_name}
+                          #{req.id} {req.agent_name || req.agent_id} → {req.action_name}
                         </div>
+                        {req.agent_name ? (
+                          <div style={{ fontSize: '0.7rem', color: '#64748b' }}>session {req.agent_id}</div>
+                        ) : null}
                         <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
                           "{req.description}"
                         </div>
@@ -517,6 +546,11 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
                           ) : (
                             <div style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
                               No planner step attached
+                            </div>
+                          )}
+                          {detail?.bundle?.flags?.includes('direct_route') && (
+                            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '6px' }}>
+                              No planner chose this step.
                             </div>
                           )}
                         </div>

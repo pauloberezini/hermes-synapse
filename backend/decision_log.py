@@ -6,6 +6,7 @@ One chain per tenant. ``verify`` recomputes every link from the stored columns.
 from __future__ import annotations
 
 import io
+import json
 import threading
 import zipfile
 from contextvars import ContextVar
@@ -146,7 +147,20 @@ def export_jsonl(
 
 
 def verify(tenant_id: str = "default") -> VerifyResult:
-    """Recompute the chain. The first broken seq fails the walk."""
+    """Recompute the chain, then each stored evidence bundle hash.
+
+    A decision row with a ``bundle_hash`` and no evidence row fails the walk
+    (``evidence missing``). A row with no ``bundle_hash`` is not an evidence
+    claim and stays valid. When the evidence row is present, its hash must
+    match. The first broken seq fails the walk.
+
+    Args:
+        tenant_id: Chain to walk.
+
+    Returns:
+        The walk outcome. ``error`` is ``evidence missing`` when the row was
+        deleted, or ``bundle_hash mismatch`` when evidence was edited.
+    """
     from backend.database import _execute
 
     placeholders = ", ".join(_COLUMNS)
@@ -154,6 +168,7 @@ def verify(tenant_id: str = "default") -> VerifyResult:
         f"SELECT {placeholders} FROM approval_decisions WHERE tenant_id = ? ORDER BY seq",
         (tenant_id,),
     )
+    parsed: list[dict[str, Any]] = []
     prev = GENESIS
     for raw in rows:
         row = dict(zip(_COLUMNS, raw))
@@ -163,18 +178,63 @@ def verify(tenant_id: str = "default") -> VerifyResult:
         digest = entry_hash(row)
         if row["entry_hash"] != digest:
             return VerifyResult(False, 0, seq, "entry_hash mismatch", "")
+        parsed.append(row)
         prev = digest
-    return VerifyResult(True, len(rows), None, "", prev if rows else "")
+    evidence_bad = _evidence_mismatch(parsed)
+    if evidence_bad is not None:
+        return evidence_bad
+    return VerifyResult(True, len(parsed), None, "", prev if parsed else "")
+
+
+def _evidence_mismatch(rows: list[dict[str, Any]]) -> VerifyResult | None:
+    """Return a failure when a claimed bundle is missing or no longer matches.
+
+    Only rows that store a ``bundle_hash`` are claims. A missing evidence row
+    for that claim is ``evidence missing``. An edited bundle is
+    ``bundle_hash mismatch``.
+    """
+    from backend.evidence import EvidenceBundle, bundle_hash
+
+    wanted = [int(row["request_id"]) for row in rows if row.get("bundle_hash")]
+    stored = _load_evidence(wanted)
+    seen: set[int] = set()
+    for row in rows:
+        digest = row.get("bundle_hash")
+        if not digest:
+            continue
+        request_id = int(row["request_id"])
+        if request_id in seen:
+            continue
+        seen.add(request_id)
+        blob = stored.get(request_id)
+        seq = int(row["seq"])
+        if blob is None:
+            return VerifyResult(False, 0, seq, "evidence missing", "")
+        try:
+            bundle = EvidenceBundle.model_validate(json.loads(blob))
+        except (TypeError, ValueError):
+            return VerifyResult(False, 0, seq, "bundle_hash mismatch", "")
+        if bundle_hash(bundle) != digest:
+            return VerifyResult(False, 0, seq, "bundle_hash mismatch", "")
+    return None
 
 
 _VERIFY_MD = """# Verify this archive
 
 Python 3.11+ standard library only. No Hermes install and no network.
 
-    python3 verify_decision_log.py hermes-decisions-<tenant>-<from>-<to>.zip
+The checker is not in this zip. It lives in the repository at
+`scripts/verify_decision_log.py`.
 
-Exit 0 means every entry_hash, prev_hash link, and evidence bundle_hash matches.
-Exit 1 prints the first broken seq.
+    python3 scripts/verify_decision_log.py hermes-decisions-<tenant>-<from>-<to>.zip
+    python3 scripts/verify_decision_log.py hermes-decisions-<tenant>-<from>-<to>.zip --pin <entry_hash>
+
+`--pin` requires that entry_hash to appear in the chain. Record the head hash
+when you export. A later check with that pin fails if the tail was dropped,
+even when manifest.json was rewritten to match the shorter file.
+
+Exit 0 prints `ok checked=N head=H`.
+Exit 1 prints `FAIL seq=N <reason>` to stderr. A missing pin prints `pinned entry missing`.
 """
 
 

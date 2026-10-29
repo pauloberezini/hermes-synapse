@@ -82,3 +82,11 @@ def test_standalone_verification_on_synthetic_zip(tmp_path: Path) -> None:
     )
     assert res.returncode == 0, res.stderr
     assert "ok checked=1" in res.stdout
+
+
+def test_approvals_guide_drops_false_security_claims() -> None:
+    """The demo guide must not describe a route or guarantees the code does not have."""
+    guide = (_ROOT / "docs" / "guide" / "approvals.md").read_text(encoding="utf-8")
+    assert "export.zip" in guide
+    for banned in ("chain intact", "encrypted", "signed manifest"):
+        assert banned not in guide, banned

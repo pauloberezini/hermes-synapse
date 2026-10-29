@@ -1,16 +1,12 @@
-import type { RefObject } from 'react';
 import { useEffect, useState, useCallback } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { pendingCount } from '../api/governance';
 
 export interface ApprovalsBadgeProps {
   onOpen: () => void;
-  ws?: WebSocket | null;
-  wsRef?: RefObject<WebSocket | null>;
-  getWs?: () => WebSocket | null;
 }
 
-export function ApprovalsBadge({ onOpen, ws, wsRef, getWs }: ApprovalsBadgeProps) {
+export function ApprovalsBadge({ onOpen }: ApprovalsBadgeProps) {
   const [count, setCount] = useState<number>(0);
 
   const refreshCount = useCallback(async () => {
@@ -29,25 +25,12 @@ export function ApprovalsBadge({ onOpen, ws, wsRef, getWs }: ApprovalsBadgeProps
   }, [refreshCount]);
 
   useEffect(() => {
-    const activeWs = ws ?? (wsRef ? wsRef.current : (getWs ? getWs() : null));
-    if (!activeWs || typeof activeWs.addEventListener !== 'function') return;
-
-    const handleMessage = (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'approval_update') {
-          refreshCount();
-        }
-      } catch {
-        // ignore non-json
-      }
+    const onUpdate = () => {
+      void refreshCount();
     };
-
-    activeWs.addEventListener('message', handleMessage);
-    return () => {
-      activeWs.removeEventListener('message', handleMessage);
-    };
-  }, [ws, wsRef, getWs, refreshCount]);
+    window.addEventListener('approval_update', onUpdate);
+    return () => window.removeEventListener('approval_update', onUpdate);
+  }, [refreshCount]);
 
   return (
     <button
@@ -72,7 +55,7 @@ export function ApprovalsBadge({ onOpen, ws, wsRef, getWs }: ApprovalsBadgeProps
       }}
     >
       <ShieldAlert size={16} />
-      <span>Approvals</span>
+      <span className="sidebar-label">Approvals</span>
       {count > 0 && (
         <span
           data-testid="approvals-count"

@@ -920,6 +920,7 @@ async def verify_decisions_api(tenant: str = "default"):
     }
 
 @app.get("/api/governance/decisions/export")
+@app.get("/api/governance/decisions/export.zip")
 async def export_decisions_api(
     since: Optional[str] = Query(default=None, alias="from"),
     until: Optional[str] = Query(default=None, alias="to"),
@@ -952,15 +953,6 @@ async def resolve_approval_api(
     ok = ApprovalQueue.resolve(request_id, payload.decision, payload.resolver_note, principal=principal)
     if not ok:
         raise HTTPException(status_code=409, detail=f"Request #{request_id} could not be resolved")
-    try:
-        from backend.websocket_manager import manager
-        await manager.broadcast({
-            "type": "approval_update",
-            "id": request_id,
-            "status": payload.decision,
-        })
-    except Exception as e:
-        logger.debug(f"Approval broadcast error: {e}")
     return {"status": "success", "id": request_id, "decision": payload.decision}
 
 @app.get("/api/governance/budget/{session_id}")

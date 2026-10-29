@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { ApprovalsModal } from './ApprovalsModal';
 
 const summary = [{
@@ -94,6 +94,56 @@ describe('ApprovalsModal', () => {
     await waitFor(() => expect(onResolved).toHaveBeenCalled());
     const call = (fetch as any).mock.calls.find((c: any[]) => c[0].endsWith('/resolve'));
     expect(JSON.parse(call[1].body)).toEqual({ decision: 'APPROVED', resolver_note: 'ok' });
+  });
+
+  it('paints CONSUMED in slate, not the error red', async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes('/approvals')) {
+        return new Response(JSON.stringify([{ ...summary[0], status: 'CONSUMED' }]), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    }) as any;
+
+    render(<ApprovalsModal isOpen onClose={() => {}} />);
+    const chip = await screen.findByText('CONSUMED');
+    const color = chip.style.color.replace(/\s/g, '').toLowerCase();
+    expect(color).not.toMatch(/239,68,68|#ef4444/);
+    expect(color).toMatch(/148,163,184|#94a3b8/);
+  });
+
+  it('refetches the open list when approval_update fires', async () => {
+    render(<ApprovalsModal isOpen onClose={() => {}} />);
+    await screen.findByText(/wants to run execute_command/);
+    const before = (fetch as any).mock.calls.length;
+    act(() => {
+      window.dispatchEvent(new CustomEvent('approval_update'));
+    });
+    await waitFor(() => expect((fetch as any).mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('shows the agent name and the session id on the claim', async () => {
+    const named = [{ ...summary[0], agent_id: 'chat42_sysops', agent_name: 'Sys Ops' }];
+    const namedDetail = {
+      ...detail,
+      agent_id: 'chat42_sysops',
+      agent_name: 'Sys Ops',
+      bundle: { ...detail.bundle, flags: ['direct_route'] },
+    };
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.endsWith('/approvals/7')) {
+        return new Response(JSON.stringify(namedDetail), { status: 200 });
+      }
+      if (url.includes('/approvals')) {
+        return new Response(JSON.stringify(named), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    }) as any;
+
+    render(<ApprovalsModal isOpen onClose={() => {}} />);
+    expect(await screen.findByText(/Sys Ops/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /show evidence #7/i }));
+    expect(await screen.findByText(/session chat42_sysops/)).toBeInTheDocument();
+    expect(await screen.findByText(/No planner chose this step/)).toBeInTheDocument();
   });
 
   it('never sends bundle_hash from the client', async () => {

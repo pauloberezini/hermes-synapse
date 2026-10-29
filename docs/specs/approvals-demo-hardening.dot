@@ -1,0 +1,72 @@
+digraph ApprovalsDemoHardening {
+  graph [fontname="Helvetica" rankdir=LR splines=ortho]
+  node  [fontname="Helvetica" shape=box style=rounded]
+  edge  [fontname="Helvetica"]
+
+  subgraph cluster_frontend {
+    label="Frontend (React)" style=dashed color=gray
+    UI_badge  [label="ApprovalsBadge\n(changed: window event + 10s poll)"]
+    UI_modal  [label="ApprovalsModal\n(changed: status colour map)"]
+    UI_app    [label="App.tsx ws.onmessage\n(changed: re-emit approval_update)"]
+  }
+
+  subgraph cluster_agents {
+    label="Agent runtime" style=dashed color=purple
+    AG_orch   [label="Orchestrator\nsets evidence_ctx" shape=component]
+    AG_sys    [label="Sys Ops sub-agent\nexecute_command" shape=component]
+    AG_code   [label="CodeAgent\nsandbox, never gated\n(unchanged)" shape=component]
+    AG_thread [label="asyncio.to_thread\n(worker thread)" shape=component]
+  }
+
+  subgraph cluster_api {
+    label="FastAPI (/api/governance/*)" style=dashed color=steelblue
+    EP_list   [label="GET approvals\nGET approvals/{id}\n(changed: masked payload)" shape=component]
+    EP_res    [label="POST approvals/{id}/resolve" shape=component]
+    EP_exp    [label="GET decisions/export\n(docs fix only)" shape=component]
+    WS_mgr    [label="ConnectionManager\n(changed: remembers loop)" shape=component]
+  }
+
+  subgraph cluster_gov {
+    label="Governance core" style=dashed color=darkgreen
+    GV_gate   [label="gate_tool\n(changed: retry hint in reply)" shape=component]
+    GV_queue  [label="ApprovalQueue\nrequest / resolve / consume" shape=component]
+    GV_mask   [label="PIIGuard + _mask_tree\n(reused)" shape=component]
+    GV_bcast  [label="broadcast_sync\n(changed: thread-safe)" shape=component]
+    GV_log    [label="decision_log\nexport_zip / verify" shape=component]
+  }
+
+  subgraph cluster_db {
+    label="SQLite / Postgres" style=dashed color="#336699"
+    T_req [shape=record, label="{ approval_requests | payload (raw, match key) | status | bundle_hash }"]
+    T_ev  [shape=record, label="{ approval_evidence | bundle_json (redacted) }"]
+    T_dec [shape=record, label="{ approval_decisions | entry_hash | prev_hash }"]
+  }
+
+  subgraph cluster_docs {
+    label="Docs" style=dashed color=darkorange
+    DOC_guide [label="docs/guide/approvals.md\n(changed)"]
+    DOC_script [label="scripts/verify_decision_log.py\nprints ok checked=N head=H\n(unchanged)"]
+  }
+
+  AG_orch -> AG_sys
+  AG_orch -> AG_code [style=dotted label="no gate"]
+  AG_sys -> AG_thread -> GV_gate
+  GV_gate -> GV_queue
+  GV_queue -> T_req
+  GV_queue -> T_ev
+  GV_queue -> T_dec
+  GV_queue -> GV_bcast
+  GV_bcast -> WS_mgr
+  WS_mgr -> UI_app [label="approval_update"]
+  UI_app -> UI_badge
+  UI_badge -> EP_list [label="count"]
+  UI_modal -> EP_list
+  EP_list -> GV_mask
+  EP_list -> T_req
+  UI_modal -> EP_res
+  EP_res -> GV_queue
+  GV_log -> T_dec
+  EP_exp -> GV_log
+  DOC_guide -> EP_exp [style=dotted]
+  DOC_guide -> DOC_script [style=dotted]
+}

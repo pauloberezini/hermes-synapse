@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check a decision-log zip. Standard library only.
 
-Usage: python3 scripts/verify_decision_log.py export.zip
+Usage: python3 scripts/verify_decision_log.py export.zip [--pin <entry_hash>]
 Exit 0 when every link and evidence hash matches. Exit 1 on the first broken seq.
+``--pin`` also requires that entry_hash to appear in the chain.
 """
 
 from __future__ import annotations
@@ -79,18 +80,45 @@ def bundle_hash(bundle: dict[str, Any]) -> str:
 
 
 def main(argv: list[str]) -> int:
-    """Verify ``argv[1]`` and print the first broken seq on failure."""
-    if len(argv) != 2:
-        print("usage: python3 verify_decision_log.py export.zip", file=sys.stderr)
+    """Verify a zip and print the first broken seq on failure.
+
+    Args:
+        argv: ``sys.argv``. Optional ``--pin <entry_hash>`` after the zip path.
+
+    Returns:
+        0 when the archive matches, 1 otherwise.
+    """
+    parsed = _parse(argv)
+    if parsed is None:
+        print(
+            "usage: python3 verify_decision_log.py export.zip [--pin <entry_hash>]",
+            file=sys.stderr,
+        )
         return 1
+    path, pin = parsed
     try:
-        return _verify(Path(argv[1]))
+        return _verify(path, pin)
     except (OSError, zipfile.BadZipFile, json.JSONDecodeError, KeyError) as exc:
         print(f"FAIL seq= {exc}", file=sys.stderr)
         return 1
 
 
-def _verify(path: Path) -> int:
+def _parse(argv: list[str]) -> tuple[Path, str | None] | None:
+    """Return the zip path and optional pin, or None when the usage is wrong."""
+    args = argv[1:]
+    pin: str | None = None
+    if "--pin" in args:
+        index = args.index("--pin")
+        if index + 1 >= len(args) or args[index + 1].startswith("-"):
+            return None
+        pin = args[index + 1]
+        del args[index : index + 2]
+    if len(args) != 1:
+        return None
+    return Path(args[0]), pin
+
+
+def _verify(path: Path, pin: str | None = None) -> int:
     with zipfile.ZipFile(path) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         raw = archive.read("decisions.jsonl").decode()
@@ -128,6 +156,9 @@ def _verify(path: Path) -> int:
                 return 1
         elif manifest.get("head_hash") not in ("", None):
             print("FAIL seq= head_hash mismatch", file=sys.stderr)
+            return 1
+        if pin is not None and not any(row.get("entry_hash") == pin for row in rows):
+            print("FAIL seq= pinned entry missing", file=sys.stderr)
             return 1
     head = rows[-1]["entry_hash"] if rows else ""
     print(f"ok checked={len(rows)} head={head}")

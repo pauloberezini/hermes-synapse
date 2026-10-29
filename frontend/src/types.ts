@@ -193,6 +193,7 @@ export interface DecisionEntry {
 export interface ApprovalSummary {
   id: number;
   agent_id: string;
+  agent_name?: string;
   action_name: string;
   payload: string;
   description: string;

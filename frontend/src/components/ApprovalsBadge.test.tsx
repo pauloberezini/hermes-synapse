@@ -27,27 +27,27 @@ describe('ApprovalsBadge', () => {
     });
   });
 
-  it('refreshes on approval_update websocket message', async () => {
-    let messageListener: ((e: MessageEvent) => void) | null = null;
-    const fakeWs = {
-      addEventListener: vi.fn((event: string, cb: any) => {
-        if (event === 'message') messageListener = cb;
-      }),
-      removeEventListener: vi.fn(),
-    } as unknown as WebSocket;
-
+  it('refetches count on window approval_update without waiting for the poll', async () => {
     let countVal = 1;
     globalThis.fetch = vi.fn(async () => {
       return new Response(JSON.stringify({ count: countVal }), { status: 200 });
     }) as any;
 
-    render(<ApprovalsBadge onOpen={() => {}} ws={fakeWs} />);
+    render(<ApprovalsBadge onOpen={() => {}} />);
     expect(await screen.findByText('1')).toBeInTheDocument();
 
     countVal = 4;
-    messageListener!({ data: JSON.stringify({ type: 'approval_update', id: 9, status: 'REQUESTED' }) } as MessageEvent);
+    window.dispatchEvent(new CustomEvent('approval_update'));
 
     expect(await screen.findByText('4')).toBeInTheDocument();
+  });
+
+  it('keeps the count pill outside the fading label', async () => {
+    render(<ApprovalsBadge onOpen={() => {}} />);
+    const pill = await screen.findByTestId('approvals-count');
+    const label = screen.getByText('Approvals');
+    expect(label.className).toContain('sidebar-label');
+    expect(pill.closest('.sidebar-label')).toBeNull();
   });
 
   it('click opens modal', async () => {

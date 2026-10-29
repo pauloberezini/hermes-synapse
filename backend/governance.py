@@ -325,6 +325,34 @@ class ApprovalQueue:
         return request_id or 0
 
     @staticmethod
+    def _mask_payload(raw: object) -> str:
+        """Mask secrets in a stored payload before it leaves the process.
+
+        The database column stays raw so ``find_latest`` can match the same call.
+        A value that is not JSON is masked as a plain string.
+
+        Args:
+            raw: The ``approval_requests.payload`` column, or a parsed object.
+
+        Returns:
+            A client-safe string. JSON values are re-serialized after masking.
+        """
+        from backend.evidence import _mask_tree
+
+        if isinstance(raw, (dict, list)):
+            return json.dumps(_mask_tree(raw, PIIGuard.mask_pii), ensure_ascii=False)
+        text = "" if raw is None else str(raw)
+        try:
+            parsed: object = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return PIIGuard.mask_pii(text)[0]
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(_mask_tree(parsed, PIIGuard.mask_pii), ensure_ascii=False)
+        if isinstance(parsed, str):
+            return json.dumps(PIIGuard.mask_pii(parsed)[0], ensure_ascii=False)
+        return json.dumps(parsed, ensure_ascii=False)
+
+    @staticmethod
     def resolve(
         request_id: int,
         decision: str,
@@ -427,7 +455,9 @@ class ApprovalQueue:
                 except Exception:
                     pass
             d["flags"] = flags
+            d["agent_name"] = ApprovalQueue._agent_name(raw_b)
             d["bundle_hash"] = d["bundle_hash"] or ""
+            d["payload"] = ApprovalQueue._mask_payload(d.get("payload"))
             result.append(d)
         return result
 
@@ -460,7 +490,9 @@ class ApprovalQueue:
                 except Exception:
                     pass
             d["flags"] = flags
+            d["agent_name"] = ApprovalQueue._agent_name(raw_b)
             d["bundle_hash"] = d["bundle_hash"] or ""
+            d["payload"] = ApprovalQueue._mask_payload(d.get("payload"))
             result.append(d)
         return result
 
@@ -489,7 +521,22 @@ class ApprovalQueue:
         detail = dict(zip(cols, row))
         raw = detail.pop("bundle_json")
         detail["bundle"] = json.loads(raw) if raw else None
+        detail["agent_name"] = ApprovalQueue._agent_name(raw)
+        detail["payload"] = ApprovalQueue._mask_payload(detail.get("payload"))
         return detail
+
+    @staticmethod
+    def _agent_name(raw_bundle: str | None) -> str:
+        """Display name from ``bundle.links.agent``. Empty when the row has none."""
+        if not raw_bundle:
+            return ""
+        try:
+            links = json.loads(raw_bundle).get("links") or {}
+        except (TypeError, ValueError):
+            return ""
+        if not isinstance(links, dict):
+            return ""
+        return str(links.get("agent") or "")
 
     @staticmethod
     def get_status(request_id: int) -> Optional[str]:
@@ -651,11 +698,16 @@ def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
             "error": f"Human rejected {action_name}.",
         }, ensure_ascii=False)
     else:
+        from backend.agent import agent_name_ctx
         from backend.evidence import build_bundle, cap_bundle, evidence_ctx, redact_bundle
         bundle = cap_bundle(redact_bundle(build_bundle(
             agent_id, action_name, payload, evidence_ctx.get(),
         )))
-        bundle.links = {**bundle.links, "session_id": agent_id}
+        links = {**bundle.links, "session_id": agent_id}
+        agent_name = agent_name_ctx.get()
+        if agent_name:
+            links["agent"] = agent_name
+        bundle.links = links
         request_id = ApprovalQueue.request_approval(
             agent_id=agent_id,
             action_name=action_name,
@@ -667,7 +719,10 @@ def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
     return json.dumps({
         "status": "PENDING_APPROVAL",
         "request_id": request_id,
-        "error": f"Awaiting human approval for {action_name}.",
+        "error": (
+            f"Awaiting human approval for {action_name}. "
+            "After approval, call this tool again with the identical arguments."
+        ),
     }, ensure_ascii=False)
 
 

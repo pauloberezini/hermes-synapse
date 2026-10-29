@@ -39,7 +39,11 @@ def clean_test_database():
     db_mod.init_db()
     with backend.connect() as conn:
         cur = conn.cursor()
-        for trigger in ("approval_decisions_no_update", "approval_decisions_no_delete"):
+        for trigger in (
+            "approval_decisions_no_update",
+            "approval_decisions_no_delete",
+            "approval_evidence_no_update",
+        ):
             try:
                 cur.execute(f"DROP TRIGGER IF EXISTS {trigger}")
             except Exception:
@@ -54,6 +58,7 @@ def clean_test_database():
         except Exception:
             pass
         db_mod.install_approval_decisions(cur)
+        db_mod.install_approval_evidence(cur)
 
         # Re-insert default settings
         try:

@@ -48,6 +48,67 @@ def _run_verifier(path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def test_export_zip_alias_matches_export(tmp_path: Path) -> None:
+    _seed("echo alias")
+    client = _client()
+    plain = client.get("/api/governance/decisions/export")
+    alias = client.get("/api/governance/decisions/export.zip")
+    assert plain.status_code == 200
+    assert alias.status_code == 200
+    assert plain.headers["content-type"].startswith("application/zip")
+    assert alias.headers["content-type"].startswith("application/zip")
+
+    def decisions(content: bytes) -> bytes:
+        return _zip(content).read("decisions.jsonl")
+
+    assert decisions(plain.content) == decisions(alias.content)
+    path = tmp_path / "alias.zip"
+    path.write_bytes(alias.content)
+    verified = _run_verifier(path)
+    assert verified.returncode == 0, verified.stderr
+
+
+def test_pin_detects_dropped_tail(tmp_path: Path) -> None:
+    for command in ("echo 1", "echo 2", "echo 3"):
+        _seed(command)
+    response = _client().get("/api/governance/decisions/export.zip")
+    archive = _zip(response.content)
+    lines = [line for line in archive.read("decisions.jsonl").decode().splitlines() if line.strip()]
+    assert len(lines) >= 3
+    kept_lines = lines[:-2]
+    dropped = json.loads(lines[-1])
+    kept_first = json.loads(kept_lines[0])
+    kept_last = json.loads(kept_lines[-1])
+    manifest = json.loads(archive.read("manifest.json"))
+    manifest["count"] = len(kept_lines)
+    manifest["first_seq"] = kept_first["seq"]
+    manifest["last_seq"] = kept_last["seq"]
+    manifest["head_hash"] = kept_last["entry_hash"]
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as out:
+        for name in archive.namelist():
+            if name == "decisions.jsonl":
+                out.writestr(name, ("\n".join(kept_lines) + "\n").encode())
+            elif name == "manifest.json":
+                out.writestr(name, json.dumps(manifest).encode())
+            else:
+                out.writestr(name, archive.read(name))
+    path = tmp_path / "truncated.zip"
+    path.write_bytes(buf.getvalue())
+
+    open_check = _run_verifier(path)
+    assert open_check.returncode == 0, open_check.stderr
+    pinned = subprocess.run(
+        [sys.executable, str(_VERIFIER), str(path), "--pin", dropped["entry_hash"]],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert pinned.returncode == 1
+    assert "pinned entry missing" in pinned.stderr
+
+
 def test_export_zip_contains_manifest_and_verifies(tmp_path: Path) -> None:
     first = _seed("echo 1")
     second = _seed("echo 2")
