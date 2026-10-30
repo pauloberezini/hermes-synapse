@@ -1,12 +1,12 @@
 <div align="center">
 
-# 🏛️ Hermes
+# Hermes Synapse
 
-### The Visual, Hierarchical AI Agent Framework
+### Open-source multi-agent orchestrator with human approval gates
 
-**Build networks of AI agents that plan dynamically, coordinate via DAG, and never spin out of control.**
+Agents plan on a DAG, inherit only the tools their parent allows, and stop on risky calls until a human approves that exact payload — once.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](LICENSE)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11+-3b82f6.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2563eb.svg)](https://www.docker.com/)
 [![GitHub Stars](https://img.shields.io/github/stars/pauloberezini/hermes-synapse?style=social)](https://github.com/pauloberezini/hermes-synapse/stargazers)
@@ -22,33 +22,21 @@ docker compose up -d
 
 ---
 
-## ✨ Why Hermes?
+## Why
 
-Most multi-agent frameworks are either **too rigid** (n8n: hardwired workflows) or **too chaotic** (AutoGen: agents talking in circles forever).
+Most multi-agent stacks are either **hardwired workflows** or **unbounded chat loops**. Hermes sits in the middle:
 
-**Hermes sits in the middle:** a visual drag-and-drop canvas where you wire up AI agents in a strict **Directed Acyclic Graph (DAG)**. No infinite loops. No hardcoded pipelines. Just agents that actually coordinate.
+- A visual DAG of orchestrators and specialists — no cycles, no privilege escalation through children.
+- Dynamic LLM planning, not a hardcoded pipeline.
+- A real gate on risky tools: approve the claim, then the agent must send the **same** call again before anything runs.
 
-| | Hermes | n8n / Make | Flowise / LangFlow | AutoGen / CrewAI |
-|---|---|---|---|---|
-| **Execution** | 🧠 Non-deterministic (AI plans dynamically) | 🔧 Deterministic (hardcoded steps) | 🔗 Visual LLM chains | 💬 Conversational loops |
-| **UI** | 🎨 SVG canvas + isolated agent chats | Node editor | Visual chain designer | CLI / API only |
-| **Hierarchy** | ✅ Strict DAG (cycle-safe) | ↪ Linear / conditional | Data-flow graphs | ⚠️ Free loops (cycle risk) |
-| **Security** | 🔐 Permission Intersection | Hardcoded auth | Sandbox container | Local exec by default |
-| **Self-hosted** | ✅ Docker, PostgreSQL, local LLMs | ✅ | ✅ | ✅ |
+Self-hosted. MIT. Docker Compose.
 
 ---
 
-## 📸 Demo
+## Quick start
 
-[![Hermes Synapse Demo](https://img.youtube.com/vi/3GFh-1Gglno/maxresdefault.jpg)](https://youtu.be/3GFh-1Gglno)
-
-*👆 Click to watch — canvas node wiring, Telegram integration, and live DAG planning in 3 minutes.*
-
----
-
-## 🚀 Quick Start
-
-> **Requirements:** Docker + Docker Compose. That's it.
+> **Requirements:** Docker + Docker Compose.
 
 ```bash
 # 1. Clone
@@ -67,198 +55,189 @@ open http://localhost:9119
 # docker logs jarvis-backend | grep "Generated OTP Code"
 ```
 
-**Want to use a local model (Ollama)?** Set in `.env`:
+**Local model (Ollama):** in `.env`:
+
 ```bash
 LLM_API_BASE=http://host.docker.internal:11434/v1
 LLM_MODEL=llama3
 OPENROUTER_API_KEY=local  # any non-empty placeholder
 ```
 
+Dev hot-reload: `docker compose -f docker-compose.dev.yml up` (UI on http://localhost:5173).
+
 ---
 
-## 🏛️ Architecture
+## See it in action
+
+Local rehearsal, 29 Oct 2026. Prompt: *Ask Sys Ops to run `df -h /` on the server.* No secrets in these frames.
+
+**1. A Sys Ops shell call stops at PENDING in chat**
+
+![Sys Ops execute_command waiting for approval; live badge on the Approvals icon](docs/images/01_chat_sysops_pending_live_badge.jpg)
+
+**2. Approval modal with claim, source, and hash**
+
+![Governance Approvals modal showing CLAIM, SOURCE, args, and bundle hash](docs/images/03b_modal_claim_source_crop.png)
+
+**3. After approve, re-sending the exact call runs it once**
+
+![Same chat after approve + resend: command ran once, exit_code 0](docs/images/06_chat_resend_runs_once.jpg)
+
+Approving does not execute anything. Send the same request again in the **same chat**; the gate consumes the approval and Sys Ops runs the command once. Send it a third time and you get a **new PENDING** — approvals are single-use. The **All** tab lists PENDING, APPROVED, and CONSUMED.
+
+**4. Offline verification of the exported decision log passes; a tampered copy fails**
+
+![curl verify ok, offline --pin ok, three tamper cases fail](docs/images/10_export_offline_verify_ok_and_tamper_fail.png)
+
+Canvas / Telegram walkthrough (3 min): [YouTube](https://youtu.be/3GFh-1Gglno).
+
+---
+
+## How approvals work
+
+Risky tool calls go through `gate_tool` (`backend/tools.py` → `backend/governance.py`) **before** the tool body.
+
+| What | Rule |
+|---|---|
+| Sys Ops `execute_command` | Always gated |
+| Other high-risk names | Always gated (`create_obsidian_note`, agent mutations, audit export, …) |
+| MCP tools | Gated by default. Opt out with `readOnlyHint: true` or `destructiveHint: false` |
+
+**Lifecycle** (scoped to the chat session, bound to the exact JSON payload):
 
 ```
-User ──→ Web Dashboard (React Canvas)
+PENDING → APPROVED → CONSUMED
+```
+
+1. The tool returns `PENDING_APPROVAL`. Nothing runs.
+2. A human opens **Governance Approvals**, checks **CLAIM** (agent, tool, args, hash) and **SOURCE** (plan step / user instruction), then Approve or Reject.
+3. Approve **does not run the tool**. The agent must re-send the **identical** call in the **same** chat. That send consumes the row and runs once.
+4. The same call afterwards opens a **new PENDING**. A rejected call stays blocked in that session.
+
+The modal has **Pending** and **All** tabs. Full walkthrough: [docs/guide/approvals.md](docs/guide/approvals.md).
+
+---
+
+## Decision log
+
+Every `REQUESTED` / `APPROVED` / `REJECTED` / `CONSUMED` event is appended to a hash chain (`approval_decisions`). Export is a zip of `decisions.jsonl`, `evidence/<id>.json`, `manifest.json`, and `VERIFY.md`.
+
+```bash
+# After login; governance routes need a Bearer token
+TOKEN=<session token>
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/governance/decisions/verify
+
+curl -fs -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/governance/decisions/export.zip \
+  -o export.zip
+# /api/governance/decisions/export is the same archive
+
+python3 scripts/verify_decision_log.py export.zip --pin <head_hash>
+# ok checked=N head=H
+```
+
+Tampering with evidence **inputs** (the approved command) fails with `bundle_hash mismatch`. Editing a decision row fails with `entry_hash mismatch`. Dropping a row fails with `count mismatch`. `--pin` catches a truncated tail whose manifest was rewritten to match.
+
+---
+
+## Known limitations
+
+- **`bundle_hash` does not cover evidence `description` or `links`.** Inputs, plan, upstream item hashes, and flags are in the digest; changing only the human-readable description still verifies. Treat those fields as display, not proof.
+- **The Code Engineer is not gated.** It runs generated Python in the sandbox via `execute_code` and never calls `gate_tool`. Open roadmap item — do not claim every agent is gated.
+- The log is **tamper-evident, not signed**. A party who rewrites the whole chain *and* the head hash you pinned can still pass the checker. Keep `--pin` on a head you recorded yourself.
+
+More: [ROADMAP.md](ROADMAP.md) · [docs/specs/roadmap](docs/specs/roadmap/README.md).
+
+---
+
+## Architecture
+
+```
+User ──→ Web Dashboard (React)
            │
            ▼
-     🤖 Root Orchestrator (Jarvis)       ← DAG entry point
+     Root Orchestrator (Jarvis)          ← DAG entry point
           / \
    Sub-Orch  Sub-Agent                   ← Hierarchical delegation
         |         |
    Sub-Agents   Skills                   ← Tools: web_search, python_sandbox, ...
 
-AllowedTools = ChildTools ∩ ParentTools  ← Permission Intersection (security)
+AllowedTools = ChildTools ∩ ParentTools  ← Permission intersection
 ```
 
-**Key concepts:**
-- **Root Orchestrator** — entry point, plans and routes tasks
-- **Sub-orchestrators** — coordinate groups of specialized agents  
-- **Sub-agents** — specialized executors with their own system prompts
-- **Skills** — pluggable tool sets (web search, code sandbox, calendar, RAG...)
+A child cannot gain `execute_command` just because it lists `shell_execution`. Auto-hired specialists are capped the same way.
 
 ---
 
-## 🧩 Advanced Modules & Capabilities
+## Built-in agents (seeded on first launch)
 
-Hermes goes beyond simple chat agents. It is designed for complex, autonomous operations:
-- 🏢 **2.5D Pixel Office & Telemetry**: Visualize your agent workforce in real-time. Watch tasks route through intelligent office zones (Meeting Rooms, Desks, Lounge).
-- 🛡️ **Paperclip Governance (Control Plane)**: Enforce hard limits with **BudgetGuard** token/dollar spend tracking, and require **Human-in-the-loop** approvals for high-stakes tool executions. Tasks are managed on an atomic Kanban ticket board.
-- 🕸️ **Autonomous Agent Mesh**: P2P protocol for inter-agent capability matching, discovery, and task delegation.
-- 🔌 **Private Plugins**: Drop a `backend/<name>/plugin.py` into the tree to add agents, tools, schema, presets, cron jobs, or a market-data provider. Core only calls hooks; it never imports a plugin by name, so proprietary extensions stay out of the OSS tree.
-- 🗣️ **Voice & Speech**: Integrated local Whisper STT (Speech-to-Text) and TTS for seamless voice interactions.
-- 🏢 **Enterprise Ready**: Full OIDC / OAuth2 support, Role-Based Access Control (RBAC), and PostgreSQL database.
-
----
-
-## 🤖 Built-in Agents (seeded on first launch)
-
-| Agent | Skills | Required Keys |
+| Agent | Skills | Required keys |
 |---|---|---|
-| 🏛️ **Jarvis (Main)** — root orchestrator | — | `OPENROUTER_API_KEY` |
-| 🔍 **Search Agent** | Web search, weather, RSS | `SEARXNG_URL` |
-| 💻 **Code Engineer** | Python sandbox (self-correcting) | — |
-| 📊 **Data Analyst** | pandas + matplotlib charts | — |
-| ⏰ **Scheduler** | Timers, reminders, alarms | — |
-| 📈 **Market Monitor** | Stocks + crypto (yfinance) | — |
-| 📅 **Daily Planner** | Google Calendar + Todoist | `TODOIST_API_TOKEN` + Google OAuth |
-| 🖥️ **Sys Ops** | System stats + shell exec | — |
-| ⚽ **Football Analyst** | Match results, tactics, standings | `SEARXNG_URL` |
+| **Jarvis (Main)** — root orchestrator | — | `OPENROUTER_API_KEY` |
+| **Search Agent** | Web search, weather, RSS | `SEARXNG_URL` |
+| **Code Engineer** | Python sandbox (not gated — see limitations) | — |
+| **Data Analyst** | pandas + matplotlib | — |
+| **Scheduler** | Timers, reminders, alarms | — |
+| **Market Monitor** | Stocks + crypto (yfinance) | — |
+| **Daily Planner** | Google Calendar + Todoist | `TODOIST_API_TOKEN` + Google OAuth |
+| **Sys Ops** | System stats + shell (`execute_command` is gated) | — |
+| **Football Analyst** | Match results, tactics, standings | `SEARXNG_URL` |
 
-> All agents start without error even if their API keys are missing — they return a clear message explaining what needs to be configured.
+Agents start even if their keys are missing; they return a message saying what to configure.
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
-### LLM Providers
-
-Hermes supports **any OpenAI-compatible API**:
+**Any OpenAI-compatible API:**
 
 ```bash
-# OpenRouter (default) — access 200+ models
+# OpenRouter (default)
 LLM_API_BASE=https://openrouter.ai/api/v1
 OPENROUTER_API_KEY=your_key
 
-# Ollama (local)
+# Ollama
 LLM_API_BASE=http://host.docker.internal:11434/v1
 LLM_MODEL=llama3.1
-
-# vLLM / LM Studio / LocalAI — same pattern
-LLM_API_BASE=http://localhost:8000/v1
 ```
 
-### Per-Agent Model Overrides
+Per-agent overrides: `AGENT_MODEL_CODE`, `AGENT_MODEL_RESEARCH`, `AGENT_MODEL_ANALYST`, `AGENT_MODEL_PLANNER`.
 
-```bash
-AGENT_MODEL_CODE=deepseek/deepseek-r1       # Heavy reasoning for code
-AGENT_MODEL_RESEARCH=google/gemini-2.5-flash # Fast for search
-AGENT_MODEL_ANALYST=openai/gpt-4o           # Visual for charts
-```
+PostgreSQL (Compose default): `DATABASE_URL=postgresql://user:password@localhost:5432/hermes`. Leave empty only for local SQLite.
 
-### Database Backends
-
-```bash
-# DATABASE_URL=   ← leave empty
-
-# PostgreSQL (production / SaaS mode):
-DATABASE_URL=postgresql://user:password@localhost:5432/hermes
-```
-
-### Optional Integrations
-
-| Integration | Env Var | Notes |
-|---|---|---|
-| Telegram Bot | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Create via [@BotFather](https://t.me/BotFather) |
-| Web Search | `SEARXNG_URL` | SearXNG, self-hosted metasearch |
-| Weather | `OPENWEATHERMAP_API_KEY` | Free tier: 1,000 calls/day |
-| Todoist | `TODOIST_API_TOKEN` | Todoist Settings → Integrations |
-| Google Calendar | OAuth2 JSON file | See `.env.example` for setup |
-| Obsidian RAG | `OBSIDIAN_API_KEY` | [Local REST API plugin](https://github.com/coddingtonbear/obsidian-local-rest-api) |
+| Integration | Env var |
+|---|---|
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| Web search | `SEARXNG_URL` (SearXNG) |
+| Weather | `OPENWEATHERMAP_API_KEY` |
+| Todoist | `TODOIST_API_TOKEN` |
+| Google Calendar | OAuth JSON — see `.env.example` |
+| Obsidian RAG | `OBSIDIAN_API_KEY` |
 
 ---
 
-## 🔐 Security: Permission Intersection
+## Contributing
 
-Hermes enforces a security constraint down the execution tree:
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```
-AllowedTools(agent) = agent.skills ∩ parent.skills
-```
-
-If a parent sub-orchestrator only has `web_search`, its child agents **cannot** call `execute_command`, even if they have `shell_execution` configured. This prevents privilege escalation through agent chains.
-
----
-
-## 📂 Project Structure
-
-```
-hermes-synapse/
-├── backend/              # FastAPI server
-│   ├── main.py           # API routes
-│   ├── agent.py          # Core LLM orchestration loop
-│   ├── orchestrator.py   # DAG planner
-│   ├── database.py       # PostgreSQL backend
-│   ├── rag.py            # Qdrant vector memory
-│   ├── tools.py          # All skill tool implementations
-│   ├── plugins.py        # Optional-plugin loader (backend/<name>/plugin.py hooks)
-│   └── subagents.py      # Specialized agent classes
-├── frontend/             # React + Vite dashboard
-├── k8s/                  # Kubernetes Deployment Manifests
-├── docker-compose.yml    # Production stack (Docker)
-├── docker-compose.swarm.yml # Docker Swarm Stack
-├── docker-compose.dev.yml # Development stack (hot-reload)
-└── .env.example          # Configuration template
-```
-
----
-
-## 🛣️ Roadmap
-
-- [x] Visual SVG canvas & 2.5D Pixel Office telemetry
-- [x] DAG hierarchical orchestration with planning loop
-- [x] PostgreSQL database backend
-- [x] Qdrant RAG & GraphRAG memory
-- [x] Python code sandbox with self-correction loop
-- [x] Telegram bot interface
-- [x] **Open-Core Skills Marketplace** & **MCP Server Support**
-- [x] **Plugin SDK** — `hermes_sdk` for custom skills & dataset exporters
-- [x] **Voice interface** — Whisper STT + TTS replies
-- [x] **Enterprise SSO & SaaS mode** — OIDC/OAuth2, RBAC, namespace isolation
-- [x] **Paperclip Governance** — BudgetGuard, Kanban board, Human-in-the-loop approvals
-- [x] **Autonomous P2P Agent Mesh** — Decentralized agent communication
-- [x] **Plugin boundary** — private extensions via `backend/<name>/plugin.py` hooks, zero core imports
-- [ ] **Production Multi-Cluster Agent Mesh** — Cross-cloud distributed execution
-- [ ] **Real-Time WebRTC Voice & Multimodal Gateway**
-- [ ] **Skills Marketplace Monetization & Billing Engine**
-
-See full [ROADMAP.md](ROADMAP.md) for the detailed specification.
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
-
-Quick setup for development:
 ```bash
 git clone https://github.com/pauloberezini/hermes-synapse
 cd hermes-synapse
-docker compose -f docker-compose.dev.yml up  # hot-reload mode
+docker compose -f docker-compose.dev.yml up
 ```
 
 ---
 
-## 🛡️ License
+## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
 
 ---
 
 <div align="center">
 
-**If Hermes saved you from rewriting a multi-agent spaghetti pipeline, give us a ⭐**
-
-[⭐ Star on GitHub](https://github.com/pauloberezini/hermes-synapse) · [🐛 Report Bug](https://github.com/pauloberezini/hermes-synapse/issues) · [💡 Request Feature](https://github.com/pauloberezini/hermes-synapse/issues)
+[⭐ Star on GitHub](https://github.com/pauloberezini/hermes-synapse) · [🐛 Issues](https://github.com/pauloberezini/hermes-synapse/issues)
 
 </div>
