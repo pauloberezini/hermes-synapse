@@ -151,7 +151,7 @@ It never reads `approval_evidence`. The offline script does check each bundle ha
 
 ## 2. Architecture Diagram
 
-See [`approvals-demo-hardening-phase2.dot`](./approvals-demo-hardening-phase2.dot) for the Graphviz source.
+Graphviz source is `approvals-demo-hardening-phase2.dot` in this directory (inlined below).
 
 ```dot
 digraph ApprovalsHardeningPhase2 {
