@@ -106,7 +106,7 @@ Scheduled work uses the same `respond` → `run_orchestration` pipe, with `sessi
 
 ## 2. Architecture Diagram
 
-See [`dialog-followup-context.dot`](./dialog-followup-context.dot) for the Graphviz source.
+Graphviz source is `dialog-followup-context.dot` in this directory (inlined below).
 
 ```dot
 digraph DialogFollowupContext {
