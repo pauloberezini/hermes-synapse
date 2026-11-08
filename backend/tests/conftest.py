@@ -23,8 +23,32 @@ import backend.database as db_mod
 db_mod.DB_DIR = _temp_db_dir
 db_mod.DB_PATH = _temp_db_path
 db_mod._backend = db_mod.SQLiteBackend()
+
+
+def _assert_test_db_isolation() -> None:
+    """Hard guardrail: abort immediately if tests attempt to run against a production database."""
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if url:
+        raise RuntimeError(
+            f"PRODUCTION DATABASE GUARD TRIGGERED: DATABASE_URL is set to '{url}'. "
+            f"Pytest must run exclusively against isolated temporary SQLite DB."
+        )
+    backend = db_mod._get_backend()
+    if type(backend) is not db_mod.SQLiteBackend:
+        raise RuntimeError(
+            f"PRODUCTION DATABASE GUARD TRIGGERED: backend is {type(backend).__name__}, "
+            f"expected SQLiteBackend."
+        )
+    if db_mod.DB_PATH != _temp_db_path:
+        raise RuntimeError(
+            f"PRODUCTION DATABASE GUARD TRIGGERED: backend path '{db_mod.DB_PATH}' "
+            f"does not match temporary pytest database '{_temp_db_path}'."
+        )
+
+
 @pytest.fixture(scope="function", autouse=True)
 def clean_test_database():
+    os.environ["DATABASE_URL"] = ""
     import backend.database as db_mod
     db_mod.DB_DIR = _temp_db_dir
     db_mod.DB_PATH = _temp_db_path
@@ -35,6 +59,8 @@ def clean_test_database():
     if type(backend) is not db_mod.SQLiteBackend or getattr(backend, "db_path", None) != _temp_db_path:
         db_mod._set_backend_for_tests(db_mod.SQLiteBackend())
         backend = db_mod._get_backend()
+
+    _assert_test_db_isolation()
 
     db_mod.init_db()
     with backend.connect() as conn:

@@ -131,7 +131,7 @@ def broadcast_sync(message: Dict[str, Any]) -> None:
 
 ## 2. Architecture Diagram
 
-Graphviz source is `approvals-demo-hardening.dot` in this directory (inlined below).
+See [`approvals-demo-hardening.dot`](./approvals-demo-hardening.dot) for the Graphviz source.
 
 ```dot
 digraph ApprovalsDemoHardening {

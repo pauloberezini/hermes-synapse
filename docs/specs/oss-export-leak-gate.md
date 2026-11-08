@@ -76,7 +76,7 @@ The pattern argument on that grep line is omitted here on purpose. This file is 
 
 ## 2. Architecture Diagram
 
-Graphviz source is `oss-export-leak-gate.dot` in this directory (inlined below).
+See [`oss-export-leak-gate.dot`](oss-export-leak-gate.dot) for the Graphviz source.
 
 ```dot
 digraph OssExportLeakGate {

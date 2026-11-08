@@ -353,7 +353,7 @@ def _insert_locked(row: dict[str, Any]) -> str:
 
 def _insert(conn: Any, backend: Any, row: dict[str, Any], *, immediate: bool) -> str:
     cur = conn.cursor()
-    manage_tx = immediate or (not getattr(conn, "in_transaction", False))
+    manage_tx = immediate
     if manage_tx:
         cur.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
     try:

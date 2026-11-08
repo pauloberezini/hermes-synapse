@@ -1841,6 +1841,20 @@ def sync_obsidian_vault() -> str:
     result = _run_async(_sync())
     return json.dumps(result, ensure_ascii=False)
 
+def find_unexpanded_placeholders(command: str) -> list[str]:
+    """Identify unquoted angle-bracket placeholder tokens (e.g., <zip>, <head>).
+
+    In POSIX shells, unquoted angle brackets act as redirection operators, which causes
+    fatal syntax errors or unexpected file open attempts when users or subagents pass
+    template snippets verbatim.
+    """
+    if not isinstance(command, str):
+        return []
+    # Strip quoted substrings to allow literal brackets in echo '<foo>' or "..."
+    unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", "", command)
+    return re.findall(r"<[a-zA-Z0-9_.-]+>", unquoted)
+
+
 def execute_command(command: str) -> str:
     """Run a shell command in a local subprocess and return stdout/stderr.
 
@@ -1848,6 +1862,20 @@ def execute_command(command: str) -> str:
     profile, not a requirement for tests or Compose.
     """
     import subprocess
+
+    placeholders = find_unexpanded_placeholders(command)
+    if placeholders:
+        msg = (
+            f"Command contains unexpanded placeholder(s): {', '.join(placeholders)}. "
+            "Please provide concrete values instead of placeholder brackets before executing."
+        )
+        return json.dumps({
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": msg,
+            "error": msg,
+        }, ensure_ascii=False)
+
     try:
         res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=15)
         output = res.stdout if res.stdout else ""
@@ -1928,7 +1956,12 @@ def execute_tool(name: str, arguments: Dict[str, Any], chat_id: str = "default")
     if blocked is not None:
         return blocked
 
-    logger.info(f"Executing tool '{name}' with args: {arguments}")
+    try:
+        from backend.governance import ApprovalQueue
+        safe_args = ApprovalQueue._mask_payload(arguments)
+    except Exception:
+        safe_args = str(arguments)
+    logger.info(f"Executing tool '{name}' with args: {safe_args}")
 
     plugin_result = _plugin_hook("execute_named_tool", name, arguments)
     if plugin_result is not None:

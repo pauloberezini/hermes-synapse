@@ -1,9 +1,24 @@
 # Approvals Demo Hardening, Phase 2 — Spec
 
-**Status:** Draft
-**Date:** 2026-10-29
+**Status:** G1–G4, G6, G8, G9 implemented (PR #14, PR #15; public `main` `f4f92d5`). G5 and G7 declined in §1. Everything still open from `FIX-SPEC-demo-v3.md` is in **§6**.
+**Date:** 2026-10-29 (reviewed against code the same day)
 **Scope:** Close the items from `FIX-SPEC-demo.md` that Phase 1 did not fix, plus two honest corrections to Phase 1's own claims.
 **Related precedent:** `docs/specs/approvals-demo-hardening.md` (Phase 1, merged in PR #13), `docs/specs/roadmap/phase-1-approval-context.md`, `docs/guide/approvals.md`
+
+### Implementation status (code review)
+
+| Item | Verdict | Evidence in the tree |
+|---|---|---|
+| G1 `export.zip` alias | Done | `backend/main.py:966` |
+| G2 one broadcast, `onResolved` fallback | Done | route has no `manager.broadcast`; queue emits at `governance.py:424`; `App.tsx:2134` |
+| G3 agent name, session stays the key | Done | `agent_name_ctx` `agent.py:22`; `links.agent` `governance.py:701:709`; `agent_name` in read paths `governance.py:458, 493, 524` |
+| G4 direct-route evidence | Done | `agent.py:30:51` sets the 1/1 plan and `direct_route` |
+| G5 auto-resume | **Open** (Option C, retry step documented) | see R2-1 |
+| G6 evidence guard, in-DB verify, `--pin` | Done, plus R1-1 `evidence missing` | trigger `database.py:318, 338`; `decision_log.py:212:218`; `scripts/verify_decision_log.py` |
+| G7 sticky `REJECTED` | **Open** (declined, no TTL) | `governance.py:694` |
+| G8 collapsed badge | Done | `ApprovalsBadge.tsx:58` |
+| G9 `VERIFY.md` and guide | Done | `decision_log.py` `_VERIFY_MD`; `docs/guide/approvals.md:100:142` |
+| `FIX-SPEC-demo-v3` R0-1 sync | Code done; **tag and demo deploy open** | `scripts/export_oss.sh` dry run: "nothing to publish (in sync with main)". Latest tag is still `v1.4.3` (`d49ebfc`, 2026-10-11), older than the fixes |
 
 ---
 
@@ -139,7 +154,7 @@ It never reads `approval_evidence`. The offline script does check each bundle ha
 - `docs/guide/approvals.md`
 - Tests for each item
 
-**Out of scope**
+**Out of scope** (for Phase 2; the open ones are picked up in §6)
 - Signing or encrypting exports
 - Auto-resume (pending the Open Question)
 - Gating `CodeAgent`
@@ -151,7 +166,7 @@ It never reads `approval_evidence`. The offline script does check each bundle ha
 
 ## 2. Architecture Diagram
 
-Graphviz source is `approvals-demo-hardening-phase2.dot` in this directory (inlined below).
+See [`approvals-demo-hardening-phase2.dot`](./approvals-demo-hardening-phase2.dot) for the Graphviz source.
 
 ```dot
 digraph ApprovalsHardeningPhase2 {
@@ -413,6 +428,172 @@ Unit and component tests carry items G1–G4, G6, G8, G9. A live-model run is st
 | W5 | Export, record the head hash, drop the last two rows, rewrite the manifest, verify with and without `--pin`. | Without: `ok`. With: `FAIL … pinned entry missing`, exit 1. |
 | W6 | Edit an `approval_evidence` row in the database. | The `UPDATE` is rejected. If the trigger is dropped and the row edited, `/decisions/verify` returns `ok:false`. |
 | W7 | Collapsed sidebar with one pending request. | The count pill is visible without hover. |
+
+---
+
+## 6. Remaining work (from `FIX-SPEC-demo-v3.md`, reviewed 2026-10-29)
+
+Status: Draft. Every item below was checked against the tree and is **not implemented**, except where noted.
+
+### 6.1 Context
+
+| ID | Item | State | Finding |
+|---|---|---|---|
+| R0-1 | Release and demo deploy | Half done | Public `main` already holds the fixes. No release tag covers them. The demo instance is unverified. |
+| R1-2 | Gate `CodeAgent` | Open | `gate_tool` cannot work here. See the design problem below. |
+| R2-1 | Auto-resume after Approve | Open | Needs the Open Question in §3. |
+| R2-2 | Sticky `REJECTED` | Open | `gate_tool` returns the old row with no expiry (`governance.py:694`). |
+| R2-3 | Signed manifest | Open | Optional. |
+| R2-4 | Raw secret at rest | Open | `request_approval` stores `json.dumps(payload)` unmasked (`governance.py:275`). `find_latest` compares the raw JSON (`governance.py:586`). |
+| R2-5 | Agent name in the chain | Open | `_HASH_FIELDS` has no agent field. `schema_ver` is `1` (`decision_log.py:275`). The name exists only in the unhashed `links.agent`. |
+| R2-6 | Persistent login sessions | Open | `active_sessions` is a module-level `set` (`auth.py:14`), read in `auth.py:90, 156` and imported directly in `identity.py:40`. |
+| R3-1 | Env leak in `test_agent.py` | Open, reproduced | `COMPLEXITY_ROUTING=always_agent pytest backend/tests/test_agent.py` fails `test_respond_http_error` and `test_respond_openmodel_success`. With `auto` all 12 pass. `agent.py:125` runs `load_dotenv()` at import. |
+| Tooling | `ruff`, `black`, `mypy` | Not installed | No venv in the repo; `python3 -m ruff` fails. R1-1 is still unchecked by them. |
+
+**R1-2 design problem: retry-based gating does not fit generated code.** `gate_tool` approves an exact call: same session, action, and payload. The `code` agent writes new Python on every LLM call, so the "identical arguments" retry never matches and the request never consumes. The orchestrator also has no user re-send step. A real gate needs the *replay* path (run the stored, approved code). That is Option B in §3, not a one-line `gate_tool` call. Two more facts:
+
+- `execute_code` has exactly two callers, both inside `CodeAgent.run_and_correct` (`subagents.py:731, 743`).
+- `AnalystAgent.run` reuses `CodeAgent.run_and_correct` (`subagents.py:780`). A guard in `run_and_correct` covers the `code` step and the analyst chart step with one change.
+
+### 6.2 Explicit scope decisions (please confirm)
+
+| Decision | Rationale |
+|---|---|
+| R1-2: ship the demo switch, not a gate. `DISABLE_CODE_AGENT` (default `false`), checked at the top of `CodeAgent.run_and_correct`. | One guard covers both callers. A gate is Option B and shares its cost. This reverses nothing in Phase 2: "do not gate `CodeAgent`" still holds. |
+| R1-2 acceptance changes to "refused, no sandbox call, no `PENDING` row". | "Creates a `PENDING` approval" is not reachable with the retry gate. |
+| R2-4: store the masked payload and match on a hash. No encryption by default. | Encryption is only needed to run the raw args later, which only Option B does. Hash-and-mask removes the secret with no key to manage and no new dependency. |
+| R2-4: if Option B is chosen, store an encrypted payload next to the hash, key from an env var or a local file. | No cloud KMS. The repo has no `cryptography` pin to reuse; adding one is part of that decision. |
+| R2-5: add a nullable `agent_name` column, hashed only when not `NULL`. | Old rows keep their hash. New rows bind the name. Mixed chains verify. See §6.4. |
+| R2-2: `APPROVAL_REJECT_COOLDOWN_S`, default `0`, meaning never expires (today's behaviour). | Opt-in, no UI. `resolved_at` already exists on `approval_requests`. |
+| R2-3: defer. | `--pin` already detects truncation with no key. A signature adds authenticity, and the stdlib verifier would have to shell out to `ssh-keygen`. Add on request. |
+| R2-6: a DB table of hashed tokens, with an expiry. No Redis. | The app DB exists on both SQLite and Postgres. Hashing keeps a DB leak from handing out live tokens. |
+| Bundle R2-1, R1-2 gating, and R2-4 encryption as one phase, only if Option B is chosen. | All three need "run the stored, approved call". Build the replay path once. |
+
+### 6.3 Architecture diagram
+
+```dot
+digraph ApprovalsPhase3 {
+  graph [fontname="Helvetica" rankdir=LR]
+  node  [fontname="Helvetica" shape=box style=rounded]
+
+  subgraph cluster_agents {
+    label="Agent runtime" style=dashed color=purple
+    CA   [label="CodeAgent.run_and_correct\n(new: DISABLE_CODE_AGENT guard)" shape=component]
+    ORC  [label="orchestrator 'code' step" shape=component]
+    ANA  [label="AnalystAgent.run" shape=component]
+  }
+
+  subgraph cluster_gov {
+    label="Governance core" style=dashed color=darkgreen
+    GT   [label="gate_tool\n(new: reject cooldown, hash match)" shape=component]
+    AQ   [label="ApprovalQueue.find_latest\n(new: compare payload_hash)" shape=component]
+    DL   [label="decision_log.append\n(new: agent_name)" shape=component]
+  }
+
+  subgraph cluster_auth {
+    label="Auth" style=dashed color=steelblue
+    AU   [label="auth.create/validate/destroy_session\n(new: DB-backed)" shape=component]
+    ID   [label="identity.py\n(new: calls validate_session)" shape=component]
+  }
+
+  subgraph cluster_db {
+    label="SQLite / Postgres" style=dashed color="#336699"
+    T_req [shape=record, label="{ approval_requests | payload (masked) | payload_hash (new) | resolved_at }"]
+    T_dec [shape=record, label="{ approval_decisions | agent_name (new, nullable) | entry_hash }"]
+    T_ses [shape=record, label="{ auth_sessions (new) | token_hash | expires_at }"]
+  }
+
+  SC [label="scripts/verify_decision_log.py\n(new: reads schema_ver 1 and 2)"]
+
+  ORC -> CA
+  ANA -> CA
+  GT -> AQ -> T_req
+  GT -> DL -> T_dec
+  AU -> T_ses
+  ID -> AU
+  SC -> T_dec [style=dotted label="export zip"]
+}
+```
+
+Data flow summary:
+
+```
+Code step:   orchestrator 'code' | AnalystAgent -> CodeAgent.run_and_correct
+               -> DISABLE_CODE_AGENT=true: return {success: false, stderr: "CodeAgent disabled"}, no LLM call, no sandbox
+Gate:        gate_tool -> find_latest(agent_id, action, sha256(canonical(payload)))
+               -> REJECTED and age < cooldown: refuse; age >= cooldown (or cooldown 0 = never): see rule in 6.4
+               -> new request stores masked payload + payload_hash
+Log:         ApprovalQueue -> decision_log.append(agent_name from bundle links) -> hashed when not NULL
+Verify:      verify_decision_log.py: per row, hash fields + agent_name only if the key is present and not null
+Login:       create_session -> INSERT hash(token) | validate_session -> SELECT, check expiry | restart keeps rows
+```
+
+### 6.4 API / Interface contracts
+
+No new HTTP endpoint. Config, schema, and one verifier rule change.
+
+| Item | Contract |
+|---|---|
+| `DISABLE_CODE_AGENT` | Env, default `false`, documented in `.env.example`. When `true`, `CodeAgent.run_and_correct` returns the existing result shape with `success: false`, `attempts: 0`, `code: ""`, `stdout: ""`, `display_data: []`, and `stderr: "CodeAgent disabled (DISABLE_CODE_AGENT)"`. `AnalystAgent.run` reads `res["success"]` first, so its existing failure branch applies. |
+| `APPROVAL_REJECT_COOLDOWN_S` | Env integer, default `0`. `0` keeps a `REJECTED` row final. `N > 0`: a `REJECTED` row whose `resolved_at` is older than `N` seconds is ignored by `gate_tool`, so the same call opens a new `PENDING` request. The old row and its log entries stay. |
+| `approval_requests.payload` | Holds `PIIGuard`-masked JSON. `ApprovalSummary.payload` is unchanged in shape. |
+| `approval_requests.payload_hash` | `sha256` of `canonical_json(payload)`, the same function the log uses for `payload_hash`. `find_latest` matches on it. Rows with `NULL` fall back to hashing the stored payload. |
+| `approval_decisions.agent_name` | Nullable `TEXT`. Hashed only when not `NULL`. Present as a key in `decisions.jsonl` for new rows. |
+| Export `manifest.schema_ver` | `2` for new exports. The verifier accepts `1` and `2`. |
+| Verifier rule | `entry_hash` body = `_HASH_FIELDS`, plus `agent_name` when the row has that key with a non-null value. Dropping the key from a new row changes the hash, so it fails. Old exports have no key and still return `ok`. |
+| Login session | Token is returned as today. The server stores only `sha256(token)`, `created_at`, `expires_at`. `SESSION_TTL_HOURS`, default `168` (proposal). Expired or missing rows return `401`, which the client already turns into the login screen (`utils.tsx:461`, `App.tsx:509`). |
+
+**Open Question: session TTL.** Today sessions never expire. Persisting them without an expiry would make a stolen token valid for ever across restarts. Pick a default before implementation; `168` hours is a proposal.
+
+**Open Question: R2-1 (see §3).** Choosing B pulls in R1-2 gating and R2-4 encryption. Choosing C leaves the switch, the hash-and-mask change, and everything else here as is.
+
+### 6.5 Data model & implementation plan
+
+| Object | Change | Notes |
+|---|---|---|
+| `approval_requests` | Add `payload_hash TEXT` | Same `ALTER TABLE ... ADD COLUMN` loop as `bundle_hash` and `session_id` (`database.py:775`), plus the Postgres twin. |
+| `approval_decisions` | Add `agent_name TEXT` | Add `ALTER` for both backends. The append-only triggers block `UPDATE` and `DELETE`, not `ADD COLUMN`. No backfill is possible or wanted. |
+| `auth_sessions` | New: `token_hash TEXT PRIMARY KEY`, `created_at TEXT`, `expires_at TEXT` | Create beside the other tables in `database.py`, SQLite and Postgres. |
+
+Ordered steps. Each starts with a failing test, then the smallest change.
+
+1. **R0-1 release.** Run `TAG=v1.4.4 scripts/export_oss.sh --push`. The dry run shows nothing to commit, so this pushes `main` unchanged and adds the tag. `release.yml` makes the release. Then on the demo host: `git pull && docker compose up -d --build`. Acceptance: tag `v1.4.4` exists on the public repo and W1, W2, W5 from §5 pass on the demo instance.
+2. **R3-1 env leak.** `backend/tests/test_agent.py`: an autouse fixture that calls `monkeypatch.delenv("COMPLEXITY_ROUTING", raising=False)`. Tests that need a mode already use `patch.dict`. Check: run the file with `COMPLEXITY_ROUTING=always_agent` and with `auto`; 12 pass in both. Run the rest of `backend/tests` with `always_agent` once to find other leaks.
+3. **R1-2 demo switch.** `backend/subagents.py` `CodeAgent.run_and_correct`: return the disabled result before the first `call_llm`. `.env.example`: document `DISABLE_CODE_AGENT=false`. Tests in `backend/tests/test_subagents.py`: with the flag set, `execute_code` and `call_llm` are not called, and the result has `success: false`; `AnalystAgent.run` returns its failure result; the `code` orchestrator step records an error trace. Unset: behaviour unchanged. Guide: say when to set it.
+4. **R2-5 agent name in the chain.** `database.py`: add the column. `decision_log.py`: add an `agent_name` argument to `append`, hash it only when not `NULL`, include it in `_COLUMNS` reads and `_public_row`, write `schema_ver: 2` in `export_zip`. `governance.py`: pass `ApprovalQueue._agent_name(...)` from `request_approval`, `resolve`, and `consume`. `scripts/verify_decision_log.py`: apply the verifier rule above and accept `schema_ver` `1` and `2`, keeping the no-`backend`-import rule. Tests: a new export verifies; an old fixture export still returns `ok`; removing `agent_name` from a new row, or editing it, fails with `entry_hash mismatch`; a mixed chain verifies. **Challenge:** the name already ships in `evidence/<id>.json` as `links.agent`, unhashed. Do this step only if an auditor needs the name inside the chain.
+5. **R2-6 persistent sessions.** `backend/auth.py`: route `create_session`, `validate_session`, `destroy_session`, and the role lookup at `auth.py:156` through one DB helper keyed by `sha256(token)`. `backend/identity.py:40`: call `validate_session` instead of importing the set. Remove `active_sessions`. Tests: create a session, drop any in-process state, validate still passes; an expired row fails; destroy removes the row; `test_auth` and `identity` tests still pass.
+6. **R2-4 raw secret at rest.** `governance.py` `request_approval`: write the masked payload and `payload_hash`. `find_latest`: compare hashes, with the `NULL` fallback. The Phase 1 read-path masking stays as a second layer. Tests: a request whose payload holds an `sk-…` key leaves no `sk-…` in `approval_requests.payload`; the same call after Approve still consumes (the match now uses the hash of the raw call); an old row with `NULL` hash still matches. **Limit:** `PIIGuard` masks known formats only. The raw args are also logged at INFO (`tools.py:1931`); fix that line in the same step or the acceptance is only half true.
+7. **R2-2 rejected cooldown.** `governance.py`: have `find_latest` also return `resolved_at`; in `gate_tool`, a `REJECTED` row older than the cooldown is skipped. `.env.example`: document it. Tests: default `0` keeps the row blocking; with a cooldown and an aged `resolved_at`, the same call opens a new `PENDING` row.
+8. **R2-1, R1-2 gate, R2-4 encryption (only if Option B).** Not specified here. Write a separate spec for the replay path first: parent chat id in `links`, a `consume`-then-run path from the stored payload, and the trust review that goes with it.
+9. **R2-3 signed manifest (on request).** Detached signature file in the zip, checked by an optional `--sig` flag that runs `ssh-keygen -Y verify`. `--pin` stays the default.
+10. **Tooling.** Create a venv, install `ruff`, `black`, and `mypy`, and run them with the full `pytest` suite on the R1-1 change before the next release. Run `scripts/export_oss.sh` dry before every push; all paths here are core paths.
+
+### 6.6 Known constraints carried over
+
+| Issue | Location | Relevance |
+|---|---|---|
+| Fresh `/tmp` clone is cached | `scripts/export_oss.sh` (`DEST`) | A stale clone can hide a diff. `git fetch` ran fine today; delete `/tmp/hermes-synapse-oss` if the dry run looks wrong. |
+| Raw tool args logged at INFO | `backend/tools.py:1931` | Second secret path. Handled in step 6. |
+| OTP delivery without a Telegram bot | `backend/auth.py` | Not approvals. Demo hygiene: configure the bot or read the emergency OTP file. |
+| Demo instance state | outside the repo | Not verifiable from here. Step 1 acceptance covers it. |
+
+### 6.7 Order
+
+R0-1, R3-1, R1-2 switch (all before the Keil call), then R2-6, R2-4, R2-5, R2-2, then the Option B bundle and R2-3 when asked.
+
+This differs from `FIX-SPEC-demo-v3.md` in two places. R2-6 and R2-4 move ahead of R2-5, because R2-5 is optional and the other two remove a restart logout and a secret at rest. R1-2 is the switch only.
+
+### 6.8 Verification
+
+| # | Scenario | Pass condition |
+|---|---|---|
+| X1 | On the demo instance after the `v1.4.4` deploy, run the guide's `curl -f` export and the verifier. | `ok checked=N head=H`, exit 0. |
+| X2 | Run `backend/tests/test_agent.py` with `COMPLEXITY_ROUTING=always_agent`. | 12 pass. |
+| X3 | Set `DISABLE_CODE_AGENT=true` and ask the orchestrator for "a script that deletes X". | The step reports "CodeAgent disabled"; no sandbox call; no `PENDING` row. |
+| X4 | Log in, restart the backend, call any API. | `200`, not `401`. |
+| X5 | Put a known-format key in a gated tool call; read `approval_requests.payload`. | No raw key. Approve and re-send still runs the tool once. |
+| X6 | Verify an export made before R2-5, and one made after. | Both `ok`. Editing `agent_name` in the new one fails. |
+| X7 | Reject a call with `APPROVAL_REJECT_COOLDOWN_S=1`, wait, repeat it. | A new `PENDING` request appears. With `0`, it stays rejected. |
 
 ---
 

@@ -69,6 +69,20 @@ def _is_transient_network_err(exc: BaseException) -> bool:
     )
     return any(k in err_str for k in net_keywords)
 
+def _format_err_desc(exc: Any) -> str:
+    """Format an exception into an informative, non-empty string representation.
+    Ensures empty str(exc) (such as httpx.ConnectError('')) falls back to repr or type name."""
+    if exc is None:
+        return ""
+    msg = str(exc).strip()
+    if msg:
+        return msg
+    rep = repr(exc).strip()
+    if rep:
+        return rep
+    return type(exc).__name__ if type(exc).__name__ else "UnknownError"
+
+
 def mark_server_offline(name: str, cooldown_seconds: float = 300.0) -> None:
     """Mark an MCP server as offline until the cooldown period expires."""
     _server_offline_cooldowns[name] = time.time() + cooldown_seconds
@@ -172,19 +186,20 @@ class MCPServerClient:
             )
             cmd_str = " ".join(self.command) if isinstance(self.command, list) else (str(self.command) if self.command else "unknown")
             endpoint_str = self.url or cmd_str
+            err_desc = _format_err_desc(e)
             if getattr(self, "optional", False):
                 _server_offline_cooldowns[self.name] = time.time() + 300.0
-                logger.info(f"Optional MCP server '{self.name}' is unavailable or offline ({endpoint_str}): {e}")
+                logger.info(f"Optional MCP server '{self.name}' is unavailable or offline ({endpoint_str}): {err_desc}")
             elif is_connection_error:
                 is_net = _is_transient_network_err(e)
                 cd_secs = 60.0 if is_net else 300.0
                 cd_str = "60s" if is_net else "5m"
                 _server_offline_cooldowns[self.name] = time.time() + cd_secs
                 logger.warning(
-                    f"MCP server '{self.name}' is unavailable or failed to connect ({endpoint_str}): {e}. Entering {cd_str} cooldown."
+                    f"MCP server '{self.name}' is unavailable or failed to connect ({endpoint_str}): {err_desc}. Entering {cd_str} cooldown."
                 )
             else:
-                logger.error(f"Failed to start MCP server '{self.name}': {e}")
+                logger.error(f"Failed to start MCP server '{self.name}': {err_desc}")
 
     def _get_http_lock(self):
         try:
@@ -232,7 +247,7 @@ class MCPServerClient:
                         now_t = time.time()
                         last_t = getattr(self, "_last_reinit_warn_time", 0.0)
                         last_err_s = getattr(self, "_last_reinit_warn_msg", "")
-                        curr_err_s = str(init_err)
+                        curr_err_s = _format_err_desc(init_err)
                         suppressed = getattr(self, "_suppressed_reinit_warns", 0)
 
                         if is_net and curr_err_s == last_err_s and (now_t - last_t) < 300.0:
@@ -243,7 +258,7 @@ class MCPServerClient:
                             self._last_reinit_warn_time = now_t
                             self._last_reinit_warn_msg = curr_err_s
                             logger.warning(
-                                f"MCP server '{self.name}' initial HTTP session establishment failed: {init_err}{suppressed_note}. Entering {cd_str} cooldown."
+                                f"MCP server '{self.name}' initial HTTP session establishment failed: {curr_err_s}{suppressed_note}. Entering {cd_str} cooldown."
                             )
                         raise
         elif (
@@ -268,7 +283,7 @@ class MCPServerClient:
                         now_t = time.time()
                         last_t = getattr(self, "_last_reinit_warn_time", 0.0)
                         last_err_s = getattr(self, "_last_reinit_warn_msg", "")
-                        curr_err_s = str(init_err)
+                        curr_err_s = _format_err_desc(init_err)
                         suppressed = getattr(self, "_suppressed_reinit_warns", 0)
 
                         if is_net and curr_err_s == last_err_s and (now_t - last_t) < 300.0:
@@ -279,7 +294,7 @@ class MCPServerClient:
                             self._last_reinit_warn_time = now_t
                             self._last_reinit_warn_msg = curr_err_s
                             logger.warning(
-                                f"MCP server '{self.name}' proactive re-initialization failed: {init_err}{suppressed_note}. Entering {cd_str} cooldown."
+                                f"MCP server '{self.name}' proactive re-initialization failed: {curr_err_s}{suppressed_note}. Entering {cd_str} cooldown."
                             )
                         raise
 
@@ -337,8 +352,9 @@ class MCPServerClient:
                         cd_secs = 60.0 if is_net else 300.0
                         cd_str = "60s" if is_net else "5m"
                         self._reinit_cooldown_until = time.time() + cd_secs
+                        curr_err_s = _format_err_desc(init_err)
                         logger.warning(
-                            f"MCP server '{self.name}' re-initialization failed: {init_err}. Entering {cd_str} cooldown."
+                            f"MCP server '{self.name}' re-initialization failed: {curr_err_s}. Entering {cd_str} cooldown."
                         )
                         raise
             try:
@@ -350,8 +366,9 @@ class MCPServerClient:
                 cd_secs = 60.0 if is_net else 300.0
                 cd_str = "60s" if is_net else "5m"
                 self._reinit_cooldown_until = time.time() + cd_secs
+                retry_err_s = _format_err_desc(retry_err)
                 logger.warning(
-                    f"MCP server '{self.name}' request failed after re-initialization: {retry_err}. Entering {cd_str} cooldown."
+                    f"MCP server '{self.name}' request failed after re-initialization: {retry_err_s}. Entering {cd_str} cooldown."
                 )
                 raise
 
@@ -494,8 +511,7 @@ class MCPServerClient:
                     "arguments": arguments
                 })
         except Exception as e:
-            err_str = str(e).strip()
-            err_desc = err_str if err_str else (repr(e) if repr(e) else type(e).__name__)
+            err_desc = _format_err_desc(e)
             # If proactive re-initialization already failed and entered cooldown, avoid redundant WARNING
             if time.time() < getattr(self, "_reinit_cooldown_until", 0.0):
                 logger.debug(f"MCP server '{self.name}' call_tool '{tool_name}' failed during active cooldown: {err_desc}")
@@ -600,11 +616,12 @@ async def init_mcp_servers(target_servers: Optional[Iterable[str]] = None):
             try:
                 await client.start()
             except Exception as start_err:
+                err_desc = _format_err_desc(start_err)
                 if srv_config.get("optional", False):
                     _server_offline_cooldowns[name] = time.time() + 300.0
-                    logger.info(f"Optional MCP server '{name}' start skipped or offline: {start_err}")
+                    logger.info(f"Optional MCP server '{name}' start skipped or offline: {err_desc}")
                 else:
-                    logger.warning(f"MCP server '{name}' start encountered error: {start_err}")
+                    logger.warning(f"MCP server '{name}' start encountered error: {err_desc}")
 
             mcp_clients[name] = client
             if client.is_connected:

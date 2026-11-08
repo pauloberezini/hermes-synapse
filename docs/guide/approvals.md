@@ -54,7 +54,7 @@ A direct chat has no planner. SOURCE shows the user's message and the flag `dire
 
 1. The **Approvals** badge shows `1` within about a second on a healthy socket. If the socket is down, the badge polls every 10 seconds.
 2. Click the badge to open the **Governance Approvals** modal.
-3. Click **Show evidence** `#<id>` on the pending item:
+3. Click **Show evidence #<id>** on the pending item:
    - Under **CLAIM**, verify the command payload, the agent name (for example Sys Ops) beside the session id, and the evidence SHA-256 hash.
    - Under **SOURCE**, review the planner step context and upstream excerpts. `plan` is present for an orchestrator step and for a direct chat (`direct_route`).
    - Keys are redacted in the `[API_KEY_OPENAI_REDACTED]` style.

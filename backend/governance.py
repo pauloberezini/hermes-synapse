@@ -685,6 +685,23 @@ def gate_tool(agent_id: str, action_name: str, payload: dict) -> Optional[str]:
         return None
     agent_id = agent_id or "default"
     payload = payload or {}
+
+    # Pre-validate payload for unexpanded placeholders to avoid polluting
+    # the approval queue with unexecutable commands.
+    if action_name == "execute_command":
+        cmd = payload.get("command")
+        if isinstance(cmd, str):
+            from backend.tools import find_unexpanded_placeholders
+            placeholders = find_unexpanded_placeholders(cmd)
+            if placeholders:
+                return json.dumps({
+                    "status": "INVALID_ARGUMENTS",
+                    "error": (
+                        f"Command contains unexpanded placeholder(s): {', '.join(placeholders)}. "
+                        "Please provide concrete values instead of placeholder brackets before executing."
+                    ),
+                }, ensure_ascii=False)
+
     match = ApprovalQueue.find_latest(agent_id, action_name, payload)
     if match and match["status"] == ApprovalQueue.STATUS_APPROVED:
         ApprovalQueue.consume(match["id"])

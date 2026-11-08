@@ -138,7 +138,7 @@ Shipped behavior stops the planner prompt from demanding BTC. It does not stop t
 
 ## 2. Architecture Diagram
 
-Graphviz source is `dialog-continuation-cycle-guard.dot` in this directory (inlined below).
+See [`dialog-continuation-cycle-guard.dot`](./dialog-continuation-cycle-guard.dot) for the Graphviz source.
 
 ```dot
 digraph DialogContinuationCycleGuard {

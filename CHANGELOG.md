@@ -6,6 +6,21 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ## 🚀 [Unreleased]
 
+## 🚀 [v1.5.0] - 2026-11-01
+
+### 🏛️ Hierarchical Governance & Approval System
+- **Immutable Decision Log:** Hash-chained, append-only decision audit log (`approval_decisions` & `approval_evidence`) with SHA-256 integrity verification.
+- **Approval Workflow Context:** Full Phase 1 & Phase 2 context preservation for queued approvals, including payload masking, policy evaluation, and audit traceability.
+- **Realtime UI Notifications:** WebSocket-driven live updates for approvals badge counter and interactive Approval modal.
+
+### 🛡️ Runtime Hardening & Broker Resilience
+- **Database Test Isolation:** Guardrail in `conftest.py` strictly forbidding test suite execution against production databases (`_assert_test_db_isolation`).
+- **cTrader Stale Cache Protection:** Handled broker token expirations and network disconnects gracefully; prevented false-positive trade closure in Watcher during outages.
+- **Session Scheduler Fast-Bail:** Immediate desk-wide blocked state reporting on unverified positions without spawning per-symbol worker subprocesses.
+
+### 🎨 Visual & Architecture Specs
+- **Daylight Jira-Style Light Theme:** Specification and Graphviz architectural blueprint for Daylight UI theme.
+
 ## 🚀 [v1.4.3] - 2026-10-11
 
 ### 🧩 Auto-hire

@@ -170,3 +170,75 @@ def test_create_obsidian_note_indexes_when_vault_offline(mock_index):
 def test_execute_command():
     res = tools.execute_command("echo hello")
     assert "hello" in res
+
+
+def test_find_unexpanded_placeholders_detection():
+    """Verify detection of angle-bracket placeholders while respecting quotes."""
+    cmd_raw = "python scripts/verify_decision_log.py <zip> --pin <head>"
+    placeholders = tools.find_unexpanded_placeholders(cmd_raw)
+    assert placeholders == ["<zip>", "<head>"]
+
+    # Quoted brackets must not be flagged as unexpanded placeholders
+    cmd_quoted_single = "echo '<zip>' --pin '<head>'"
+    assert tools.find_unexpanded_placeholders(cmd_quoted_single) == []
+
+    cmd_quoted_double = 'echo "<zip>" --pin "<head>"'
+    assert tools.find_unexpanded_placeholders(cmd_quoted_double) == []
+
+    # Standard commands without placeholders
+    assert tools.find_unexpanded_placeholders("ls -la /tmp") == []
+    assert tools.find_unexpanded_placeholders("") == []
+    assert tools.find_unexpanded_placeholders(None) == []
+
+
+def test_execute_command_unexpanded_placeholder_rejection():
+    """execute_command rejects unexpanded placeholders before passing to shell."""
+    cmd = "python scripts/verify_decision_log.py <zip> --pin <head>"
+
+    with patch("subprocess.run") as mock_subproc:
+        res_raw = tools.execute_command(cmd)
+        mock_subproc.assert_not_called()
+
+    res = json.loads(res_raw)
+    assert res.get("exit_code") == 1
+    assert "unexpanded placeholder(s)" in res.get("error", "")
+    assert "<zip>" in res.get("error", "")
+    assert "<head>" in res.get("error", "")
+
+
+def test_gate_tool_placeholder_pre_validation():
+    """gate_tool returns INVALID_ARGUMENTS without polluting approval queue."""
+    from backend.governance import ApprovalQueue, gate_tool
+
+    payload = {"command": "python scripts/verify_decision_log.py <zip> --pin <head>"}
+
+    with patch.object(ApprovalQueue, "request_approval") as mock_request:
+        result_raw = gate_tool(agent_id="sys_ops", action_name="execute_command", payload=payload)
+        mock_request.assert_not_called()
+
+    assert result_raw is not None
+    result = json.loads(result_raw)
+    assert result.get("status") == "INVALID_ARGUMENTS"
+    assert "unexpanded placeholder(s)" in result.get("error", "")
+    assert "<zip>" in result.get("error", "")
+
+
+def test_execute_tool_placeholder_rejection_and_valid_progression():
+    """execute_tool blocks placeholder commands, allows concrete commands into approval queue."""
+    from backend.governance import ApprovalQueue
+
+    invalid_payload = {"command": "python scripts/verify_decision_log.py <zip> --pin <head>"}
+
+    # 1. Invalid command with placeholders is immediately blocked with INVALID_ARGUMENTS
+    blocked_raw = tools.execute_tool("execute_command", invalid_payload, chat_id="sys_ops")
+    blocked = json.loads(blocked_raw)
+    assert blocked.get("status") == "INVALID_ARGUMENTS"
+
+    # 2. Concrete command without placeholders progresses to approval gate
+    valid_payload = {"command": "python scripts/verify_decision_log.py /tmp/test.zip --pin 12345"}
+    with patch.object(ApprovalQueue, "request_approval", return_value="req-valid-123"):
+        approved_or_queued_raw = tools.execute_tool("execute_command", valid_payload, chat_id="sys_ops")
+        queued = json.loads(approved_or_queued_raw)
+        assert queued.get("status") == "PENDING_APPROVAL"
+        assert queued.get("request_id") == "req-valid-123"
+

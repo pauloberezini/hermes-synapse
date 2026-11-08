@@ -1,0 +1,48 @@
+digraph LightThemeJiraStyle {
+  graph [fontname="Helvetica" rankdir="LR" splines="ortho"]
+  node  [fontname="Helvetica" shape="box" style="rounded"]
+  edge  [fontname="Helvetica"]
+
+  subgraph cluster_boot {
+    label="Boot (before React)" style="dashed" color="gray"
+    PREPAINT [label="index.html inline script\nreads jarvis_theme:v1" shape="component"]
+    ATTR [label="html[data-theme]\n+ color-scheme" shape="note"]
+  }
+
+  subgraph cluster_store {
+    label="src/theme/themeStore.ts (singleton)" style="dashed" color="steelblue"
+    PREF [label="preference\ndark | light | system" shape="component"]
+    MQ [label="single matchMedia listener\n(only when system)" shape="component"]
+    RES [label="resolved\ndark | light" shape="component"]
+    APPLY [label="applyTheme()\n1 attribute write" shape="component"]
+  }
+
+  subgraph cluster_react {
+    label="React" style="dashed" color="purple"
+    PICKER [label="ConfigTab ->\nAppearancePicker (new)" shape="component"]
+    HOOK [label="useThemePreference /\nuseResolvedTheme\n(useSyncExternalStore)" shape="component"]
+    APP [label="App.tsx\n(no theme state,\nno re-render)" shape="component" style="rounded,dashed"]
+  }
+
+  subgraph cluster_css {
+    label="CSS" style="dashed" color="darkgreen"
+    TOKENS [label="theme/tokens.css\n:root = dark\n[data-theme=light] = Daylight" shape="component"]
+    CONSUMERS [label="index.css, styles.ts,\ninline styles, SVG\nvar(--token) only" shape="component"]
+  }
+
+  LS [label="localStorage\njarvis_theme:v1" shape="cylinder"]
+  RATCHET [label="colorLiterals.test.ts\nratchet baseline" shape="component" color="darkorange"]
+
+  PREPAINT -> ATTR
+  LS -> PREPAINT [style="dashed"]
+  PICKER -> PREF [xlabel="onChange"]
+  PREF -> LS
+  PREF -> RES
+  MQ -> RES
+  RES -> APPLY
+  APPLY -> ATTR
+  HOOK -> PICKER
+  ATTR -> TOKENS
+  TOKENS -> CONSUMERS
+  RATCHET -> CONSUMERS [xlabel="blocks new literals" style="dotted"]
+}

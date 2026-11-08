@@ -266,7 +266,7 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
         </div>
 
         {/* Content list */}
-        <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ padding: '20px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
           {requests.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '50px 20px', color: '#94a3b8', fontSize: '0.9rem' }}>
               No {activeTab === 'pending' ? 'pending ' : ''}approval requests found.
@@ -286,8 +286,7 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
                     borderRadius: '10px',
                     border: focusedId === req.id ? '1px solid rgba(0, 240, 255, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
                     backgroundColor: isPending ? 'rgba(0, 240, 255, 0.02)' : 'rgba(255, 255, 255, 0.01)',
-                    overflow: 'hidden',
-                    transition: 'all 0.2s ease',
+                    marginBottom: 14,
                   }}
                 >
                   {/* Summary Bar */}

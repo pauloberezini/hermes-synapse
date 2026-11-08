@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import HTTPException, Request, status
+if TYPE_CHECKING:
+    from fastapi import Request
 
 logger = logging.getLogger("hermes.identity")
 
@@ -62,7 +63,7 @@ def principal_from_token(token: str) -> Principal:
     raise ValueError("Invalid or expired session token")
 
 
-def current_principal(request: Request) -> Principal:
+def current_principal(request: Any) -> Principal:
     """FastAPI dependency to retrieve the current Principal.
 
     Reads `request.state.principal` if populated by middleware, or parses
@@ -77,6 +78,8 @@ def current_principal(request: Request) -> Principal:
     Raises:
         HTTPException: 401 if unauthenticated or invalid token.
     """
+    from fastapi import HTTPException, status
+
     cached: Any = getattr(request.state, "principal", None)
     if isinstance(cached, Principal):
         return cached

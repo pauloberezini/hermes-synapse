@@ -1408,8 +1408,33 @@ def restore_state() -> None:
     if scheduler is None:
         logger.info("Scheduler instance is not available, skipping restore_state.")
         return
+
+    from backend.plugins import hook
+
+    # 1. Audit and reconcile any jobs already loaded in memory (e.g. from persistent SQLAlchemyJobStore)
+    try:
+        for existing_job in list(scheduler.get_jobs()):
+            jid = getattr(existing_job, "id", None)
+            if not jid:
+                continue
+            jname = getattr(existing_job, "name", jid)
+            if _is_redundant_desk_orchestrator_job(job_id=jid, label=jname):
+                logger.info("Skipping/dropping redundant desk orchestrator job '%s' (%s) from scheduler", jname, jid)
+                _drop_scheduled_job(jid)
+                continue
+            if hook("should_retire_restored_job", jid, label=jname, default=False):
+                logger.info("Retiring orphaned/past event job '%s' (%s) from scheduler", jname, jid)
+                _drop_scheduled_job(jid)
+                continue
+    except Exception as _je:
+        logger.debug(f"Error auditing scheduler.get_jobs in restore_state: {_je}")
+
     try:
         from backend.database import _execute
+
+        # 2. Directly purge any zombie event records via private plugin hook
+        hook("purge_zombie_event_jobs")
+
         rows = _execute("SELECT session_id, title, agent_id, job_id, schedule_type, schedule_info FROM session_metadata WHERE is_scheduled = 1")
         restored_count = 0
         for r in rows:
@@ -1442,7 +1467,6 @@ def restore_state() -> None:
                 _drop_scheduled_job(job_id, session_id=session_id)
                 continue
 
-            from backend.plugins import hook
             if hook("should_retire_restored_job", job_id, label=label, task_type=task_type, default=False):
                 logger.info(
                     "Skipping restore and retiring past/one-shot event job '%s' (%s)",
