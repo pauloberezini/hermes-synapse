@@ -1,4 +1,9 @@
-# Governance Approvals & Audit Decision Log
+---
+title: Approvals walkthrough
+description: Human-in-the-loop approvals in Hermes Synapse - evidence bundles, CLAIM and SOURCE, PENDING to CONSUMED, export.zip, and offline verify_decision_log.py --pin.
+---
+
+# Governance Approvals and the decision log
 
 This guide walks through human-in-the-loop governance in Hermes Synapse: tool calls that need authorization capture evidence bundles, record a tamper-evident decision log, and can be checked offline.
 
@@ -48,13 +53,13 @@ A direct chat has no planner. SOURCE shows the user's message and the flag `dire
 - The backend creates an `approval_requests` row in `PENDING` status. The raw arguments stay in that row so a later identical call can match. API responses mask them.
 - An `approval_evidence` row is created with a SHA-256 hash and a redacted bundle.
 - An event of type `REQUESTED` is appended to `approval_decisions`.
-- A WebSocket event `{ "type": "approval_update", "id": <id>, "status": "PENDING" }` is broadcast.
+- A WebSocket event `{ "type": "approval_update", "id": REQUEST_ID, "status": "PENDING" }` is broadcast.
 
 ### Step 2: Review Evidence in Approvals UI
 
 1. The **Approvals** badge shows `1` within about a second on a healthy socket. If the socket is down, the badge polls every 10 seconds.
 2. Click the badge to open the **Governance Approvals** modal.
-3. Click **Show evidence #<id>** on the pending item:
+3. Click **Show evidence #N** on the pending item:
    - Under **CLAIM**, verify the command payload, the agent name (for example Sys Ops) beside the session id, and the evidence SHA-256 hash.
    - Under **SOURCE**, review the planner step context and upstream excerpts. `plan` is present for an orchestrator step and for a direct chat (`direct_route`).
    - Keys are redacted in the `[API_KEY_OPENAI_REDACTED]` style.
@@ -92,7 +97,7 @@ A rejected call stays blocked in that same session. The same call in a new sessi
 
 ## 3. Export & Offline Independent Verification
 
-Export the decision log as a zip of `decisions.jsonl`, `evidence/<id>.json`, a plain `manifest.json`, and `VERIFY.md`.
+Export the decision log as a zip of `decisions.jsonl`, `evidence/N.json`, a plain `manifest.json`, and `VERIFY.md`.
 
 ### Exporting Decisions
 
@@ -124,7 +129,7 @@ Record that head hash. A later check with `--pin` fails if the tail was dropped 
 python3 scripts/verify_decision_log.py decisions.zip --pin <entry_hash>
 ```
 
-If a row or hash was altered, the script prints `FAIL seq=N <reason>` to stderr and exits 1. A missing pin prints `pinned entry missing`.
+If a row or hash was altered, the script prints `FAIL seq=N reason` to stderr and exits 1. A missing pin prints `pinned entry missing`.
 
 ---
 

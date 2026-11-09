@@ -1,51 +1,85 @@
-# 🚀 Getting Started with Hermes Synapse
-
-Welcome to **Hermes Synapse** — an open-source, self-hosted **Multi-Agent Mesh & Governance Control Plane** inspired by Paperclip and built for scale.
-
+---
+title: Quick start
+description: Install Hermes Synapse with Docker Compose, configure OpenRouter or Ollama, log in with OTP, and open the dashboard on port 9119.
 ---
 
-## 🛠️ Quickstart Installation
+# Quick start
 
-### 1. Clone the Repository
+Hermes Synapse is a self-hosted **runtime governance layer** for AI agents: a DAG orchestrator, a human approval gate, and an append-only decision log. MIT licensed.
+
+## Requirements
+
+Docker and Docker Compose. That is enough.
+
+## Install
+
 ```bash
 git clone https://github.com/pauloberezini/hermes-synapse.git
 cd hermes-synapse
-```
-
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env` and set your API keys:
-```bash
 cp .env.example .env
 ```
-Edit `.env` to include your OpenRouter or Gemini API keys:
-```env
-OPENROUTER_API_KEY=your_key_here
-LLM_MODEL=ollama/llama3
+
+Set `OPENROUTER_API_KEY`, or point at a local model (below). Everything else is optional.
+
+```bash
+docker compose up -d --build
 ```
 
-When a request needs a competence nobody on the staff has, the core can hire a specialist under the orchestrator that owns the chat. `AUTO_HIRE=ask` (the default) creates the agent and waits for confirmation. `on` hires and runs it in the same turn. `off` reports the gap and creates nothing. Hired agents never receive skills the parent does not already have.
+- **Dashboard:** [http://localhost:9119](http://localhost:9119)
+- **API:** [http://localhost:8000](http://localhost:8000)
 
-#### 🔍 Web Search Backend (SearXNG)
-Hermes uses [SearXNG](https://github.com/searxng/searxng) as its open-source, self-hosted metasearch engine. No paid search API key is required:
-```env
+Login is a 6-digit OTP. It is printed in the backend log, optionally sent on Telegram, and written to `backend/data/.current_otp` as a fallback:
+
+```bash
+docker logs jarvis-backend | grep "Generated OTP Code"
+```
+
+After login you land on Communication Link (Main Terminal):
+
+<figure class="shot">
+
+![Hermes Synapse Communication Link after OTP login, Main Terminal session waiting for instructions](../assets/screenshots/communication-link-home.png)
+
+<figcaption>Voice and text control stream. New chats, the DAG canvas, and Governance Approvals live in the sidebar.</figcaption>
+</figure>
+
+## Local model (Ollama)
+
+```bash
+LLM_API_BASE=http://host.docker.internal:11434/v1
+LLM_MODEL=llama3
+OPENROUTER_API_KEY=local
+```
+
+## Web search (SearXNG)
+
+Hermes uses [SearXNG](https://github.com/searxng/searxng) as its metasearch backend. No paid search API key:
+
+```bash
 SEARXNG_URL=http://localhost:8080
 ```
-Point `SEARXNG_URL` to your local or self-hosted SearXNG instance so agents can perform web searches without proprietary search APIs.
 
+## Auto-hire
 
-### 3. Launch via Docker Compose (Recommended)
+When nobody on the staff covers a request, the planner can create a specialist under the orchestrator that owns the chat. Hired agents never receive skills the parent does not already have.
+
+| `AUTO_HIRE` | Behavior |
+|---|---|
+| `ask` (default) | Create the agent and wait for `POST /api/subagents/{id}/confirm` |
+| `on` | Hire and run in the same turn |
+| `off` | Report the gap and create nothing |
+
+## Development (hot reload)
+
 ```bash
-docker-compose up --build -d
+docker compose -f docker-compose.dev.yml up
 ```
-The application will be accessible at:
-- **Web Console UI**: `http://localhost:5173`
-- **FastAPI REST Backend**: `http://localhost:8000`
 
----
+- UI: [http://localhost:5173](http://localhost:5173)
+- API: [http://localhost:8000](http://localhost:8000)
 
-## 💻 Local Development Setup
+Without Docker:
 
-### Backend (Python 3.11+)
 ```bash
 cd backend
 python3 -m venv .venv
@@ -54,17 +88,23 @@ pip install -r requirements.txt
 python3 -m uvicorn backend.main:app --reload --port 8000
 ```
 
-### Frontend (React + Vite + TypeScript)
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
----
+## First gated demo
 
-## 🎥 Video Setup Guide
+Do **not** use the Code Engineer for this (see [Security - known limitations](./security.md#known-limitations)).
 
-Watch our step-by-step installation and initial configuration tutorial:
+1. New chat. Send: `Ask Sys Ops to run \`df -h /\` on the server.`
+2. Open **Governance Approvals**, read CLAIM and SOURCE, approve with a note.
+3. Send the same request again. The command runs once (`CONSUMED`).
+4. Send it a third time. A new `PENDING` item appears.
 
-<YouTube id="3GFh-1Gglno" title="Hermes Synapse Installation Guide" />
+Full walkthrough: [Approvals](./approvals.md).
+
+## Video
+
+<YouTube id="3GFh-1Gglno" title="Hermes Synapse overview" />

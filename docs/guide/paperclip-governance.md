@@ -1,20 +1,28 @@
-# 🛡️ Paperclip Governance: Budgeting & Approvals
-
-Hermes Synapse integrates **Paperclip-inspired governance controls** to guarantee safe autonomous subagent operations.
-
+---
+title: Budgeting and governance
+description: Paperclip-inspired BudgetGuard spend caps, human approval queues, and OSS team presets in Hermes Synapse.
 ---
 
-## 💰 1. Token & Dollar Budget Caps (`FEAT-1`)
+# Budgeting and governance
 
-The `BudgetGuard` module tracks LLM API spend in real-time and enforces hard dollar limits before invoking model completion endpoints.
+Hermes Synapse ships Paperclip-inspired controls so autonomous agents cannot spend or act without a ceiling.
 
-### Spend Summary API
+For the approval gate, evidence hash, and decision log, read [Security](./security.md) and [Approvals](./approvals.md). This page is the rest of the control plane.
+
+## Token and dollar caps (`BudgetGuard`)
+
+`BudgetGuard` (`backend/governance.py`) reads spend from the database and raises `BudgetExceededError` before the next LLM call if the cap is hit.
+
+Caps live in `app_settings`:
+
+- `budget_global_daily_usd`
+- `budget_global_monthly_usd`
+
+Per-session caps live on `session_metadata` (`daily_budget_usd`, `monthly_budget_usd`; `NULL` means unlimited).
+
 ```http
-GET /api/governance/budget/session_id
+GET /api/governance/budget/{session_id}
 ```
-Returns:
-- Session spend vs. daily session budget
-- Global spend vs. global daily and monthly caps
 
 ```json
 {
@@ -25,32 +33,21 @@ Returns:
 }
 ```
 
----
+## Human approval queue
 
-## 🙋‍♂️ 2. Human Approval Queue (`FEAT-2`)
+High-risk built-ins and write-shaped MCP tools stop at `PENDING` until an operator approves **that exact payload**. Approve does not execute. The next identical call is `CONSUMED` and runs once. See [Approvals](./approvals.md).
 
-High-stakes tool executions (file mutations, terminal commands, database deletes) are intercepted by the `ApprovalQueue` until a human operator approves them.
+The dashboard badge and modal (`ApprovalsBadge.tsx`, `ApprovalsModal.tsx`) are driven by WebSocket `approval_update` events, with a 10 second poll fallback.
 
-### Approvals Queue Modal UI
-Human operators can review pending actions directly in the Web UI:
+## Team presets
 
-```tsx
-<ApprovalsModal isOpen={isOpen} onClose={() => setIsOpen(false)} />
-```
+One-click OSS presets (`backend/presets.py`):
 
----
+- **Engineering Shop** - Tech Lead, Backend Python Developer, Security Auditor
+- **OSINT Bureau** - Intelligence Director, Web OSINT Scout, Obsidian Vault Archivist
 
-## 🏢 3. Team Archetype Presets (`FEAT-3`)
+Plugins may add more presets through the plugin hook. They are not listed here unless they live in the OSS tree.
 
-Deploy pre-configured agent teams with 1 click:
-- **Hedge Fund**: CEO + Quantitative Researcher + Python Engineer + Risk Analyst
-- **Engineering Shop**: Tech Lead + Backend Developer + QA Tester
-- **OSINT Bureau**: Intelligence Director + Web Scraper + Fact Checker
+## Video
 
----
-
-## 🎥 Video Tutorial
-
-Watch how to configure spend budgets and approve high-stakes subagent requests:
-
-<YouTube id="3GFh-1Gglno" title="Paperclip Governance Tutorial" />
+<YouTube id="3GFh-1Gglno" title="Paperclip governance tutorial" />

@@ -1,4 +1,9 @@
-# 🎥 YouTube Video Walkthroughs & Demos
+---
+title: Video walkthroughs
+description: Hermes Synapse video demos - DAG orchestration, Paperclip budget caps, the approvals queue, Kanban tasks, and the Python SDK.
+---
+
+# Video walkthroughs
 
 Welcome to the **Hermes Synapse Video Hub**! Here you will find video walkthroughs, system architecture breakdowns, and live feature demonstrations.
 

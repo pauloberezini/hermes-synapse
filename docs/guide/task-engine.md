@@ -1,4 +1,9 @@
-# 🎯 Task Engine, Kanban & Heartbeat Pulse
+---
+title: Task engine and Kanban
+description: Atomic task checkout, heartbeat pulse checkpoints, and org-chart escalation routing in Hermes Synapse.
+---
+
+# Task engine, Kanban, and heartbeat pulse
 
 Hermes Synapse features an **Atomic Task Engine** and **Resumable Heartbeat Pulse Engine** for coordinating long-running multi-agent pipelines.
 
