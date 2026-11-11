@@ -69,3 +69,35 @@ jobs:
 
       - name: Build Application
         run: npm run build
+
+  docs-build:
+    name: VitePress docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install and build docs
+        working-directory: docs
+        run: |
+          npm ci
+          npm run docs:build
+
+      - name: Check SEO artifacts
+        run: |
+          test -f docs/.vitepress/dist/robots.txt
+          test -f docs/.vitepress/dist/sitemap.xml
+          test -f docs/.vitepress/dist/og-image.png
+          grep -q 'application/ld+json' docs/.vitepress/dist/index.html
+          grep -q 'og:image' docs/.vitepress/dist/index.html
+          grep -q 'canonical' docs/.vitepress/dist/index.html
+          grep -q 'https://pauloberezini.github.io/hermes-synapse/' docs/.vitepress/dist/sitemap.xml
+          grep -q 'https://pauloberezini.github.io/hermes-synapse/guide/security.html' docs/.vitepress/dist/sitemap.xml
+          ! grep -q 'https://pauloberezini.github.io/guide/' docs/.vitepress/dist/sitemap.xml

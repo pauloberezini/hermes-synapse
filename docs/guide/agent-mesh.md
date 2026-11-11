@@ -1,4 +1,9 @@
-# 🕸️ P2P Agent Mesh & Hermes Python SDK
+---
+title: Agent mesh and Python SDK
+description: Hermes Synapse P2P agent mesh, Qdrant RAG memory, and the hermes_sdk decorator API for custom skills.
+---
+
+# P2P agent mesh and Hermes Python SDK
 
 Hermes Synapse includes a decentralized **Peer-to-Peer Agent Mesh** allowing distinct agent nodes to discover each other, delegate subtasks, and share vector memory.
 
