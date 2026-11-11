@@ -79,6 +79,15 @@ describe('ChatTab Component', () => {
     expect(props.handleSendMessage).toHaveBeenCalled();
   });
 
+  it('exposes the phone layout hooks on the chat shell', () => {
+    const { container } = render(<ChatTab {...defaultProps} />);
+    for (const hook of ['.chat-tab', '.chat-tab-header', '.chat-controls', '.chat-sessions', '.chat-composer', '.chat-thread']) {
+      expect(container.querySelector(hook)).toBeTruthy();
+    }
+    expect(screen.getByRole('button', { name: /clear chat/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /new chat/i })).toBeInTheDocument();
+  });
+
   it('lists active chat sessions in the sidebar', () => {
     render(<ChatTab {...defaultProps} />);
     

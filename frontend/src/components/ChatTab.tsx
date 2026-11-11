@@ -261,17 +261,17 @@ export function ChatTab({
   }, [inputValue]);
 
   return (
-    <div style={styles.tabWrapper}>
-      <div style={styles.tabHeader}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-          <div>
+    <div style={styles.tabWrapper} className="chat-tab">
+      <div style={styles.tabHeader} className="chat-tab-header">
+        <div className="chat-title-row" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <div className="chat-title-block">
             <h2 className="glow-text-cyan" style={styles.tabTitle}>COMMUNICATION LINK</h2>
             <p style={styles.tabSubtitle}>Voice and text control stream for the assistant</p>
           </div>
 
           {/* Active Session Metadata Group */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255, 255, 255, 0.03)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="chat-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div className="chat-session-pill" style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255, 255, 255, 0.03)', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>SESSION:</span>
               <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
                 {currentChatId === 'dashboard' ? 'Main Terminal' : getSessionLabel(currentChatId)}
@@ -313,7 +313,7 @@ export function ChatTab({
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="chat-controls" style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Mic toggle button */}
           <button
             id="mic-toggle-btn"
@@ -409,7 +409,7 @@ export function ChatTab({
       {/* Split layout: sessions sidebar on the left, chat workspace on the right */}
       <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }} className="chat-layout">
         {/* Sessions Sidebar */}
-        <div style={{
+        <div className="chat-sessions" style={{
           width: '260px',
           display: 'flex',
           flexDirection: 'column',
@@ -420,7 +420,8 @@ export function ChatTab({
           height: '100%',
           minHeight: 0
         }}>
-          <button 
+          <button
+            className="chat-new-btn"
             onClick={handleCreateNewSession}
             style={{
               display: 'flex',
@@ -444,11 +445,11 @@ export function ChatTab({
             <span>New Chat</span>
           </button>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', marginBottom: '5px' }}>
+          <div className="chat-sessions-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', marginBottom: '5px' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '1px' }}>ACTIVE SESSIONS</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
+          <div className="chat-session-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
             {(Array.isArray(chatSessions) ? chatSessions : []).map(session => {
               const s = session.id;
               const isActive = currentChatId === s;
@@ -737,7 +738,7 @@ export function ChatTab({
         </div>
 
         {/* Chat Area */}
-        <div style={{ ...styles.chatArea, flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }} className="glass-panel">
+        <div style={{ ...styles.chatArea, flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }} className="glass-panel chat-workspace">
           {/* Scheduled Task Control Header Card */}
           {(() => {
             const activeSessionObj = (Array.isArray(chatSessions) ? chatSessions : []).find(s => s.id === currentChatId);
@@ -879,7 +880,7 @@ export function ChatTab({
             );
           })()}
 
-          <div style={styles.chatScroller}>
+          <div style={styles.chatScroller} className="chat-thread">
             {messages.map((msg, index) => (
               <div 
                 key={index} 
@@ -1044,7 +1045,7 @@ export function ChatTab({
           </div>
 
           {/* Chat Input Area */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <div className="chat-composer" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             {/* Attached file badge */}
             {attachedFile && (
               <div style={{
