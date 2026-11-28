@@ -2,11 +2,27 @@
 
 # Hermes Synapse
 
-### Runtime governance and a human approval layer for AI agents
+## Runtime governance and human approvals for AI agents
 
-Agents plan on a DAG, inherit only the tools their parent allows, and stop on risky calls until a human approves **that exact payload** - once. The decision is hash-chained, exportable, and verifiable offline.
+Your agent works in the demo. Security will not sign off on production, because nobody can show who approved what it did. Hermes Synapse holds risky tool calls until a person approves that exact call, and writes every step to a hash-chained log you can check offline.
 
-[Docs](https://pauloberezini.github.io/hermes-synapse/) · [Security](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Integrations](https://pauloberezini.github.io/hermes-synapse/guide/integrations.html) · [Approvals guide](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html)
+Built for SecOps, SRE and AI platform teams that have an agent they like and a security review they cannot pass yet.
+
+</div>
+
+1. An approval covers one call. Approving only records your decision. The agent then sends the same call again and it runs once. Change an argument and you get a new request.
+2. Security can check the zip export without us. Requests, approvals, rejections and uses are chained with SHA-256. Export a zip, run one Python script from the standard library, and it fails if a row was changed or dropped. The signature check adds one package (cryptography).
+3. Agents only get narrower. A child agent gets the tools that appear in both its own list and its parent's. BudgetGuard stops LLM calls once a session or global spend cap is reached.
+
+It runs on your own machines with Docker Compose, under the MIT license. Any OpenAI-compatible model works, including a local one. MCP tools that are not marked read-only wait for a human by default.
+
+[Run the approvals demo](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html) · [Read the security model](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Regulated fintech use case](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html) · [Talk about a pilot](https://www.linkedin.com/in/pauloberezini/)
+
+Known limits today: Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The zip export is tamper-evident when you pin its head hash, and it carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. One maintainer.
+
+<div align="center">
+
+[Docs](https://pauloberezini.github.io/hermes-synapse/) · [Comparison](https://pauloberezini.github.io/hermes-synapse/guide/comparison.html) · [Security](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Integrations](https://pauloberezini.github.io/hermes-synapse/guide/integrations.html) · [Approvals guide](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](LICENSE)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11+-3b82f6.svg)](https://www.python.org/)
@@ -28,14 +44,14 @@ docker compose up -d --build
 
 ## Why
 
-Most multi-agent stacks are either **hardwired workflows** (n8n, Make) or **unbounded chat loops** (AutoGen-style). Hermes sits in the middle, and then adds a control plane the others leave as a TODO:
-
 - A visual DAG of orchestrators and specialists. No cycles. Children cannot gain tools the parent does not have.
-- Dynamic LLM planning, not a hardcoded pipeline.
-- A real gate on risky tools: the operator reviews the claim and the source, approves a payload hash, then the agent must send the **same** call again before anything runs. A replay is a new `PENDING` request, not a free pass.
+- Dynamic LLM planning instead of a hardcoded pipeline.
+- A gate on risky tools. The operator reads the claim and the source, approves a payload hash, and then the agent has to send the same call again before anything runs. A replay is a new `PENDING` request.
 - An append-only, hash-chained decision log you can export and check with a stdlib Python script. No Hermes install, no network.
 
 Self-hosted. MIT. Docker Compose. Built by [Pavel Bereznichenko](https://github.com/pauloberezini) at [SupplyAlpha.ai](https://supplyalpha.ai).
+
+How it compares to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop and a Slack button: [comparison](https://pauloberezini.github.io/hermes-synapse/guide/comparison.html). For teams under financial regulation: [regulated fintech](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html).
 
 ---
 
@@ -254,8 +270,8 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 
 ### Login and identity
 
-- Dashboard login is a **6-digit OTP** (5 minute TTL, single use). The code is printed in the backend log, optionally sent on Telegram, and written to `backend/data/.current_otp` (mode `0600`) as an emergency fallback.
-- Local OTP sessions live in an in-memory set. A backend restart drops them (known limitation R2-6).
+- Dashboard login is a **6-digit OTP** (5 minute TTL, single use, hashed in the database, 5 failed attempts lock the code out). It is sent on Telegram and, in development, written to `backend/data/.current_otp` (mode `0600`). The plaintext code is not written to logs.
+- Local OTP sessions are stored as SHA-256 token hashes in `auth_sessions` (12h sliding TTL, logout sets `revoked_at`) so they survive restarts and work across replicas.
 - Optional `JWT_SECRET` enables HS256 JWT sessions (`alg=none` is rejected). RBAC roles: admin > editor > operator > viewer. OTP sessions are treated as `local-admin`.
 - Decision events record a `Principal` (`subject`, `roles`, `tenant_id`, `auth_method`).
 
@@ -272,13 +288,13 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 | **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to the source (`{"code": ...}`) and consumed once. A PENDING/REJECTED result does not enter the auto-correct loop; each new script is a new payload. Nested orchestrators skip code/analyst when `python_sandbox` is missing from the skill intersection. `CODE_AGENTS_ENABLED` defaults to false (fail closed on unset and unrecognised values). |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
-| **R2-6** | OTP sessions are not persisted across process restarts. |
+| **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
 | Verifier | The zip export is tamper-evident with `--pin` and carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. Not encrypted. |
 | PIIGuard | Known regexes only. |
 
-Roadmap for gating the code agent, signed manifests, and persistent sessions: [ROADMAP.md](ROADMAP.md) and `docs/specs/approvals-demo-hardening-phase2.md`.
+Roadmap for signed manifests: [ROADMAP.md](ROADMAP.md) and `docs/specs/approvals-demo-hardening-phase2.md`.
 
 ---
 
@@ -392,7 +408,7 @@ Other dashboard surfaces: visual DAG canvas, 2.5D pixel office, Kanban task boar
 
 Shipped on current `main` includes DAG orchestration, PostgreSQL, Qdrant / GraphRAG, Telegram, MCP client, plugin boundary, `hermes_sdk`, marketplace registry, voice in the browser, OTP + optional JWT RBAC, Paperclip-style BudgetGuard, HITL approvals with evidence bundles, and the immutable decision log.
 
-Still ahead: production multi-cluster mesh, WebRTC voice / local multimodal, marketplace monetization beyond the no-op adapter, persistent login sessions, and a signed export manifest.
+Still ahead: production multi-cluster mesh, WebRTC voice / local multimodal, marketplace monetization beyond the no-op adapter, and a signed export manifest.
 
 See [ROADMAP.md](ROADMAP.md) for the full specification.
 

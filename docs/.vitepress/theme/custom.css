@@ -80,3 +80,11 @@
   padding: 0.2rem 0 0.2rem 1rem;
   margin: 1rem 0 1.5rem;
 }
+
+.hero-limits {
+  margin: 1rem auto 0;
+  max-width: 42rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--vp-c-text-2);
+}
