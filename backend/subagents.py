@@ -415,8 +415,8 @@ _GATE_BLOCKED = frozenset({
 
 
 def code_agents_enabled() -> bool:
-    """Kill switch for sandbox execution. Unrecognised values fail closed."""
-    raw = (os.getenv("CODE_AGENTS_ENABLED") or "true").strip().lower()
+    """Kill switch for sandbox execution. Unset and unrecognised values fail closed."""
+    raw = (os.getenv("CODE_AGENTS_ENABLED") or "false").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
 

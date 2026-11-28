@@ -19,7 +19,8 @@ def test_prod_compose_does_not_mount_docker_sock_or_publish_data_stores():
     assert "cap_drop" in text
     assert "no-new-privileges:true" in text
     assert "ENV: production" in text
-    assert "ALLOW_LOCAL_AUTH_FALLBACK" in text
+    assert "ALLOW_LOCAL_AUTH_FALLBACK: ${ALLOW_LOCAL_AUTH_FALLBACK:-0}" in text
+    assert "CODE_AGENTS_ENABLED: ${CODE_AGENTS_ENABLED:-false}" in text
 
 
 def test_docker_sock_overlay_is_opt_in_with_warning():
@@ -39,6 +40,7 @@ def test_dev_compose_is_marked_dev_only_and_binds_localhost():
     assert "127.0.0.1:6333:6333" in text
     assert "/var/run/docker.sock" not in text
     assert "ENV: development" in text
+    assert 'CODE_AGENTS_ENABLED: "true"' in text
 
 
 def test_prod_dockerfiles_define_non_root_user():
@@ -63,3 +65,4 @@ def test_env_example_does_not_ship_default_secrets():
     assert "QDRANT_API_KEY=" in example
     assert "STRIPE_SECRET_KEY=" in example
     assert "your_stripe_secret_key_here" not in example
+    assert "CODE_AGENTS_ENABLED=false" in example

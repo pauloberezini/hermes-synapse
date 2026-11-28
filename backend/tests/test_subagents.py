@@ -5,6 +5,11 @@ from backend.governance import ApprovalQueue
 from backend.subagents import ResearchAgent, CodeAgent, AnalystAgent, execute_code
 
 
+@pytest.fixture(autouse=True)
+def enable_code_agents(monkeypatch):
+    monkeypatch.setenv("CODE_AGENTS_ENABLED", "true")
+
+
 def _approved_execute(code_str: str):
     """Run execute_code after consuming a one-shot approval for that source."""
     first = execute_code(code_str)

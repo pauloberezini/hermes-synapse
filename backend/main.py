@@ -123,7 +123,11 @@ async def lifespan(app: FastAPI):
         logger.debug("Could not attach custom loop exception handler: %s", e)
 
     from backend.runtime_secrets import enforce_runtime_secrets
-    enforce_runtime_secrets()
+    try:
+        enforce_runtime_secrets()
+    except SystemExit as exc:
+        # Skip uvicorn's lifespan traceback; compose still restarts unless-stopped.
+        os._exit(int(exc.code or 1))
 
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
@@ -297,7 +301,10 @@ async def request_code():
                 "message": "TELEGRAM_CHAT_ID is not configured; access code saved to local emergency fallback.",
                 "fallback": True
             }
-        return {"status": "error", "message": "TELEGRAM_CHAT_ID is not configured on backend."}
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "TELEGRAM_CHAT_ID is not configured on backend."},
+        )
         
     msg = (
         f"🏛️ **Hermes Authorization Request**\n\n"
@@ -325,7 +332,10 @@ async def request_code():
                         "message": "Telegram bot uninitialized; access code saved to local emergency fallback.",
                         "fallback": True
                     }
-                return {"status": "error", "message": "Telegram bot is not initialized."}
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "error", "message": "Telegram bot is not initialized."},
+                )
         except Exception as e:
             from backend.mcp_client import _is_transient_network_err
             is_transient = _is_transient_network_err(e) or isinstance(e, (OSError, asyncio.TimeoutError))
@@ -342,13 +352,19 @@ async def request_code():
                         "message": "Telegram network unavailable; access code saved to local emergency fallback.",
                         "fallback": True
                     }
-                return {
-                    "status": "error",
-                    "message": "Telegram service temporarily unreachable due to network error. Please try again in a few moments."
-                }
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "error",
+                        "message": "Telegram service temporarily unreachable due to network error. Please try again in a few moments.",
+                    },
+                )
             else:
                 logger.error(f"Failed to send auth code to Telegram: {e}")
-                return {"status": "error", "message": f"Failed to send code: {str(e)}"}
+                return JSONResponse(
+                    status_code=500,
+                    content={"status": "error", "message": f"Failed to send code: {str(e)}"},
+                )
 
 @app.post("/api/auth/verify-code")
 async def verify_code(req: AuthVerifyRequest):
