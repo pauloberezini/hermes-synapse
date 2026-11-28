@@ -141,15 +141,15 @@ docker compose exec backend cat /app/backend/data/.current_otp
 # POST /api/auth/verify-code  {"code":"<six digits>"}
 ```
 
-The file is mode `0600`, uid `10001`. `/api/auth/request-code` returns **HTTP 200** even when `status` is `"error"` (for example Telegram unset and fallback off). Read the JSON body.
+The file is mode `0600`, uid `10001`. Error responses keep `{"status":"error","message":"..."}` but use a real HTTP status: **400** if Telegram is not configured and fallback is off, **503** if the bot is down or Telegram is unreachable, **500** for other send failures. `curl -f` fails those. The dashboard reads `message` on non-2xx.
 
-On this install, default compose (`ALLOW_LOCAL_AUTH_FALLBACK=0`, no Telegram) returned:
+On this install, default compose (`ALLOW_LOCAL_AUTH_FALLBACK=0`, no Telegram) returned **HTTP 400**:
 
 ```json
 {"status":"error","message":"TELEGRAM_CHAT_ID is not configured on backend."}
 ```
 
-and no `.current_otp` file. With `ALLOW_LOCAL_AUTH_FALLBACK=1`, request-code wrote the file and login returned a 64-character session token in **1 s**.
+and no `.current_otp` file. With `ALLOW_LOCAL_AUTH_FALLBACK=1`, request-code wrote the file (HTTP 200) and login returned a 64-character session token in **1 s**.
 
 Sessions persist in Postgres (`auth_sessions`). A backend restart does not drop them.
 
@@ -254,15 +254,18 @@ docker run --rm -i -v hermes-synapse_backend_data:/data alpine:3.20 \
 docker run --rm -i -v hermes-synapse_sandbox_data:/data alpine:3.20 \
   sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf - -C /data' < backup/sandbox_data.tgz
 
+# Required after every root tar extract (there is no restore script in the repo):
 docker run --rm -v hermes-synapse_backend_data:/data alpine:3.20 chown -R 10001:10001 /data
 docker run --rm -v hermes-synapse_sandbox_data:/data alpine:3.20 chown -R 10002:10002 /data
 
 docker compose up -d
 ```
 
+Do **not** skip the two `chown` lines. Alpine extract runs as root; backend is uid **10001**, sandbox uid **10002**. A missing chown shows up as permission errors writing `/app/backend/data` or `/mnt/data`.
+
 Measured restore drill (drop DB, `pg_restore`, retar volumes, wait healthy): **19 s**. After restore, `/api/governance/decisions/verify` still reported `ok checked=4` with the same `head_hash`. The pre-wipe OTP session token still worked (sessions live in Postgres).
 
-**Fresh install** already created `backend_data` as `10001` and `sandbox_data` as `10002`. `chown` is required after a **root tar extract**, or when migrating volumes that were created as root before non-root compose.
+**Fresh install** already created `backend_data` as `10001` and `sandbox_data` as `10002`. `chown` is only for **root tar extract** or volumes created as root before non-root compose.
 
 ## Upgrade and rollback
 
@@ -330,9 +333,9 @@ Verified here: `ok checked=3` then `--pin` on the 64-char head.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `TELEGRAM_CHAT_ID is not configured` and no `.current_otp` | compose default `ALLOW_LOCAL_AUTH_FALLBACK=0` | set `ALLOW_LOCAL_AUTH_FALLBACK=1` in `.env`, `docker compose up -d --force-recreate --no-deps backend` |
-| request-code looks like it succeeded | HTTP **200** with `{"status":"error",...}` | read the JSON |
+| request-code HTTP 400 / 503 | body is still `{"status":"error","message":"..."}` | 400 = not configured; 503 = Telegram down; read `message` |
 | dashboard not reachable from your laptop | bound to **127.0.0.1:9119** on the VM | `ssh -L 9119:127.0.0.1:9119 user@vm` |
-| backend restart loop, logs `FATAL: JWT_SECRET … shorter than 32` | compose `:?` only checks the var is set | `openssl rand -hex 32` |
+| backend exits at start, one line `FATAL: invalid production secrets: JWT_SECRET. Fix: openssl rand -hex 32` | compose `:?` only checks the var is set; short/default values fail in the app | `openssl rand -hex 32` into `.env`, recreate backend |
 | permission denied writing `/app/backend/data` | volume owned by root from an old install or a root tar restore | `chown -R 10001:10001` on `*_backend_data`, `10002:10002` on `*_sandbox_data` |
 | Qdrant log: API key used with an insecure connection | HTTP on the internal compose network | expected; do not publish 6333 |
 | `/var/run/docker.sock` in the backend | you passed the opt-in overlay | remove it unless you have a skill that truly needs Docker. Host-root equivalent |

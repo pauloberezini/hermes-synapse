@@ -70,12 +70,14 @@ def enforce_runtime_secrets() -> None:
     errors = validate_runtime_secrets()
     if not errors:
         return
+    names: list[str] = []
     for msg in errors:
-        print(f"FATAL: {msg}", file=sys.stderr)
+        for name in ("JWT_SECRET", "POSTGRES_PASSWORD", "QDRANT_API_KEY", "DATABASE_URL"):
+            if name in msg and name not in names:
+                names.append(name)
+    labelled = ", ".join(names) if names else "secrets"
     print(
-        "FATAL: refusing to start with unsafe production secrets. "
-        "Set JWT_SECRET, POSTGRES_PASSWORD, and QDRANT_API_KEY. "
-        "See .env.example.",
+        f"FATAL: invalid production secrets: {labelled}. Fix: openssl rand -hex 32",
         file=sys.stderr,
     )
     raise SystemExit(1)

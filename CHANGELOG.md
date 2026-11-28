@@ -20,6 +20,8 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 - `docker-compose.dev.yml` stays a clearly marked dev-only hot-reload path.
 - `ALLOW_LOCAL_AUTH_FALLBACK` is interpolable from `.env` (default `0`). Set `1` on a VM without Telegram so OTP is written to `backend/data/.current_otp`.
 - Pilot runbook: `docs/pilot-runbook.md` (clean-VM install, measured resources, backup/restore, upgrade/rollback, offline `verify_decision_log.py`).
+- `POST /api/auth/request-code` returns 400/503/500 on failure (body still `{"status":"error","message":"..."}`).
+- Production secret check prints one `FATAL:` line naming the variables and `openssl rand -hex 32`, then exits without a uvicorn traceback.
 
 ### 🧹 Hygiene
 - **Private BCM plugin is not in this product.** `backend/bcm/` was already isolated from the tree; leftover schema (`trade_traces`, `self_learning_metrics`), Docker FIX/charting/FRED packages, `GRAPHRAG_API_URL`, gitignore plugin paths, and test fixtures that named the desk are gone. The generic plugin loader stays so other optional `backend/<name>/plugin.py` modules can still register.
