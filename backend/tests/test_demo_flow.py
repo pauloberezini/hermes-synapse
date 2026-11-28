@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import os
+import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -258,6 +262,7 @@ def _assert_evidence_layout(out: Path) -> None:
         and path.suffix in {".md", ".json", ".csv", ".txt", ".py"}
         and path.name != "SPEC.md"
         and path.name != SAMPLE_NAME
+        and path.relative_to(out).parts[0] != "src"
     )
     for banned in ("ed25519", "audit-log"):
         assert banned not in blob.lower(), banned
@@ -292,11 +297,64 @@ def test_evidence_pack_from_demo_export(tmp_path: Path, monkeypatch: pytest.Monk
     _assert_evidence_layout(out)
 
 
+PMM_G6 = {
+    "README.md": "e6a72871aeb786ac5e045fb3545575d9469dbcf1dbb6dde8c084838105fb839d",
+    "SUMMARY.md": "cadbbaf70a38ffe91ce2847d2cdbfba9671d5eae3ab9db3ac257d06940c65333",
+    "SUMMARY.pdf": "93825d243ee8f1a35fdc9f9e6eb9b52036bea668b28284ed2b1d386f3932781e",
+}
+
+
 def test_committed_evidence_sample() -> None:
     folder = _ROOT / "docs" / "demo" / "evidence"
     assert (folder / "hermes-evidence-sample.zip").is_file()
     assert (folder / "SPEC.md").is_file()
+    assert (folder / "SUMMARY.pdf").is_file()
+    for name, digest in PMM_G6.items():
+        assert hashlib.sha256((folder / name).read_bytes()).hexdigest() == digest, name
     _assert_evidence_layout(folder)
+
+
+def test_assemble_keeps_pmm_files_and_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    demo = _demo()
+    monkeypatch.setenv("CODE_AGENTS_ENABLED", "false")
+    demo.run_demo_flow(export_dir=tmp_path, log=lambda *_a, **_k: None)
+    out = tmp_path / "evidence"
+    _evidence().assemble(export_dir=tmp_path, out_dir=out)
+    log_sha = hashlib.sha256((out / "decision-log.zip").read_bytes()).hexdigest()
+    tamp_sha = hashlib.sha256((out / "decision-log.tampered.zip").read_bytes()).hexdigest()
+    readme = (out / "README.md").read_bytes() + b"\n# PMM-KEEP\n"
+    summary = (out / "SUMMARY.md").read_bytes()
+    pdf = b"%PDF-1.4 PMM-KEEP\n"
+    (out / "README.md").write_bytes(readme)
+    (out / "SUMMARY.pdf").write_bytes(pdf)
+    _evidence().assemble(export_dir=tmp_path, out_dir=out)
+    assert hashlib.sha256((out / "decision-log.zip").read_bytes()).hexdigest() == log_sha
+    assert hashlib.sha256((out / "decision-log.tampered.zip").read_bytes()).hexdigest() == tamp_sha
+    assert (out / "README.md").read_bytes() == readme
+    assert (out / "SUMMARY.md").read_bytes() == summary
+    assert (out / "SUMMARY.pdf").read_bytes() == pdf
+
+
+def test_repack_rebuilds_manifest_and_zip_only(tmp_path: Path) -> None:
+    src = _ROOT / "docs" / "demo" / "evidence"
+    dest = tmp_path / "evidence"
+    shutil.copytree(src, dest)
+    log_sha = hashlib.sha256((dest / "decision-log.zip").read_bytes()).hexdigest()
+    tamp_sha = hashlib.sha256((dest / "decision-log.tampered.zip").read_bytes()).hexdigest()
+    pmm = {name: (dest / name).read_bytes() for name in PMM_G6}
+    sample = _evidence().repack(dest)
+    assert hashlib.sha256((dest / "decision-log.zip").read_bytes()).hexdigest() == log_sha
+    assert hashlib.sha256((dest / "decision-log.tampered.zip").read_bytes()).hexdigest() == tamp_sha
+    for name, data in pmm.items():
+        assert (dest / name).read_bytes() == data
+    manifest = json.loads((dest / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert manifest["files"]["SUMMARY.pdf"]["sha256"] == PMM_G6["SUMMARY.pdf"]
+    with zipfile.ZipFile(sample) as archive:
+        names = set(archive.namelist())
+    assert "SUMMARY.pdf" in names
+    assert "SPEC.md" not in names
+    assert "src/summary.css" not in names
+    assert "hermes-evidence-sample.zip" not in names
 
 
 def test_demo_guide_drops_false_security_claims() -> None:

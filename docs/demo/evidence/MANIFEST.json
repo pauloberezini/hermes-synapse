@@ -1,19 +1,23 @@
 {
   "package": "hermes-evidence-sample",
-  "build_time_utc": "2026-11-28T16:25:23.319459+00:00",
-  "main_commit": "c263738efa6bd8c8d5dd88174c3632394c21ba9b",
-  "demo_commit": "fd36888f904251a4abb5868d25b477cfce1b0611",
+  "build_time_utc": "2026-11-28T16:38:47.310993+00:00",
+  "main_commit": "2267e4653d48cefeb2d87de94cfcdb6a5c02c677",
+  "demo_commit": "2267e4653d48cefeb2d87de94cfcdb6a5c02c677",
   "generator": "scripts/demo_evidence.py",
   "data_source": "scripted demo, mocked shell and sandbox",
   "python": "3.12.3",
   "files": {
     "README.md": {
-      "sha256": "a175827d584ce25135fa048ac9277d56e6c6a4e26aebe6f2d4f44665a2cb73f9",
-      "size": 2830
+      "sha256": "e6a72871aeb786ac5e045fb3545575d9469dbcf1dbb6dde8c084838105fb839d",
+      "size": 2900
     },
     "SUMMARY.md": {
-      "sha256": "3113e9e50d3e56e1098b0eb98a7ee2e5efae190a104aefed2eba72d045da210e",
-      "size": 3365
+      "sha256": "cadbbaf70a38ffe91ce2847d2cdbfba9671d5eae3ab9db3ac257d06940c65333",
+      "size": 3495
+    },
+    "SUMMARY.pdf": {
+      "sha256": "93825d243ee8f1a35fdc9f9e6eb9b52036bea668b28284ed2b1d386f3932781e",
+      "size": 18229
     },
     "approvals/calls.csv": {
       "sha256": "bfedbf775297548f792b1322cabea555ca6045b5b7012c0df906b789ecd4b1d2",

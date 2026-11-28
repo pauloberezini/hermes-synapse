@@ -2,8 +2,7 @@
 
 This is not legal advice. This pack does not make you compliant.
 
-This sample pack does not include signed checkpoints. The zip log
-carries no signatures. In real use the pin is recorded off-host
+This sample pack does not include signed checkpoints; the zip log carries no signatures. In real use the pin is recorded off-host
 (for example in the email that carries the export), and a pin stored
 inside the same zip is a demonstration.
 
@@ -18,7 +17,7 @@ recorded and not enforced.
 ## Known limits (short)
 
 - The approve endpoint checks no role. Any logged-in session can approve, and the log records the subject, the roles and the login method. RBAC is not wired.
-- The log in this sample pack is tamper-evident with a pinned head hash and carries no signatures.
+- The zip log is tamper-evident with a pinned head hash. This sample pack does not include signed checkpoints; the zip log carries no signatures.
 - No SOC 2 and no named customers.
 - Approvals cover agents running in Hermes, with no gateway in front of other clients.
 - Code agents are off by default.
@@ -54,7 +53,7 @@ python3 verifier/verify_decision_log.py decision-log.zip --pin "$(cat pinned-hea
 python3 verifier/verify_decision_log.py decision-log.tampered.zip
 ```
 
-Expect exit 0 and `ok checked=N head=H` on the first two. Expect exit 1 and
+Expect exit 0 and `ok checked=N head=H` on the clean check and the pinned check. Expect exit 1 and
 `FAIL seq=1 entry_hash mismatch` on the third (see `negative-control-expected-output.txt`).
 
 Regenerate from a checkout: `make evidence`.

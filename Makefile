@@ -1,5 +1,5 @@
 # Hermes Synapse — demo stand. Backend tests: `cd backend && uv run pytest`.
-.PHONY: demo demo-reset evidence
+.PHONY: demo demo-reset evidence evidence-repack
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 export PYTHONPATH := $(ROOT)
@@ -26,3 +26,8 @@ demo-reset:
 
 evidence: demo
 	$(EVIDENCE_PY)
+
+# Rebuild MANIFEST.json + hermes-evidence-sample.zip from files already in
+# docs/demo/evidence/. Does not re-export logs or rewrite PMM README/SUMMARY/PDF.
+evidence-repack:
+	$(EVIDENCE_PY) --repack

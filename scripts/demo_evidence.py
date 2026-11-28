@@ -3,6 +3,13 @@
 
 No backend/frontend edits. Uses the demo export zip as-is, plus a byte copy
 of scripts/verify_decision_log.py on a clean copy and a tampered copy.
+
+`--repack` rewrites only MANIFEST.json and hermes-evidence-sample.zip from
+files already in the evidence folder. It does not re-export the decision
+logs or rewrite README.md / SUMMARY.md / SUMMARY.pdf.
+
+`assemble` keeps those PMM files and the decision-log zips when they
+already exist, so `make evidence` cannot overwrite them.
 """
 
 from __future__ import annotations
@@ -27,9 +34,21 @@ if str(_ROOT) not in sys.path:
 
 OUT_DEFAULT = _ROOT / "docs" / "demo" / "evidence"
 SAMPLE_ZIP = "hermes-evidence-sample.zip"
-KEEP = frozenset({"SPEC.md"})
 DECISION_ZIP = "decision-log.zip"
 TAMPER_ZIP = "decision-log.tampered.zip"
+KEEP_ON_CLEAR = frozenset(
+    {
+        "SPEC.md",
+        "README.md",
+        "SUMMARY.md",
+        "SUMMARY.pdf",
+        DECISION_ZIP,
+        TAMPER_ZIP,
+    }
+)
+KEEP_DIRS = frozenset({"src"})
+ZIP_SKIP_NAMES = frozenset({SAMPLE_ZIP, "SPEC.md", "APPLY.md"})
+ZIP_SKIP_DIRS = frozenset({"src"})
 BANNED = (
     "/agent/repos",
     "/agent",
@@ -365,7 +384,10 @@ def _pack_paths(out_dir: Path) -> list[Path]:
     for path in sorted(out_dir.rglob("*")):
         if not path.is_file():
             continue
-        if path.name in KEEP or path.name == SAMPLE_ZIP:
+        rel = path.relative_to(out_dir)
+        if rel.parts[0] in ZIP_SKIP_DIRS:
+            continue
+        if path.name in ZIP_SKIP_NAMES:
             continue
         paths.append(path)
     return paths
@@ -392,6 +414,8 @@ def _write_manifest(out_dir: Path, files: list[Path]) -> None:
 
 
 def _assert_anonymous(path: Path) -> None:
+    if path.suffix.lower() == ".pdf":
+        return
     if path.suffix == ".zip":
         with zipfile.ZipFile(path) as archive:
             blob = b"".join(archive.read(name) for name in archive.namelist())
@@ -414,12 +438,23 @@ def _zip_sample(out_dir: Path, dest: Path) -> None:
 def _clear(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for item in out_dir.iterdir():
-        if item.name in KEEP:
+        if item.name in KEEP_ON_CLEAR:
+            continue
+        if item.is_dir() and item.name in KEEP_DIRS:
             continue
         if item.is_file():
             item.unlink()
         else:
             shutil.rmtree(item)
+
+
+def repack(out_dir: Path = OUT_DEFAULT) -> Path:
+    """Rebuild MANIFEST.json and the sample zip from files already on disk."""
+    hashed = [p for p in _pack_paths(out_dir) if p.name != "MANIFEST.json"]
+    _write_manifest(out_dir, hashed)
+    sample = out_dir / SAMPLE_ZIP
+    _zip_sample(out_dir, sample)
+    return sample
 
 
 def assemble(*, export_dir: Path, out_dir: Path) -> Path:
@@ -428,9 +463,11 @@ def assemble(*, export_dir: Path, out_dir: Path) -> Path:
     _clear(out_dir)
 
     dest = out_dir / DECISION_ZIP
-    dest.write_bytes(src.read_bytes())
+    if not dest.exists():
+        dest.write_bytes(src.read_bytes())
     tampered = out_dir / TAMPER_ZIP
-    _tamper(dest, tampered)
+    if not tampered.exists():
+        _tamper(dest, tampered)
 
     verifier = out_dir / "verifier" / "verify_decision_log.py"
     verifier.parent.mkdir(parents=True, exist_ok=True)
@@ -470,21 +507,25 @@ def assemble(*, export_dir: Path, out_dir: Path) -> Path:
     )
     (out_dir / "limits").mkdir(parents=True, exist_ok=True)
     (out_dir / "limits" / "known-limits.md").write_text(KNOWN_LIMITS, encoding="utf-8")
-    (out_dir / "README.md").write_text(_readme(), encoding="utf-8")
-    (out_dir / "SUMMARY.md").write_text(_summary(calls, ok_text), encoding="utf-8")
+    if not (out_dir / "README.md").exists():
+        (out_dir / "README.md").write_text(_readme(), encoding="utf-8")
+    if not (out_dir / "SUMMARY.md").exists():
+        (out_dir / "SUMMARY.md").write_text(_summary(calls, ok_text), encoding="utf-8")
 
-    hashed = [p for p in _pack_paths(out_dir) if p.name != "MANIFEST.json"]
-    _write_manifest(out_dir, hashed)
-
-    sample = out_dir / SAMPLE_ZIP
-    _zip_sample(out_dir, sample)
+    sample = repack(out_dir)
     for path in _pack_paths(out_dir):
         _assert_anonymous(path)
     return sample
 
 
 def main(argv: list[str] | None = None) -> int:
-    del argv
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args in (["--repack"], ["repack"]):
+        sample = repack(OUT_DEFAULT)
+        print(f"[evidence] repack {sample} bytes={sample.stat().st_size}")
+        return 0
+    if args:
+        raise SystemExit("usage: demo_evidence.py [--repack]")
     sample = assemble(export_dir=demo_export_dir(), out_dir=OUT_DEFAULT)
     print(f"[evidence] wrote {sample} bytes={sample.stat().st_size}")
     return 0
