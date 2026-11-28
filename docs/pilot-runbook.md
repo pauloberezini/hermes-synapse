@@ -333,7 +333,7 @@ python3 scripts/verify_decision_log.py decisions.zip
 python3 scripts/verify_decision_log.py decisions.zip --pin H
 ```
 
-Zip layout: `decisions.jsonl`, `evidence/<id>.json`, `manifest.json`, `VERIFY.md`. Exit 0 = chain + evidence hashes match. `--pin` fails if that `entry_hash` is missing (truncated tail). The zip export is tamper-evident when you pin the head hash and carries no signatures. The JSON export carries signatures on checkpoints. The zip export is tamper-evident with `--pin` and carries no signatures. The signature check adds one package (cryptography). The private key lives on the same host as the log.
+Zip layout: `decisions.jsonl`, `evidence/<id>.json`, `manifest.json`, `VERIFY.md`. Exit 0 = chain + evidence hashes match. `--pin` fails if that `entry_hash` is missing (truncated tail). The zip export is tamper-evident when you pin the head hash and carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log.
 
 Verified here: `ok checked=3` then `--pin` on the 64-char head.
 
