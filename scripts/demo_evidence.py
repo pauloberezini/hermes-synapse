@@ -62,7 +62,7 @@ CALL_FIELDS = (
 )
 KNOWN_LIMITS = """\
 1. RBAC is not wired. The approve endpoint does not check roles. Any logged-in session can approve. Each decision records the approver's subject and login method, with the roles.
-2. The log is tamper-evident when you pin its head hash. It carries no signatures.
+2. The log is tamper-evident when you pin its head hash. This sample pack does not include signed checkpoints; the zip log carries no signatures.
 3. No SOC 2 or other certification. One maintainer. No named customers.
 4. Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code or Cursor, or in front of other MCP clients.
 5. Code agents are off by default. When switched on, each `execute_code` call waits for an approval tied to the exact source.
@@ -245,7 +245,8 @@ def _readme() -> str:
 
 This is not legal advice. This pack does not make you compliant.
 
-The log carries no signatures. In real use the pin is recorded off-host
+This sample pack does not include signed checkpoints. The zip log
+carries no signatures. In real use the pin is recorded off-host
 (for example in the email that carries the export), and a pin stored
 inside the same zip is a demonstration.
 
@@ -260,7 +261,7 @@ recorded and not enforced.
 ## Known limits (short)
 
 - The approve endpoint checks no role. Any logged-in session can approve, and the log records the subject, the roles and the login method. RBAC is not wired.
-- The log is tamper-evident with a pinned head hash and carries no signatures.
+- The log in this sample pack is tamper-evident with a pinned head hash and carries no signatures.
 - No SOC 2 and no named customers.
 - Approvals cover agents running in Hermes, with no gateway in front of other clients.
 - Code agents are off by default.
@@ -311,7 +312,7 @@ def _summary(calls: list[dict[str, Any]], ok_text: str) -> str:
         "",
         "This is a sample evidence pack from a scripted Hermes Synapse demo.",
         "It shows the format of an export you would build with a buyer in a pilot.",
-        "It is not a claim that anyone is compliant. The log carries no signatures.",
+        "It is not a claim that anyone is compliant. This sample pack does not include signed checkpoints; the zip log carries no signatures.",
         "Every payload, name and file here is synthetic.",
         "",
         "## What happened (six log rows)",
@@ -350,7 +351,7 @@ def _summary(calls: list[dict[str, Any]], ok_text: str) -> str:
         "## Limits (five lines)",
         "",
         "- The approve endpoint checks no role. Any logged-in session can approve; the log records subject, roles and login method. RBAC is not wired.",
-        "- The log is tamper-evident with a pinned head hash and carries no signatures.",
+        "- The log in this sample pack is tamper-evident with a pinned head hash and carries no signatures.",
         "- No SOC 2 and no named customers. Approvals cover agents in Hermes; there is no gateway in front of other clients.",
         "- Code agents are off by default.",
         "- This sample comes from a scripted agent with a mocked shell and sandbox.",

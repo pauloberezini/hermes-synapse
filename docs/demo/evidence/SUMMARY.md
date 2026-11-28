@@ -4,7 +4,7 @@ This is not legal advice. This pack does not make you compliant.
 
 This is a sample evidence pack from a scripted Hermes Synapse demo.
 It shows the format of an export you would build with a buyer in a pilot.
-It is not a claim that anyone is compliant. The log carries no signatures.
+It is not a claim that anyone is compliant. This sample pack does not include signed checkpoints; the zip log carries no signatures.
 Every payload, name and file here is synthetic.
 
 ## What happened (six log rows)
@@ -38,7 +38,7 @@ Code agents off by default (`pilot_default` false); demo pins them on for the ap
 ## Limits (five lines)
 
 - The approve endpoint checks no role. Any logged-in session can approve; the log records subject, roles and login method. RBAC is not wired.
-- The log is tamper-evident with a pinned head hash and carries no signatures.
+- The log in this sample pack is tamper-evident with a pinned head hash and carries no signatures.
 - No SOC 2 and no named customers. Approvals cover agents in Hermes; there is no gateway in front of other clients.
 - Code agents are off by default.
 - This sample comes from a scripted agent with a mocked shell and sandbox.

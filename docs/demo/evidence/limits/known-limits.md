@@ -1,5 +1,5 @@
 1. RBAC is not wired. The approve endpoint does not check roles. Any logged-in session can approve. Each decision records the approver's subject and login method, with the roles.
-2. The log is tamper-evident when you pin its head hash. It carries no signatures.
+2. The log is tamper-evident when you pin its head hash. This sample pack does not include signed checkpoints; the zip log carries no signatures.
 3. No SOC 2 or other certification. One maintainer. No named customers.
 4. Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code or Cursor, or in front of other MCP clients.
 5. Code agents are off by default. When switched on, each `execute_code` call waits for an approval tied to the exact source.

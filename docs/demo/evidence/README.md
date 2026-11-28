@@ -2,7 +2,8 @@
 
 This is not legal advice. This pack does not make you compliant.
 
-The log carries no signatures. In real use the pin is recorded off-host
+This sample pack does not include signed checkpoints. The zip log
+carries no signatures. In real use the pin is recorded off-host
 (for example in the email that carries the export), and a pin stored
 inside the same zip is a demonstration.
 
@@ -17,7 +18,7 @@ recorded and not enforced.
 ## Known limits (short)
 
 - The approve endpoint checks no role. Any logged-in session can approve, and the log records the subject, the roles and the login method. RBAC is not wired.
-- The log is tamper-evident with a pinned head hash and carries no signatures.
+- The log in this sample pack is tamper-evident with a pinned head hash and carries no signatures.
 - No SOC 2 and no named customers.
 - Approvals cover agents running in Hermes, with no gateway in front of other clients.
 - Code agents are off by default.

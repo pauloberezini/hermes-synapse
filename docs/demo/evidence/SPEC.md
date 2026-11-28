@@ -20,7 +20,7 @@ snapshot reads those files. The demo still pins true/false per step.
 - G5 pinned-head-hash.txt (64 hex, one line). Pin-in-zip is a demonstration; real pin is off-host.
 - G6 SUMMARY.md one-page compliance summary. No PDF (explicitly out of scope for this pass).
 - G7 verifier/verify_decision_log.py byte copy. README commands run from the unzipped folder.
-- G11 The log carries no signatures. No Ed25519 / audit-log wording in the zip text files.
+- G11 This sample pack does not include signed checkpoints. No Ed25519 / audit-log wording in the zip text files.
 
 ## P1 done now
 
