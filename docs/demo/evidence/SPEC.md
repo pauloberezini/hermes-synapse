@@ -16,7 +16,20 @@ signed checkpoints.
 
 ## Rebuild the zip and MANIFEST
 
-After replacing `README.md`, `SUMMARY.md`, and/or `SUMMARY.pdf`:
+`make evidence` verifies a committed pack in this folder (zip members,
+MANIFEST hashes and sizes, PMM files, decision-log zips, verifier
+0/0/1/1). It does not rewrite the pack. Drift prints a diff and exits
+non-zero.
+
+Intentional rebuild from a fresh demo export:
+
+```bash
+make evidence-rebuild
+```
+
+or `python3 scripts/demo_evidence.py --force-rebuild`.
+
+After replacing `README.md`, `SUMMARY.md`, and/or `SUMMARY.pdf` only:
 
 ```bash
 python3 scripts/demo_evidence.py --repack
@@ -24,12 +37,8 @@ python3 scripts/demo_evidence.py --repack
 
 or `make evidence-repack`. That rewrites only `MANIFEST.json` and
 `hermes-evidence-sample.zip` from files already in this folder. It does
-not touch `decision-log.zip` or `decision-log.tampered.zip`.
-
-`make evidence` still runs `make demo` then assemble. assemble keeps
-`README.md`, `SUMMARY.md`, `SUMMARY.pdf`, and the decision-log zips when
-they already exist, so it cannot overwrite the PMM copies or re-export
-the log. `src/` (stylesheet used to render the PDF) stays out of the zip.
+not touch `decision-log.zip` or `decision-log.tampered.zip`. `src/`
+(stylesheet used to render the PDF) stays out of the zip.
 
 ## P0
 
