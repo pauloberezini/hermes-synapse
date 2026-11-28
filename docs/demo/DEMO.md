@@ -196,6 +196,7 @@ No OTP, tokens, or API keys in these files. The UI shots are Playwright against 
 | `make demo` | Isolated SQLite under `backend/data/demo/`, full walkthrough |
 | `make demo PAUSE=1` | Same, wait for Enter at each beat |
 | `make demo-reset` | Delete the demo DB and leftover zips |
+| `make evidence` | After `make demo`, assemble `docs/demo/evidence/` (and `hermes-evidence-sample.zip`) |
 | `python3 scripts/demo.py --seed` | Two PENDING rows only (still mocked) |
 | `python3 scripts/demo_verify.py <zip> [--pin HASH]` | Demo offline verify (wraps the current checker) |
 

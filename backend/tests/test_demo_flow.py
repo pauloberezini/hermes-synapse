@@ -103,7 +103,8 @@ def test_makefile_has_demo_targets() -> None:
     text = (_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "demo:" in text
     assert "demo-reset:" in text
-    assert ".PHONY: demo demo-reset" in text
+    assert "evidence:" in text
+    assert ".PHONY: demo demo-reset evidence" in text
 
 
 def test_demo_offline_verify_goes_through_wrapper() -> None:
@@ -149,6 +150,88 @@ def test_demo_media_has_no_vm_paths() -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         for needle in banned:
             assert needle not in text, f"{path.name} contains {needle}"
+
+
+def _evidence():
+    spec = importlib.util.spec_from_file_location(
+        "hermes_demo_evidence", _ROOT / "scripts" / "demo_evidence.py"
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_evidence_pack_from_demo_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+    import zipfile
+
+    demo = _demo()
+    monkeypatch.setenv("CODE_AGENTS_ENABLED", "false")
+    demo.run_demo_flow(export_dir=tmp_path, log=lambda *_a, **_k: None)
+    out = tmp_path / "evidence"
+    sample = _evidence().assemble(export_dir=tmp_path, out_dir=out)
+    assert sample.is_file()
+    ok = (out / "verifier-ok.txt").read_text(encoding="utf-8")
+    fail = (out / "verifier-fail.txt").read_text(encoding="utf-8")
+    assert ok.startswith("ok checked=")
+    assert "FAIL" in fail and "entry_hash mismatch" in fail
+    calls = json.loads((out / "calls.json").read_text(encoding="utf-8"))
+    assert {row["decision"] for row in calls} == {"APPROVED", "REJECTED"}
+    for row in calls:
+        assert set(row) == {"tool", "decision", "timestamp", "payload_sha256"}
+        assert len(row["payload_sha256"]) == 64
+    policy = json.loads((out / "policy.json").read_text(encoding="utf-8"))
+    assert "execute_code" in policy["HIGH_RISK_TOOLS"]
+    assert policy["CODE_AGENTS_ENABLED"]["approval_path"] == "true"
+    assert policy["CODE_AGENTS_ENABLED"]["kill_switch"] == "false"
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "verify_decision_log.py" in readme
+    assert "Ed25519" in readme
+    with zipfile.ZipFile(sample) as archive:
+        names = set(archive.namelist())
+    assert "decision-log.zip" in names
+    assert "README.md" in names
+    assert "hermes-evidence-sample.zip" not in names
+
+
+def test_committed_evidence_sample() -> None:
+    import json
+    import zipfile
+
+    folder = _ROOT / "docs" / "demo" / "evidence"
+    sample = folder / "hermes-evidence-sample.zip"
+    assert sample.is_file()
+    for name in (
+        "README.md",
+        "policy.json",
+        "calls.json",
+        "calls.csv",
+        "calls.md",
+        "verifier-ok.txt",
+        "verifier-fail.txt",
+        "decision-log.zip",
+        "decision-log.tampered.zip",
+    ):
+        path = folder / name
+        assert path.is_file(), name
+    ok = (folder / "verifier-ok.txt").read_text(encoding="utf-8")
+    fail = (folder / "verifier-fail.txt").read_text(encoding="utf-8")
+    assert ok.startswith("ok checked=")
+    assert "FAIL" in fail
+    calls = json.loads((folder / "calls.json").read_text(encoding="utf-8"))
+    blob = " ".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in folder.iterdir()
+        if path.suffix in {".md", ".json", ".csv", ".txt"}
+    )
+    for banned in ("/agent/repos", "/home/ubuntu", "Ed25519 signature"):
+        assert banned not in blob, banned
+    assert "rm -rf" not in json.dumps(calls)
+    with zipfile.ZipFile(sample) as archive:
+        assert "decision-log.zip" in archive.namelist()
+        assert "hermes-evidence-sample.zip" not in archive.namelist()
 
 
 def test_demo_guide_drops_false_security_claims() -> None:
