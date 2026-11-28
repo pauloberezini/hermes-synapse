@@ -122,6 +122,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("Could not attach custom loop exception handler: %s", e)
 
+    from backend.runtime_secrets import enforce_runtime_secrets
+    enforce_runtime_secrets()
+
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
     init_db()

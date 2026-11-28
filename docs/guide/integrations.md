@@ -46,7 +46,7 @@ An OpenAPI-to-MCP helper lives at `backend/mcp_openapi_proxy.py` if you need to 
 | [SearXNG](https://github.com/searxng/searxng) | `SEARXNG_URL` - self-hosted metasearch. No paid search API key. |
 | OpenWeatherMap | `OPENWEATHERMAP_API_KEY` |
 | Obsidian Local REST API | `OBSIDIAN_API_KEY`, `OBSIDIAN_HOST`, `OBSIDIAN_PORT`, `OBSIDIAN_VAULT_PATH`. Creating a note is high-risk. |
-| Qdrant | Vector memory / RAG. Compose service on port 6333. |
+| Qdrant | Vector memory / RAG. Compose service; set `QDRANT_API_KEY` (unpublished in the pilot stack). |
 | GraphRAG | Optional entity graph (`backend/graphrag.py`) |
 | RSS | Built-in RSS skill and dashboard tab |
 
@@ -65,9 +65,9 @@ An OpenAPI-to-MCP helper lives at `backend/mcp_openapi_proxy.py` if you need to 
 |---|---|
 | PostgreSQL 16 | Required in Compose (`DATABASE_URL`). SQLite remains for some local/dev paths. |
 | Hugging Face FastEmbed | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` for local embeddings |
-| Docker Compose | Production-style stack, UI on [http://localhost:9119](http://localhost:9119) |
-| Dev Compose | Hot reload, UI on [http://localhost:5173](http://localhost:5173) |
-| Swarm / Kubernetes | `docker-compose.swarm.yml`, `k8s/` |
+| Docker Compose | Pilot stack (`docker-compose.yml`): UI on [http://127.0.0.1:9119](http://127.0.0.1:9119), secrets required |
+| Dev Compose | Hot reload, **dev-only**, UI on [http://127.0.0.1:5173](http://127.0.0.1:5173) |
+| Swarm / Kubernetes | Examples only (`docker-compose.swarm.yml`, `k8s/`). Not a hardened pilot. |
 
 ## Seeded agents
 

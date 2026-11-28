@@ -215,9 +215,9 @@ Full write-up: [Security model](/guide/security).
 ```bash
 git clone https://github.com/pauloberezini/hermes-synapse
 cd hermes-synapse
-cp .env.example .env
+cp .env.example .env   # LLM key + POSTGRES_PASSWORD, QDRANT_API_KEY, JWT_SECRET
 docker compose up -d --build
-# Dashboard: http://localhost:9119
+# Dashboard: http://127.0.0.1:9119
 # docker logs jarvis-backend | grep "Generated OTP Code"
 ```
 

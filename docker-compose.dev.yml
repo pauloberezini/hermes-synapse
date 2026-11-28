@@ -1,3 +1,17 @@
+# DEV ONLY — hot-reload override. Do not use for a pilot or any shared host.
+#
+# Convenient local defaults: source bind-mounts, JWT optional, Qdrant without
+# an API key, SQLite (no Postgres), ports on 127.0.0.1 only.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Dashboard: http://127.0.0.1:5173
+# API:       http://127.0.0.1:8000
+#
+# Docker socket is not mounted. If you added a skill that needs it:
+#   docker compose --profile docker-sock \
+#     -f docker-compose.dev.yml -f docker-compose.docker-sock.yml up
+
 services:
   backend:
     build:
@@ -6,24 +20,25 @@ services:
     container_name: hermes-backend-dev
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - LLM_MODEL=${LLM_MODEL:-ollama/llama3}
-      - QDRANT_HOST=qdrant
-      - OBSIDIAN_HOST=host.docker.internal
+      ENV: development
+      ALLOW_LOCAL_AUTH_FALLBACK: "1"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      LLM_API_BASE: ${LLM_API_BASE:-https://openrouter.ai/api/v1}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      LLM_MODEL: ${LLM_MODEL:-ollama/llama3}
+      QDRANT_HOST: qdrant
+      OBSIDIAN_HOST: host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       # Mount backend source for hot-reload
       - ./backend:/app/backend
       - ./.env:/app/.env
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - qdrant
     networks:
@@ -36,7 +51,7 @@ services:
     container_name: hermes-frontend-dev
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
@@ -46,15 +61,15 @@ services:
       - hermes-dev-net
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.13.2
     container_name: hermes-qdrant-dev
     restart: unless-stopped
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_dev_data:/qdrant/storage
-    # NOTE: qdrant/qdrant is distroless — no shell tools for healthcheck.
-    # Backend rag.py handles connection errors gracefully on startup.
+    # DEV ONLY: no API key. Pilot/prod compose requires QDRANT_API_KEY.
+    # Image has no shell — backend rag.py handles connection errors on startup.
     networks:
       - hermes-dev-net
 

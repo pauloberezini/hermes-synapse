@@ -17,9 +17,9 @@ Agents plan on a DAG, inherit only the tools their parent allows, and stop on ri
 
 ```bash
 git clone https://github.com/pauloberezini/hermes-synapse && cd hermes-synapse
-cp .env.example .env   # add your LLM API key
+cp .env.example .env   # LLM key + POSTGRES_PASSWORD, QDRANT_API_KEY, JWT_SECRET
 docker compose up -d --build
-# Open http://localhost:9119
+# Open http://127.0.0.1:9119
 ```
 
 </div>
@@ -163,7 +163,7 @@ Per-agent overrides: `AGENT_MODEL_CODE`, `AGENT_MODEL_RESEARCH`, `AGENT_MODEL_AN
 | Hugging Face FastEmbed | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` for local embeddings |
 | Voice | Browser `SpeechRecognition` for STT and `speechSynthesis` for TTS in the dashboard (not a local Whisper stack) |
 | Auto-hire | `AUTO_HIRE=ask` (default) / `on` / `off` - planner can create a capped specialist when nobody covers the request |
-| Docker / Swarm / Kubernetes | `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.swarm.yml`, `k8s/` |
+| Docker / Swarm / Kubernetes | Pilot: `docker-compose.yml` (loopback dashboard, required secrets). Dev-only: `docker-compose.dev.yml`. Swarm/k8s manifests are examples, not a hardened pilot. |
 
 A GitHub skill in `hermes_sdk/examples/` is a template, not a seeded connector. Do not confuse it with a built-in GitHub integration.
 
@@ -243,7 +243,7 @@ Offline (Python 3.11+ stdlib only - the checker is **not** inside the zip):
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  "http://localhost:8000/api/governance/decisions/export.zip" -o decisions.zip
+  "http://127.0.0.1:9119/api/governance/decisions/export.zip" -o decisions.zip
 
 python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 # ok checked=N head=H   → exit 0
@@ -291,12 +291,14 @@ git clone https://github.com/pauloberezini/hermes-synapse
 cd hermes-synapse
 cp .env.example .env
 # Set OPENROUTER_API_KEY (or point LLM_API_BASE at Ollama and use a placeholder key)
+# Set POSTGRES_PASSWORD, QDRANT_API_KEY, JWT_SECRET (openssl rand -hex 32)
 
 docker compose up -d --build
 ```
 
-- Dashboard: [http://localhost:9119](http://localhost:9119)
-- API: [http://localhost:8000](http://localhost:8000)
+- Dashboard: [http://127.0.0.1:9119](http://127.0.0.1:9119) (API via `/api`)
+
+Compose fails fast if those secrets are missing or are known defaults. Postgres, Qdrant, and the backend port stay on the internal network. Full pilot notes: [Getting started](https://pauloberezini.github.io/hermes-synapse/guide/getting-started.html).
 
 Login: the OTP is printed in the backend log (and sent to Telegram if configured):
 
@@ -316,7 +318,7 @@ Hot-reload development:
 
 ```bash
 docker compose -f docker-compose.dev.yml up
-# UI http://localhost:5173  ·  API http://localhost:8000
+# UI http://127.0.0.1:5173  ·  API http://127.0.0.1:8000  (dev-only)
 ```
 
 `AUTO_HIRE=ask` (default) creates a specialist and waits for `POST /api/subagents/{id}/confirm`. `on` hires and runs in the same turn. `off` reports the gap and creates nothing. Hired agents never receive skills the parent does not already have.
@@ -339,9 +341,9 @@ Use Sys Ops (`shell_execution` → `execute_command`). **Do not use the Code Eng
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  http://localhost:8000/api/governance/decisions/verify
+  http://127.0.0.1:9119/api/governance/decisions/verify
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  http://localhost:8000/api/governance/decisions/export.zip -o decisions.zip
+  http://127.0.0.1:9119/api/governance/decisions/export.zip -o decisions.zip
 python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 ```
 
