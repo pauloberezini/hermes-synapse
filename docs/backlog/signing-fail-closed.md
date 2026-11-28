@@ -1,6 +1,6 @@
 # Estimate: fail-closed signing (`HERMES_REQUIRE_SIGNING`)
 
-Internal. Not implemented. Against `origin/main` `e57c345`.
+Internal estimate, written against origin/main e57c345. Implemented in 041ae3b.
 
 Today `backend/main.py` lifespan calls `ensure_install_key()` and on any exception logs `audit signing key init failed` and continues. `GET /api/governance/decisions/export.signed.json` then calls `ensure_install_key()` again (and will auto-create a key if the data dir is writable). Periodic checkpoints in `_try_checkpoint` swallow errors. The zip export is unchanged either way.
 

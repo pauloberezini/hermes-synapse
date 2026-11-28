@@ -151,7 +151,7 @@ Do not write "everything is gated." These items are open on `main`:
 | **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
-| Verifier | Zip + `--pin` is tamper-evident, not a signature. Signed JSON + `python -m hermes_audit_verify` is a signature over checkpoints; the key is on-host (see [signed audit log](../security/signed-audit-log.md)). |
+| Verifier | Zip + `--pin` is tamper-evident and carries no signatures. The JSON export carries signatures on checkpoints. Signed JSON + `python -m hermes_audit_verify` is a signature over checkpoints; the key is on-host (see [signed audit log](../security/signed-audit-log.md)). |
 | PIIGuard | Known regexes only. |
 
 Demo guidance: Sys Ops `execute_command` and Code Engineer `execute_code` both wait for Approve, then a retry of the identical payload.
