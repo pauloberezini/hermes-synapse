@@ -170,3 +170,5 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 ```
 
 Use a dashboard session token for export, not `HERMES_GATEWAY_TOKEN`.
+
+Live check on a Mac with your own **claude.ai subscription** (`claude` → `/login`; do not point the CLI at API-key billing): [live-check.md](./live-check.md). That page and the docs-only compose override [docker-compose.gateway-live.yml](./docker-compose.gateway-live.yml) live on **`cursor/gateway-mvp-2164`**, not `main`. Clone that branch. The hook POSTs `http://127.0.0.1:8000/api/gateway/pre-tool`.

@@ -1,0 +1,22 @@
+# DOCS ONLY — laptop live-check. Do not use on a shared or pilot host.
+#
+# Pilot `docker-compose.yml` publishes the dashboard on 127.0.0.1:9119 and does
+# not publish backend :8000. The Claude Code hook must POST
+# http://127.0.0.1:8000/api/gateway/pre-tool (not :9119). Nginx on :9119 would
+# present a Docker network peer and X-Forwarded-For; the gateway bind check
+# rejects both.
+#
+#   docker compose -f docker-compose.yml \
+#     -f docs/gateway/docker-compose.gateway-live.yml up -d --build
+#
+# After up, the TCP peer the backend sees is usually the compose network
+# gateway (172.x), not 127.0.0.1. Set HERMES_GATEWAY_BIND in .env (see
+# docs/gateway/live-check.md) and recreate backend.
+
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      HERMES_GATEWAY_TOKEN: ${HERMES_GATEWAY_TOKEN:?set HERMES_GATEWAY_TOKEN in .env}
+      HERMES_GATEWAY_BIND: ${HERMES_GATEWAY_BIND:-127.0.0.1}

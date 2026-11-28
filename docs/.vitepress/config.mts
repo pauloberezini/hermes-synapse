@@ -132,6 +132,7 @@ export default defineConfig({
           { text: 'Task engine and Kanban', link: '/guide/task-engine' },
           { text: 'Agent mesh and SDK', link: '/guide/agent-mesh' },
           { text: 'Gateway stdio proxy', link: '/gateway/' },
+          { text: 'Gateway live check', link: '/gateway/live-check' },
         ],
       },
     ],
