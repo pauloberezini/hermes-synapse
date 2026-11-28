@@ -1,6 +1,6 @@
 ---
 title: Security model
-description: How Hermes Synapse binds approvals to a payload hash, consumes them once, hash-chains the decision log, redacts secrets, and where the gate does not apply (code agent R1-2).
+description: How Hermes Synapse binds approvals to a payload hash, consumes them once, hash-chains the decision log, redacts secrets, and gates execute_code.
 ---
 
 # Security model
@@ -11,11 +11,12 @@ This page describes the mechanisms in the current tree. File references are the 
 
 ## What is gated
 
-`execute_tool` calls `gate_tool` before the tool body (`backend/tools.py`, `backend/governance.py`).
+`execute_tool` calls `gate_tool` before the tool body (`backend/tools.py`, `backend/governance.py`). `execute_code` (Code Engineer / Data Analyst) calls the same gate before the sandbox POST (`backend/subagents.py`).
 
 Built-in high-risk names (`HIGH_RISK_TOOLS` in `backend/governance.py`):
 
 - `execute_command`
+- `execute_code` (Code Engineer / Data Analyst sandbox)
 - `create_obsidian_note`
 - `delete_todoist_task`
 - `create_subagent`, `update_subagent`, `delete_subagent`
@@ -142,7 +143,7 @@ Do not write "everything is gated." These items are open on `main`:
 
 | ID | Meaning |
 |---|---|
-| **R1-2** | **Code Engineer** and **Data Analyst** run generated Python via `CodeAgent.run_and_correct` → `execute_code`. That path never calls `gate_tool`. Retry-based gating also does not fit generated code: the script changes every turn. Treat the code-agent sandbox as out of the approval gate until a replay-the-approved-source path exists. |
+| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to `{"code": ...}` and consumed once. Auto-correction does not run on PENDING/REJECTED; a corrected script is a new payload. Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set. `CODE_AGENTS_ENABLED` (default true) is a fail-closed kill switch. |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
 | **R2-6** | OTP sessions are not persisted across process restarts. |
@@ -151,6 +152,6 @@ Do not write "everything is gated." These items are open on `main`:
 | Verifier | Tamper-evident with `--pin`. Not a signature. |
 | PIIGuard | Known regexes only. |
 
-Demo guidance: use Sys Ops `execute_command`. Do not present the code agent as gated.
+Demo guidance: Sys Ops `execute_command` and Code Engineer `execute_code` both wait for Approve, then a retry of the identical payload.
 
 Operator walkthrough: [Approvals](./approvals.md). Product roadmap: [ROADMAP.md](https://github.com/pauloberezini/hermes-synapse/blob/main/ROADMAP.md).

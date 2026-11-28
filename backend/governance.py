@@ -33,6 +33,7 @@ LLM_CALL_ESTIMATE_USD = 0.01
 
 HIGH_RISK_TOOLS = frozenset({
     "execute_command",
+    "execute_code",
     "create_obsidian_note",
     "delete_todoist_task",
     "create_subagent",
