@@ -7,7 +7,7 @@ description: Fifteen-minute live check of the Claude Code PreToolUse hook agains
 
 Pavel runs this on **his** Mac, logged into Claude Code with **his claude.ai subscription**. Do not copy anyone else's credentials. Do not merge this branch. Do not edit `~/.claude/settings.json`.
 
-**Clone `cursor/gateway-mvp-2164`, not `main`.** This branch is unmerged. `main` is about to receive unrelated merges (`demo-stand`, `signed-audit-log`). The hook script, example settings, docs-only compose override, and this page exist only on `cursor/gateway-mvp-2164`. Step 7 clones that branch.
+**Clone `cursor/gateway-mvp-2164`, not `main`.** This branch is unmerged. It already contains `origin/main` (`CODE_AGENTS_ENABLED=false`, signed checkpoints, demo, evidence pack). The hook script, example settings, docs-only compose override, and this page are **not** on `main`. Step 7 clones this branch.
 
 **Subscription, not API billing.** You already log in with `claude` → `/login` (claude.ai). This check must not use Anthropic API-key billing. Step 4 confirms `claude auth status` shows `"loggedIn": true`. Step 5 unsets `ANTHROPIC_API_KEY` in the shell that launches `claude` so the CLI cannot switch to API billing. Do not set that variable anywhere in this guide.
 
@@ -27,6 +27,14 @@ On Docker Desktop for Mac, a published `127.0.0.1:8000` is reachable from the ho
 Use `127.0.0.1`, not `localhost`, in every URL below (`localhost` can be IPv6 `::1` on macOS).
 
 First `docker compose up --build` may exceed 15 minutes if images are cold. The operator steps after a healthy stack are short.
+
+**Flags that do not change this hook** (leave the `.env.example` defaults):
+
+| Var | Default | Effect on this check |
+|---|---|---|
+| `CODE_AGENTS_ENABLED` | `false` | Kill switch for Hermes `execute_code` only. Claude `Bash` still hits PreToolUse. Leave false. |
+| `HERMES_REQUIRE_SIGNING` | `false` | Do **not** set true on first boot. The Ed25519 key is created on first use. Zip export still works. Signed JSON export (step 23) also works with generate-on-first-use. |
+| `HERMES_AUDIT_KEY_PATH` | `backend/data/audit_ed25519.key` | Compose volume. No extra step. |
 
 ---
 
@@ -142,6 +150,8 @@ vals = {
     "HERMES_GATEWAY_TOKEN": secrets.token_hex(32),
     "ALLOW_LOCAL_AUTH_FALLBACK": "1",
     "HERMES_GATEWAY_BIND": "127.0.0.1",
+    "CODE_AGENTS_ENABLED": "false",
+    "HERMES_REQUIRE_SIGNING": "false",
 }
 for k, v in vals.items():
     text = set_key(text, k, v)
@@ -465,9 +475,19 @@ curl -sS -H "Authorization: Bearer $HERMES_SESSION" \
   http://127.0.0.1:9119/api/governance/decisions/verify
 echo
 python3 scripts/verify_decision_log.py "$LIVE/decisions.zip"
+# Gateway rows on the chain:
+python3 - << 'PY'
+import zipfile, json
+from pathlib import Path
+z = zipfile.ZipFile(Path.home() / "hermes-gateway-live" / "decisions.zip")
+events = [json.loads(l)["event"] for l in z.read("decisions.jsonl").decode().splitlines() if l.strip()]
+print("events", events)
+assert "HOOK" in events and "REQUESTED" in events
+print("gateway HOOK+REQUESTED present (good)")
+PY
 ```
 
-**Expect:** verify API `"ok": true`. Script prints `ok checked=<N> head=<64 hex>`. `N` is at least the probe + dry-run + hello PENDING/APPROVED/CONSUMED + reject REQUESTED/REJECTED + HOOK rows. Optional pin:
+**Expect:** verify API `"ok": true`. Script prints `ok checked=<N> head=<64 hex>`. Events include `HOOK` and `REQUESTED` (and `APPROVED`/`CONSUMED`/`REJECTED` from the UI steps). Optional pin:
 
 ```bash
 HEAD=$(python3 scripts/verify_decision_log.py "$LIVE/decisions.zip" | awk -F= '/head=/{print $NF}')
@@ -492,6 +512,29 @@ print("token absent from decisions.zip (good)")
 print("zip bytes", z.stat().st_size)
 PY
 ```
+
+Signed checkpoints (same chain; `HERMES_REQUIRE_SIGNING` stays false). Run the verifier **in the backend container** so the Mac does not need `cryptography` or any Anthropic key:
+
+```bash
+LIVE="$HOME/hermes-gateway-live"
+cd "$LIVE/hermes-synapse"
+curl -fsS -H "Authorization: Bearer $HERMES_SESSION" \
+  http://127.0.0.1:9119/api/governance/decisions/export.signed.json \
+  -o "$LIVE/hermes-audit-default.json"
+docker cp "$LIVE/hermes-audit-default.json" jarvis-backend:/tmp/hermes-audit-default.json
+docker compose exec -T backend python3 -m hermes_audit_verify /tmp/hermes-audit-default.json
+python3 - << 'PY'
+import json
+from pathlib import Path
+b = json.loads((Path.home() / "hermes-gateway-live" / "hermes-audit-default.json").read_text())
+events = [r["event"] for r in b["records"]]
+assert "HOOK" in events and "REQUESTED" in events
+assert b["checkpoints"], "export must include a checkpoint"
+print("signed bundle covers gateway events; checkpoints", len(b["checkpoints"]))
+PY
+```
+
+**Expect:** `ok checked=N head=… unsigned_tail=0 fingerprint=…` and `signed bundle covers gateway events`.
 
 ---
 
@@ -546,7 +589,7 @@ Do **not** send `.env`, OTP, `HERMES_GATEWAY_TOKEN`, `HERMES_SESSION`, or any sc
 4. **Screenshot: APPROVED then CONSUMED** — same request after Approve; All tab after the successful retry (CONSUMED).
 5. **Terminal: hook deny** — the JSON from step 17 (stdin dry-run) showing `permissionDecision: deny` and `Pending approval`.
 6. **Terminal: fail-closed** — step 22, `down.txt absent (fail-closed)` plus Claude’s blocked-tool message (or the hook JSON if you re-ran stdin against `:8000` while backend was stopped: `backend unreachable`).
-7. **Verifier output** — `ok checked=N head=…` from `python3 scripts/verify_decision_log.py`.
-8. **`decisions.zip`** — the export from step 23. Confirm locally that the gateway token is not in the zip before sending.
+7. **Verifier output** — `ok checked=N head=…` from `python3 scripts/verify_decision_log.py`, plus `HOOK` in the zip events.
+8. **`decisions.zip`** — the export from step 23. Confirm locally that the gateway token is not in the zip before sending. Optional: container `python3 -m hermes_audit_verify` of `export.signed.json` (`unsigned_tail=0`, `HOOK` in records).
 9. **Reject proof** — `reject-me.txt absent (good)` plus a screenshot of the REJECTED chip, or the All-tab row.
 10. **Notes** — Claude Code version, macOS version, the `HERMES_GATEWAY_BIND` value you used (IPs only, no token), and anything that did not match **Expect**.

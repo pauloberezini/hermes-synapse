@@ -200,3 +200,37 @@ def test_hook_decision_is_logged_and_chain_verifies(tmp_path):
         text=True,
     )
     assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_gateway_hook_events_are_covered_by_signed_checkpoint(tmp_path):
+    from backend import decision_log as dl
+
+    out = handle_event({
+        "session_id": "h_sign",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo signed"},
+    })
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    rid = int(reason.split("request_id=")[1].split(")")[0])
+    body, _name = dl.export_signed_bundle()
+    bundle = json.loads(body)
+    events = [row["event"] for row in bundle["records"] if int(row["request_id"]) == rid]
+    assert "REQUESTED" in events
+    assert "HOOK" in events
+    assert bundle["checkpoints"], "signed export must force a checkpoint covering the chain"
+    head = bundle["records"][-1]["entry_hash"]
+    assert any(cp["head_hash"] == head for cp in bundle["checkpoints"])
+    path = tmp_path / "hermes-audit-default.json"
+    path.write_bytes(body)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(
+        [sys.executable, "-m", "hermes_audit_verify", str(path),
+         "--pubkey-fingerprint", bundle["pubkey_fingerprint"]],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "ok checked=" in proc.stdout
