@@ -31,13 +31,13 @@ RUN pip install --no-cache-dir \
     "pandas>=2.0.0" \
     "openpyxl>=3.1.0" \
     "beautifulsoup4>=4.12.0" \
-    "python-multipart>=0.0.7" \
+    "python-multipart>=0.0.32" \
     "google-auth>=2.20.0" \
     "google-auth-oauthlib>=1.0.0" \
     "google-auth-httplib2>=0.2.0" \
     "google-api-python-client>=2.95.0" \
     "todoist-api-python>=2.1.3" \
-    "pypdf>=4.0.0" \
+    "pypdf>=6.21.4,<7" \
     "apscheduler>=3.10.0" \
     "sqlalchemy>=2.0.0" \
     "psycopg[binary]>=3.1.0" \
