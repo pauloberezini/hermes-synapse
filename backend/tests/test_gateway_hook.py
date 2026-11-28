@@ -37,7 +37,8 @@ def test_bash_pending_retry_denies_with_request_id(monkeypatch):
     })
     assert _decision(out) == "deny"
     reason = out["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "PENDING_APPROVAL" in reason
+    assert "Pending approval" in reason
+    assert "Retry this tool" in reason
     assert ApprovalQueue.count_pending() == 1
 
 
@@ -49,7 +50,7 @@ def test_edit_is_high_risk_even_though_not_in_high_risk_tools(monkeypatch):
         "tool_input": {"file_path": "a.py", "old_string": "a", "new_string": "b"},
     })
     assert _decision(out) == "deny"
-    assert "PENDING_APPROVAL" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "Pending approval" in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_wait_then_approve_allows(monkeypatch):
@@ -120,15 +121,22 @@ def test_cursor_format_and_shell_payload(monkeypatch):
     monkeypatch.setenv("HERMES_HOOK_FORMAT", "cursor")
     out = handle_event({"command": "ls", "cwd": "/tmp"}, fmt="cursor")
     assert out["permission"] == "deny"
-    assert "PENDING_APPROVAL" in out["agent_message"]
+    assert "Pending approval" in out["agent_message"]
+    assert "Retry this tool" in out["agent_message"]
 
 
-def test_script_fail_closed_when_backend_missing(tmp_path):
+def test_script_fail_closed_when_backend_unreachable(tmp_path):
     dest = tmp_path / "scripts" / "gateway"
     dest.mkdir(parents=True)
     script = dest / "claude_pre_tool_use.py"
     script.write_text(HOOK.read_text(encoding="utf-8"), encoding="utf-8")
-    env = {**os.environ, "PYTHONPATH": ""}
+    env = {
+        **os.environ,
+        "PYTHONPATH": "",
+        "HERMES_GATEWAY_TOKEN": "a" * 32,
+        "HERMES_GATEWAY_URL": "http://127.0.0.1:1/api/gateway/pre-tool",
+        "HERMES_HOOK_HTTP_TIMEOUT_S": "1",
+    }
     proc = subprocess.run(
         [sys.executable, str(script)],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
@@ -142,9 +150,53 @@ def test_script_fail_closed_when_backend_missing(tmp_path):
     body = json.loads(proc.stdout)
     assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "fail-closed" in body["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "a" * 32 not in proc.stdout
+    assert "a" * 32 not in proc.stderr
 
 
 def test_claude_output_shape():
     body = claude_output("deny", "no")
     assert body["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_hook_wait_timeout_defaults_to_pending_retry(monkeypatch):
+    monkeypatch.setenv("HERMES_GATEWAY_WAIT", "1")
+    monkeypatch.setenv("HERMES_GATEWAY_WAIT_TIMEOUT_S", "0.2")
+    monkeypatch.delenv("HERMES_GATEWAY_ON_TIMEOUT", raising=False)
+    out = handle_event({
+        "session_id": "h_pr",
+        "tool_name": "Bash",
+        "tool_input": {"command": "sleep 9"},
+    })
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert _decision(out) == "deny"
+    assert "Pending approval" in reason
+    assert "Retry this tool" in reason
+    assert ApprovalQueue.count_pending() == 1
+
+
+def test_hook_decision_is_logged_and_chain_verifies(tmp_path):
+    from backend import decision_log as dl
+
+    out = handle_event({
+        "session_id": "h_log",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo log-me"},
+    })
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    rid = int(reason.split("request_id=")[1].split(")")[0])
+    events = [row["event"] for row in dl.history(rid)]
+    assert "REQUESTED" in events
+    assert "HOOK" in events
+    result = dl.verify()
+    assert result.ok, result.error
+    blob, _name = dl.export_zip()
+    zip_path = tmp_path / "hook.zip"
+    zip_path.write_bytes(blob)
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify_decision_log.py"), str(zip_path), "--pin", result.head_hash],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout

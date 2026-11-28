@@ -250,6 +250,10 @@ async def auth_middleware(request: Request, call_next):
     # Allow public auth routes, status endpoint, and plots (images)
     if path in ("/api/auth/request-code", "/api/auth/verify-code", "/api/status") or path.startswith("/api/plots/"):
         return await call_next(request)
+
+    # Hook API uses HERMES_GATEWAY_TOKEN (not session/JWT/RBAC). Handler enforces it.
+    if path == "/api/gateway/pre-tool":
+        return await call_next(request)
         
     # Apply auth only to API routes
     if not path.startswith("/api/"):
@@ -275,6 +279,9 @@ async def auth_middleware(request: Request, call_next):
         pass
 
     return await call_next(request)
+
+from backend.gateway.http_api import router as gateway_hook_router
+app.include_router(gateway_hook_router)
 
 @app.post("/api/auth/request-code")
 async def request_code():
