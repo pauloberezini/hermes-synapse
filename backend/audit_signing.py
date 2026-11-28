@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,11 @@ from hermes_audit_verify import (
 logger = logging.getLogger("hermes.audit_signing")
 
 DEFAULT_KEY_NAME = "audit_ed25519.key"
+_REQUIRE_TRUE = {"1", "true", "yes"}
+
+
+class SigningUnavailable(Exception):
+    """No usable installation key. Message must not include key material."""
 
 _cached: InstallKey | None = None
 _logged_fingerprint = False
@@ -63,6 +69,11 @@ def key_path() -> Path:
     return Path(__file__).resolve().parent / "data" / DEFAULT_KEY_NAME
 
 
+def require_signing() -> bool:
+    """True only for an explicit opt-in. Unset and unrecognised values stay off."""
+    return os.environ.get("HERMES_REQUIRE_SIGNING", "").strip().lower() in _REQUIRE_TRUE
+
+
 def reset_for_tests() -> None:
     """Drop the process cache so tests can point at a fresh key file."""
     global _cached, _logged_fingerprint
@@ -70,9 +81,32 @@ def reset_for_tests() -> None:
     _logged_fingerprint = False
 
 
+def enforce_install_key() -> None:
+    """Startup hook. Fail closed with SystemExit when signing is required."""
+    try:
+        ensure_install_key()
+    except SigningUnavailable as exc:
+        print(f"FATAL: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except Exception as exc:
+        if require_signing():
+            print("FATAL: audit signing key init failed.", file=sys.stderr)
+            raise SystemExit(1) from None
+        logger.warning("audit signing key init failed: %s", exc)
+
+
 def ensure_install_key() -> InstallKey:
-    """Load or create the installation key. Logs fingerprint once per process."""
+    """Load or create the installation key. Logs fingerprint once per process.
+
+    When ``HERMES_REQUIRE_SIGNING`` is on, never create a key: missing, unreadable,
+    wrong type, or mode other than ``0600`` raises ``SigningUnavailable``.
+    """
     global _cached, _logged_fingerprint
+    if require_signing():
+        key = _load_required()
+        _cached = key
+        _log_fingerprint_once(key)
+        return key
     if _cached is not None:
         return _cached
     path = key_path()
@@ -81,14 +115,39 @@ def ensure_install_key() -> InstallKey:
     else:
         key = _create(path)
     _cached = key
-    if not _logged_fingerprint:
-        logger.info(
-            "audit signing key fingerprint=%s installation_id=%s",
-            key.fingerprint,
-            key.installation_id,
-        )
-        _logged_fingerprint = True
+    _log_fingerprint_once(key)
     return key
+
+
+def _log_fingerprint_once(key: InstallKey) -> None:
+    global _logged_fingerprint
+    if _logged_fingerprint:
+        return
+    logger.info(
+        "audit signing key fingerprint=%s installation_id=%s",
+        key.fingerprint,
+        key.installation_id,
+    )
+    _logged_fingerprint = True
+
+
+def _load_required() -> InstallKey:
+    """Load an existing key. Never create. Never log key material."""
+    path = key_path()
+    if not path.is_file():
+        raise SigningUnavailable(
+            "audit signing key missing. Provide a valid Ed25519 key or set HERMES_REQUIRE_SIGNING=false."
+        )
+    try:
+        mode = path.stat().st_mode & 0o777
+        if mode != 0o600:
+            raise SigningUnavailable("audit signing key must be mode 0600.")
+        return _load(path, fix_mode=False)
+    except SigningUnavailable:
+        raise
+    except Exception:
+        logger.warning("audit signing key load failed")
+        raise SigningUnavailable("audit signing key unreadable or invalid.") from None
 
 
 def sign_checkpoint(seq: int, head_hash: str, timestamp: str | None = None) -> dict[str, str | int]:
@@ -124,9 +183,11 @@ def _create(path: Path) -> InstallKey:
     return _from_private(private, installation_id)
 
 
-def _load(path: Path) -> InstallKey:
+def _load(path: Path, *, fix_mode: bool = True) -> InstallKey:
     pem = path.read_bytes()
     if (path.stat().st_mode & 0o777) != 0o600:
+        if not fix_mode:
+            raise SigningUnavailable("audit signing key must be mode 0600.")
         os.chmod(path, 0o600)
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
 

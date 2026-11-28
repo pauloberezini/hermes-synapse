@@ -6,6 +6,11 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ## 🚀 [Unreleased]
 
+### 🛡️ Fail-closed audit signing
+- Opt-in `HERMES_REQUIRE_SIGNING` (default **false**). Unset keeps generate-on-first-use and warn-and-continue.
+- When `true`, startup refuses without a valid mode-`0600` Ed25519 key (`FATAL:` on stderr, exit 1). `export.signed.json` and `/api/governance/audit/key` return 503. The zip export is unchanged.
+- Do not enable on first boot: generate and pin the fingerprint with the flag off, then set `true`. An empty volume with the flag on crash-loops (`restart: unless-stopped`).
+
 ### 🎬 7-minute demo stand
 - `make demo` / `make demo-reset` run a scripted agent against real `gate_tool`, payload-bound approve/reject, and offline decision-log verify (no LLM keys; risky tool bodies mocked).
 - Talk track: `docs/demo/DEMO.md`. Headless coverage: `backend/tests/test_demo_flow.py`.
