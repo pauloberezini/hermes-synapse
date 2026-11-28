@@ -11,7 +11,7 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 - Talk track: `docs/demo/DEMO.md`. Headless coverage: `backend/tests/test_demo_flow.py`.
 - The stand pins `CODE_AGENTS_ENABLED=true` on approval/`execute_code` steps and `=false` on the kill-switch beat, so a fail-safe process default cannot change the story.
 - Reject path is a customer-CSV export (`execute_command`), not `rm -rf`. Approvals modal subtitle matches the queue. Terminal GIF is rendered from the cast at a fixed cols/rows size.
-- `make evidence` packs an anonymized sample under `docs/demo/evidence/` from the demo export (hash-chain zip, verifier OK/FAIL, hashed approve/reject list, gate policy). The pack is a demonstration, not a signature scheme.
+- `make evidence` packs an anonymized sample under `docs/demo/evidence/` from the demo export (hash-chain zip, verifier OK/FAIL, hashed approve/reject list, gate policy). The pack is a demonstration of the zip export, which carries no signatures. The JSON export carries signatures on checkpoints; this sample pack does not include those.
 
 ### 🛡️ R1-2: gate `execute_code`
 - Code Engineer / Data Analyst sandbox calls go through `gate_tool` (permission intersection, one-shot payload-bound HITL, decision log).
