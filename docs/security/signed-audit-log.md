@@ -68,4 +68,19 @@ python -m backend.audit_signing
 | 1 | Tamper, truncate, reorder, bad signature, or fingerprint mismatch |
 | 2 | Usage, missing file, or unreadable bundle |
 
-Env: `HERMES_AUDIT_KEY_PATH`, `HERMES_AUDIT_CHECKPOINT_EVERY` (default 100).
+Env: `HERMES_AUDIT_KEY_PATH`, `HERMES_AUDIT_CHECKPOINT_EVERY` (default 100), `HERMES_REQUIRE_SIGNING` (default false).
+
+## Fail closed
+
+`HERMES_REQUIRE_SIGNING` is **off** unless you set `true` / `1` / `yes`. Off is today's behaviour: missing key is created on first use, and a load failure is a warning, not a crash.
+
+Turn it on only after a successful boot has written `audit_ed25519.key` on `backend_data` and you have pinned `pubkey_fingerprint` off-host. Then:
+
+1. Set `HERMES_REQUIRE_SIGNING=true` in `.env`.
+2. Recreate the backend (`docker compose up -d --force-recreate --no-deps backend`).
+
+When the flag is on:
+
+- Startup exits 1 with one `FATAL:` line if the key is missing, unreadable, not Ed25519, or not mode `0600`. Compose `restart: unless-stopped` will crash-loop until you drop a valid key or set the flag back to `false`. That loop is intended.
+- `GET /api/governance/decisions/export.signed.json` and `GET /api/governance/audit/key` return **503** `{ "detail": "signing unavailable" }` if the key later disappears. The zip export still works.
+- Appends to the decision log still succeed; periodic checkpoints stay best-effort.

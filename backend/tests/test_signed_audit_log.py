@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi.testclient import TestClient
@@ -276,3 +278,160 @@ def test_signed_export_api_verifies() -> None:
     report = verify_bundle(bundle, expected_fingerprint=bundle["pubkey_fingerprint"])
     assert report.ok
     assert report.checked == 2
+
+
+def test_flag_off_init_failure_warns_and_continues(
+    tmp_path: Path, monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from backend.audit_signing import enforce_install_key, reset_for_tests
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    path = blocker / "audit_ed25519.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.delenv("HERMES_REQUIRE_SIGNING", raising=False)
+    reset_for_tests()
+    caplog.set_level(logging.WARNING, logger="hermes.audit_signing")
+    enforce_install_key()
+    assert any("audit signing key init failed" in rec.message for rec in caplog.records)
+
+
+def test_require_signing_defaults_off_and_creates_key(tmp_path: Path, monkeypatch) -> None:
+    from backend.audit_signing import (
+        enforce_install_key,
+        ensure_install_key,
+        require_signing,
+        reset_for_tests,
+    )
+
+    path = tmp_path / "audit_ed25519.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.delenv("HERMES_REQUIRE_SIGNING", raising=False)
+    reset_for_tests()
+    assert require_signing() is False
+    enforce_install_key()
+    assert path.is_file()
+    reset_for_tests()
+    monkeypatch.setenv("HERMES_REQUIRE_SIGNING", "false")
+    assert require_signing() is False
+    assert ensure_install_key().fingerprint
+
+
+def test_require_signing_missing_key_exits(tmp_path: Path, monkeypatch, capsys) -> None:
+    from backend.audit_signing import enforce_install_key, reset_for_tests
+
+    path = tmp_path / "missing.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.setenv("HERMES_REQUIRE_SIGNING", "true")
+    reset_for_tests()
+    with pytest.raises(SystemExit) as caught:
+        enforce_install_key()
+    assert caught.value.code == 1
+    assert not path.exists()
+    err = capsys.readouterr().err
+    assert err.startswith("FATAL:")
+    assert "BEGIN" not in err
+    assert "PRIVATE" not in err
+
+
+def test_require_signing_invalid_or_unreadable_key_exits(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from backend.audit_signing import enforce_install_key, ensure_install_key, reset_for_tests
+
+    path = tmp_path / "audit_ed25519.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.delenv("HERMES_REQUIRE_SIGNING", raising=False)
+    reset_for_tests()
+    ensure_install_key()
+
+    monkeypatch.setenv("HERMES_REQUIRE_SIGNING", "1")
+    path.write_bytes(b"-----BEGIN PRIVATE KEY-----\nnot-ed25519\n-----END PRIVATE KEY-----\n")
+    os.chmod(path, 0o600)
+    reset_for_tests()
+    with pytest.raises(SystemExit) as caught:
+        enforce_install_key()
+    assert caught.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("FATAL:")
+    assert "not-ed25519" not in err
+    assert "BEGIN PRIVATE" not in err
+
+    try:
+        path.write_bytes(b"garbage")
+        os.chmod(path, 0o000)
+        reset_for_tests()
+        with pytest.raises(SystemExit) as caught:
+            enforce_install_key()
+        assert caught.value.code == 1
+    finally:
+        os.chmod(path, 0o600)
+
+
+def test_require_signing_wrong_mode_exits(tmp_path: Path, monkeypatch) -> None:
+    from backend.audit_signing import enforce_install_key, ensure_install_key, reset_for_tests
+
+    path = tmp_path / "audit_ed25519.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.delenv("HERMES_REQUIRE_SIGNING", raising=False)
+    reset_for_tests()
+    ensure_install_key()
+    os.chmod(path, 0o644)
+    monkeypatch.setenv("HERMES_REQUIRE_SIGNING", "true")
+    reset_for_tests()
+    with pytest.raises(SystemExit) as caught:
+        enforce_install_key()
+    assert caught.value.code == 1
+
+
+def test_require_signing_valid_key_starts_and_exports(tmp_path: Path, monkeypatch) -> None:
+    from backend.audit_signing import enforce_install_key, ensure_install_key, reset_for_tests
+
+    path = tmp_path / "audit_ed25519.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.delenv("HERMES_REQUIRE_SIGNING", raising=False)
+    monkeypatch.setenv("HERMES_AUDIT_CHECKPOINT_EVERY", "1")
+    reset_for_tests()
+    created = ensure_install_key()
+    monkeypatch.setenv("HERMES_REQUIRE_SIGNING", "true")
+    reset_for_tests()
+    enforce_install_key()
+    _append(1)
+    stored = dl.list_checkpoints("default")
+    assert [c["seq"] for c in stored] == [1]
+    client = _client()
+    resp = client.get("/api/governance/decisions/export.signed.json")
+    assert resp.status_code == 200
+    bundle = resp.json()
+    report = verify_bundle(bundle, expected_fingerprint=created.fingerprint)
+    assert report.ok
+    assert report.checked >= 1
+    assert bundle["pubkey_fingerprint"] == created.fingerprint
+    out = tmp_path / "bundle.json"
+    out.write_text(json.dumps(bundle), encoding="utf-8")
+    ran = _run_verifier(out, created.fingerprint)
+    assert ran.returncode == 0, ran.stderr
+
+
+def test_signed_export_503_when_signing_unavailable(tmp_path: Path, monkeypatch) -> None:
+    from backend.audit_signing import ensure_install_key, reset_for_tests
+
+    path = tmp_path / "audit_ed25519.key"
+    monkeypatch.setenv("HERMES_AUDIT_KEY_PATH", str(path))
+    monkeypatch.delenv("HERMES_REQUIRE_SIGNING", raising=False)
+    reset_for_tests()
+    ensure_install_key()
+    client = _client()
+    monkeypatch.setenv("HERMES_REQUIRE_SIGNING", "true")
+    reset_for_tests()
+    path.unlink()
+    signed = client.get("/api/governance/decisions/export.signed.json")
+    assert signed.status_code == 503
+    assert signed.json()["detail"] == "signing unavailable"
+    assert "BEGIN" not in signed.text
+    key_resp = client.get("/api/governance/audit/key")
+    assert key_resp.status_code == 503
+    zipped = client.get("/api/governance/decisions/export.zip")
+    assert zipped.status_code == 200

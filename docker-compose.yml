@@ -48,6 +48,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       # Fail-safe: execute_code is off unless the operator sets true.
       CODE_AGENTS_ENABLED: ${CODE_AGENTS_ENABLED:-false}
+      # Fail-closed signing is off unless the operator sets true after a key exists.
+      HERMES_REQUIRE_SIGNING: ${HERMES_REQUIRE_SIGNING:-false}
       HF_TOKEN: ${HF_TOKEN}
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
       HF_HOME: /app/backend/data/.cache/huggingface
