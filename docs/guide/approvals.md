@@ -38,7 +38,7 @@ When an autonomous agent invokes a sensitive action (for example `execute_comman
 
 ### Step 1: Trigger an Approval Request
 
-Use the orchestrator with a Sys Ops step that holds `execute_command`. Do not use the `code` agent: it runs generated Python in a sandbox and never consults the approval gate.
+Use the orchestrator with a Sys Ops step that holds `execute_command`, or a Code Engineer step that holds `execute_code`. Both wait for a one-shot, payload-bound approval.
 
 From the Web UI Communication Link, ask the orchestrator to run a shell command:
 
@@ -103,7 +103,7 @@ Export the decision log as a zip of `decisions.jsonl`, `evidence/N.json`, a plai
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  "http://localhost:8000/api/governance/decisions/export.zip" \
+  "http://127.0.0.1:9119/api/governance/decisions/export.zip" \
   -o decisions.zip
 ```
 

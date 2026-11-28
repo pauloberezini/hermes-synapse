@@ -6,6 +6,22 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ## 🚀 [Unreleased]
 
+### 🛡️ R1-2: gate `execute_code`
+- Code Engineer / Data Analyst sandbox calls go through `gate_tool` (permission intersection, one-shot payload-bound HITL, decision log).
+- Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set.
+- Kill switch `CODE_AGENTS_ENABLED` (default true); unrecognised values fail closed.
+
+### 🛡️ Pilot compose hardening
+- OpenAPI-to-MCP proxy (`backend/mcp_openapi_proxy.py`) has no default host; unset `OPENAPI_URL` exits instead of calling a third-party URL.
+- Default `docker-compose.yml` requires `POSTGRES_PASSWORD`, `QDRANT_API_KEY`, and `JWT_SECRET`; refuses known defaults at backend startup when `ENV=production`.
+- Postgres, Qdrant, and the backend API are no longer published. Dashboard binds to `127.0.0.1:9119`.
+- `/var/run/docker.sock` removed; opt-in overlay `docker-compose.docker-sock.yml` with a warning sidecar.
+- Non-root users, `cap_drop: ALL`, `no-new-privileges`, and read-only rootfs where practical. Qdrant API key wired into the backend client.
+- `docker-compose.dev.yml` stays a clearly marked dev-only hot-reload path.
+
+### 🧹 Hygiene
+- **Private BCM plugin is not in this product.** `backend/bcm/` was already isolated from the tree; leftover schema (`trade_traces`, `self_learning_metrics`), Docker FIX/charting/FRED packages, `GRAPHRAG_API_URL`, gitignore plugin paths, and test fixtures that named the desk are gone. The generic plugin loader stays so other optional `backend/<name>/plugin.py` modules can still register.
+
 ## 🚀 [v1.5.0] - 2026-11-01
 
 ### 🏛️ Hierarchical Governance & Approval System
@@ -15,8 +31,6 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ### 🛡️ Runtime Hardening & Broker Resilience
 - **Database Test Isolation:** Guardrail in `conftest.py` strictly forbidding test suite execution against production databases (`_assert_test_db_isolation`).
-- **cTrader Stale Cache Protection:** Handled broker token expirations and network disconnects gracefully; prevented false-positive trade closure in Watcher during outages.
-- **Session Scheduler Fast-Bail:** Immediate desk-wide blocked state reporting on unverified positions without spawning per-symbol worker subprocesses.
 
 ### 🎨 Visual & Architecture Specs
 - **Daylight Jira-Style Light Theme:** Specification and Graphviz architectural blueprint for Daylight UI theme.
@@ -75,7 +89,7 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ### 🌐 WebSockets & UI Enhancements
 - **Safe JSON Serialization (`json_serial`):** Resolved WebSocket crashes caused by non-serializable `datetime` objects in `ConnectionManager.broadcast` and `/api/ws` init payload.
-- **Human-Readable Task Titles:** Updated session label resolution in frontend (`App.tsx` and `ChatTab.tsx`) so scheduled tasks render human titles (e.g. `BCM Trading`) instead of raw technical UUIDs (`task_...`).
+- **Human-Readable Task Titles:** Updated session label resolution in frontend (`App.tsx` and `ChatTab.tsx`) so scheduled tasks render human titles (e.g. `Daily Digest`) instead of raw technical UUIDs (`task_...`).
 - **Empty Response Protection:** Added fallback handling in `save_message`, `_respond_as_subagent`, and `_trigger_agent_task` to ensure assistant message bubbles are never blank.
 
 ### 🛡️ Open-Source Architecture Alignment

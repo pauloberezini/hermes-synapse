@@ -18,7 +18,7 @@ It runs on your own machines with Docker Compose, under the MIT license. Any Ope
 
 [Run the approvals demo](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html) · [Read the security model](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Regulated fintech use case](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html) · [Talk about a pilot](https://www.linkedin.com/in/pauloberezini/)
 
-Known limits today: the two agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.
+Known limits today: Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.
 
 <div align="center">
 
@@ -33,9 +33,9 @@ Known limits today: the two agents that run generated Python (Code Engineer, Dat
 
 ```bash
 git clone https://github.com/pauloberezini/hermes-synapse && cd hermes-synapse
-cp .env.example .env   # add your LLM API key
+cp .env.example .env   # LLM key + POSTGRES_PASSWORD, QDRANT_API_KEY, JWT_SECRET
 docker compose up -d --build
-# Open http://localhost:9119
+# Open http://127.0.0.1:9119
 ```
 
 </div>
@@ -179,7 +179,7 @@ Per-agent overrides: `AGENT_MODEL_CODE`, `AGENT_MODEL_RESEARCH`, `AGENT_MODEL_AN
 | Hugging Face FastEmbed | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` for local embeddings |
 | Voice | Browser `SpeechRecognition` for STT and `speechSynthesis` for TTS in the dashboard (not a local Whisper stack) |
 | Auto-hire | `AUTO_HIRE=ask` (default) / `on` / `off` - planner can create a capped specialist when nobody covers the request |
-| Docker / Swarm / Kubernetes | `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.swarm.yml`, `k8s/` |
+| Docker / Swarm / Kubernetes | Pilot: `docker-compose.yml` (loopback dashboard, required secrets). Dev-only: `docker-compose.dev.yml`. Swarm/k8s manifests are examples, not a hardened pilot. |
 
 A GitHub skill in `hermes_sdk/examples/` is a template, not a seeded connector. Do not confuse it with a built-in GitHub integration.
 
@@ -195,7 +195,7 @@ Hermes is a **runtime governance layer**, not a claim that every code path is ga
 
 Built-in high-risk names (`HIGH_RISK_TOOLS`):
 
-`execute_command`, `create_obsidian_note`, `delete_todoist_task`, `create_subagent`, `update_subagent`, `delete_subagent`, `change_agent_skills`, `assign_role`, `clear_history`, `clear_decision_logs`, `set_log_level`, `export_or_purge_audit`
+`execute_command`, `execute_code`, `create_obsidian_note`, `delete_todoist_task`, `create_subagent`, `update_subagent`, `delete_subagent`, `change_agent_skills`, `assign_role`, `clear_history`, `clear_decision_logs`, `set_log_level`, `export_or_purge_audit`
 
 Plugins can add names via `high_risk_tools()`. MCP tools go through `mcp_tool_needs_approval`: omitted annotations follow MCP defaults (`readOnlyHint` false, `destructiveHint` true) and wait; a tool opts out with `readOnlyHint: true` or `destructiveHint: false`.
 
@@ -259,7 +259,7 @@ Offline (Python 3.11+ stdlib only - the checker is **not** inside the zip):
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  "http://localhost:8000/api/governance/decisions/export.zip" -o decisions.zip
+  "http://127.0.0.1:9119/api/governance/decisions/export.zip" -o decisions.zip
 
 python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 # ok checked=N head=H   → exit 0
@@ -270,8 +270,8 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 
 ### Login and identity
 
-- Dashboard login is a **6-digit OTP** (5 minute TTL, single use). The code is printed in the backend log, optionally sent on Telegram, and written to `backend/data/.current_otp` (mode `0600`) as an emergency fallback.
-- Local OTP sessions live in an in-memory set. A backend restart drops them (known limitation R2-6).
+- Dashboard login is a **6-digit OTP** (5 minute TTL, single use, hashed in the database, 5 failed attempts lock the code out). It is sent on Telegram and, in development, written to `backend/data/.current_otp` (mode `0600`). The plaintext code is not written to logs.
+- Local OTP sessions are stored as SHA-256 token hashes in `auth_sessions` (12h sliding TTL, logout sets `revoked_at`) so they survive restarts and work across replicas.
 - Optional `JWT_SECRET` enables HS256 JWT sessions (`alg=none` is rejected). RBAC roles: admin > editor > operator > viewer. OTP sessions are treated as `local-admin`.
 - Decision events record a `Principal` (`subject`, `roles`, `tenant_id`, `auth_method`).
 
@@ -285,16 +285,16 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 
 | ID | What it means |
 |---|---|
-| **R1-2** | The **Code Engineer** (and Data Analyst, which reuses it) runs generated Python via `CodeAgent.run_and_correct` → `execute_code`. That path never calls `gate_tool`. Retry-based gating also does not fit generated code: the script changes every turn, so an "identical arguments" retry would never consume. Treat the code-agent sandbox as **out of the approval gate** until a replay-the-approved-source path exists. Do not demo it as gated. |
+| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to the source (`{"code": ...}`) and consumed once. A PENDING/REJECTED result does not enter the auto-correct loop; each new script is a new payload. Nested orchestrators skip code/analyst when `python_sandbox` is missing from the skill intersection. `CODE_AGENTS_ENABLED=false` disables execution entirely (fail closed on unrecognised values). |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
-| **R2-6** | OTP sessions are not persisted across process restarts. |
+| **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
 | Verifier | Tamper-evident with `--pin`. Not a signature. Not encrypted. |
 | PIIGuard | Known regexes only. |
 
-Roadmap for gating the code agent, signed manifests, and persistent sessions: [ROADMAP.md](ROADMAP.md) and `docs/specs/approvals-demo-hardening-phase2.md`.
+Roadmap for signed manifests: [ROADMAP.md](ROADMAP.md) and `docs/specs/approvals-demo-hardening-phase2.md`.
 
 ---
 
@@ -307,18 +307,16 @@ git clone https://github.com/pauloberezini/hermes-synapse
 cd hermes-synapse
 cp .env.example .env
 # Set OPENROUTER_API_KEY (or point LLM_API_BASE at Ollama and use a placeholder key)
+# Set POSTGRES_PASSWORD, QDRANT_API_KEY, JWT_SECRET (openssl rand -hex 32)
 
 docker compose up -d --build
 ```
 
-- Dashboard: [http://localhost:9119](http://localhost:9119)
-- API: [http://localhost:8000](http://localhost:8000)
+- Dashboard: [http://127.0.0.1:9119](http://127.0.0.1:9119) (API via `/api`)
 
-Login: the OTP is printed in the backend log (and sent to Telegram if configured):
+Compose fails fast if those secrets are missing or are known defaults. Postgres, Qdrant, and the backend port stay on the internal network. Full pilot notes: [Getting started](https://pauloberezini.github.io/hermes-synapse/guide/getting-started.html).
 
-```bash
-docker logs jarvis-backend | grep "Generated OTP Code"
-```
+Login: a 6-digit OTP is sent to Telegram when configured. In development it is also written to `backend/data/.current_otp` (not printed in logs).
 
 **Local model (Ollama)** in `.env`:
 
@@ -332,7 +330,7 @@ Hot-reload development:
 
 ```bash
 docker compose -f docker-compose.dev.yml up
-# UI http://localhost:5173  ·  API http://localhost:8000
+# UI http://127.0.0.1:5173  ·  API http://127.0.0.1:8000  (dev-only)
 ```
 
 `AUTO_HIRE=ask` (default) creates a specialist and waits for `POST /api/subagents/{id}/confirm`. `on` hires and runs in the same turn. `off` reports the gap and creates nothing. Hired agents never receive skills the parent does not already have.
@@ -341,7 +339,7 @@ docker compose -f docker-compose.dev.yml up
 
 ## Demo walkthrough
 
-Use Sys Ops (`shell_execution` → `execute_command`). **Do not use the Code Engineer for this demo** (see R1-2). Never put a real key in the prompt.
+Use Sys Ops (`shell_execution` → `execute_command`) or Code Engineer (`python_sandbox` → `execute_code`). Both wait for Approve, then a retry of the identical payload. Never put a real key in the prompt.
 
 1. New chat, for example "Disk check". Send: `Ask Sys Ops to run \`df -h /\` on the server.`
 2. Execution stops. The Approvals badge counts up. Open **Governance Approvals**.
@@ -355,9 +353,9 @@ Use Sys Ops (`shell_execution` → `execute_command`). **Do not use the Code Eng
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  http://localhost:8000/api/governance/decisions/verify
+  http://127.0.0.1:9119/api/governance/decisions/verify
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  http://localhost:8000/api/governance/decisions/export.zip -o decisions.zip
+  http://127.0.0.1:9119/api/governance/decisions/export.zip -o decisions.zip
 python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 ```
 
@@ -390,7 +388,7 @@ Seeded on first launch (keys optional; missing keys return a clear error):
 |---|---|
 | **Jarvis (Main)** - root orchestrator | - |
 | **Search Agent** | `web_search` (SearXNG, weather, RSS) |
-| **Code Engineer** | `python_sandbox` (not approval-gated; see R1-2) |
+| **Code Engineer** | `python_sandbox` (`execute_code` is HITL-gated) |
 | **Data Analyst** | `python_sandbox` (reuses Code Engineer) |
 | **Scheduler** | `timers_alarms` |
 | **Market Monitor** | `market_monitor` |
@@ -408,7 +406,7 @@ Other dashboard surfaces: visual DAG canvas, 2.5D pixel office, Kanban task boar
 
 Shipped on current `main` includes DAG orchestration, PostgreSQL, Qdrant / GraphRAG, Telegram, MCP client, plugin boundary, `hermes_sdk`, marketplace registry, voice in the browser, OTP + optional JWT RBAC, Paperclip-style BudgetGuard, HITL approvals with evidence bundles, and the immutable decision log.
 
-Still ahead: production multi-cluster mesh, WebRTC voice / local multimodal, marketplace monetization beyond the no-op adapter, code-agent gating (R1-2), persistent login sessions, and a signed export manifest.
+Still ahead: production multi-cluster mesh, WebRTC voice / local multimodal, marketplace monetization beyond the no-op adapter, and a signed export manifest.
 
 See [ROADMAP.md](ROADMAP.md) for the full specification.
 

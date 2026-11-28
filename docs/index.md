@@ -195,7 +195,7 @@ Documented in full on [Integrations](/guide/integrations). What the tree actuall
 
 Approvals are bound to **session + action + payload**. `bundle_hash` is SHA-256 over a canonical view of the redacted evidence (args, plan, upstream hashes, flags). `description` and `links` are not in that hash. Approve does not execute. Consume is one-shot. The decision log is append-only and tamper-evident when you pin the head hash. Secrets that match known formats are redacted in evidence.
 
-The **Code Engineer** (and Data Analyst) `execute_code` path does **not** go through `gate_tool`. That is a known limitation (R1-2), not a footnote. Do not say "everything is gated." Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code, Cursor or other MCP clients.
+The **Code Engineer** (and Data Analyst) `execute_code` path goes through `gate_tool` like other high-risk tools: one-shot, payload-bound approval, decision-log entry. Set `CODE_AGENTS_ENABLED=false` to disable sandbox execution entirely. Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code, Cursor or other MCP clients.
 
 Full write-up: [Security model](/guide/security).
 
@@ -204,10 +204,10 @@ Full write-up: [Security model](/guide/security).
 ```bash
 git clone https://github.com/pauloberezini/hermes-synapse
 cd hermes-synapse
-cp .env.example .env
+cp .env.example .env   # LLM key + POSTGRES_PASSWORD, QDRANT_API_KEY, JWT_SECRET
 docker compose up -d --build
-# Dashboard: http://localhost:9119
-# docker logs jarvis-backend | grep "Generated OTP Code"
+# Dashboard: http://127.0.0.1:9119
+# OTP is sent to Telegram (dev fallback: backend/data/.current_otp)
 ```
 
 Step-by-step, Ollama, and auto-hire: [Getting started](/guide/getting-started).

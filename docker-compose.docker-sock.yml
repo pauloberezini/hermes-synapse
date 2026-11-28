@@ -1,0 +1,36 @@
+# OPT-IN / DANGEROUS — Docker socket profile
+#
+# The backend does not use the Docker API. Mounting /var/run/docker.sock is
+# host-root equivalent: any RCE in the backend (execute_command, MCP, uploads)
+# can take over the Docker host.
+#
+# Enable only if you have added a skill that truly needs the Docker socket:
+#
+#   docker compose --profile docker-sock \
+#     -f docker-compose.yml -f docker-compose.docker-sock.yml up -d
+#
+# The overlay mounts the socket; --profile docker-sock starts the warning
+# sidecar. Never enable this on a shared or production host.
+
+services:
+  docker-sock-warning:
+    profiles: ["docker-sock"]
+    image: alpine:3.20
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "WARNING: /var/run/docker.sock is mounted into the backend container." >&2
+        echo "This is host-root equivalent. Disable this overlay after debugging." >&2
+        while true; do sleep 3600; done
+
+  backend:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -12,5 +12,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Run the FastAPI server on port 8080
+RUN groupadd --gid 10002 sandbox \
+    && useradd --uid 10002 --gid sandbox --create-home --home-dir /home/sandbox sandbox \
+    && mkdir -p /mnt/data \
+    && touch /mnt/data/.keep \
+    && chown -R sandbox:sandbox /app /mnt/data /home/sandbox
+
+USER sandbox
+
+EXPOSE 8080
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

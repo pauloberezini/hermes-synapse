@@ -41,23 +41,20 @@ RUN pip install --no-cache-dir \
     "apscheduler>=3.10.0" \
     "sqlalchemy>=2.0.0" \
     "psycopg[binary]>=3.1.0" \
-    "simplefix>=1.0.17" \
-    "twisted>=24.0.0" \
-    "service_identity>=24.0.0" \
-    "pyopenssl>=24.0.0" \
-    "pytest>=7.0.0" \
-    pytest-asyncio \
-    "yfinance>=0.2.54" \
-    protobuf \
-    grpcio-tools \
-    scipy \
-    mplfinance \
-    plotly \
-    fredapi
+    "yfinance>=0.2.54"
 
 # Copy source code and environment configuration
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
+COPY hermes_sdk/ /app/hermes_sdk/
+
+RUN groupadd --gid 10001 hermes \
+    && useradd --uid 10001 --gid hermes --create-home --home-dir /home/hermes hermes \
+    && mkdir -p /app/backend/data \
+    && touch /app/backend/data/.keep \
+    && chown -R hermes:hermes /app /home/hermes
+
+USER hermes
 
 EXPOSE 8000
 

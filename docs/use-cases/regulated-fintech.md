@@ -35,7 +35,7 @@ cTrader publishes official MCP servers. An agent in Claude Code or Cursor can us
 
 - It does not decide whether an order is suitable for a client. It checks nothing about the content of a call.
 - BudgetGuard caps LLM spend. It does not cap order size or market exposure.
-- The two agents that run generated Python, Code Engineer and Data Analyst, are outside the gate.
+- Code Engineer and Data Analyst `execute_code` waits at the same gate as other high-risk tools. Set `CODE_AGENTS_ENABLED=false` to disable the sandbox.
 - Approvals cover agents running in Hermes, including their calls to external MCP tools such as cTrader. There is no gateway in front of Claude Code, Cursor or other MCP clients.
 - It does not keep the register of technological tools that the draft proposes.
 

@@ -1,3 +1,19 @@
+# Hermes Synapse — default stack for a self-hosted enterprise pilot.
+# Requires POSTGRES_PASSWORD, QDRANT_API_KEY, and JWT_SECRET in the environment
+# (see .env.example). `docker compose up` fails fast if they are unset.
+#
+# Dashboard is bound to 127.0.0.1:9119. Put a TLS reverse proxy in front for
+# remote access. Postgres, Qdrant, and the backend API stay on the internal
+# network (reach the API through nginx at /api).
+#
+# Local hot-reload: docker compose -f docker-compose.dev.yml up
+# Docker socket (dangerous, unused by this repo): see docker-compose.docker-sock.yml
+
+x-lockdown: &lockdown
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
 services:
   backend:
     build:
@@ -5,30 +21,40 @@ services:
       dockerfile: backend/Dockerfile
     container_name: jarvis-backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    <<: *lockdown
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    user: "10001:10001"
     env_file:
       - .env
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - LLM_API_BASE=${LLM_API_BASE:-https://openrouter.ai/api/v1}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - LLM_MODEL=${LLM_MODEL:-ollama/llama3}
-      - QDRANT_HOST=qdrant
-      - OBSIDIAN_HOST=host.docker.internal
-      - GRAPHRAG_API_URL=${GRAPHRAG_API_URL:-http://host.docker.internal:8088/api/v1/analytics/ask}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/hermes}
-      - HF_TOKEN=${HF_TOKEN}
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      ENV: production
+      ALLOW_LOCAL_AUTH_FALLBACK: "0"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      LLM_API_BASE: ${LLM_API_BASE:-https://openrouter.ai/api/v1}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      LLM_MODEL: ${LLM_MODEL:-ollama/llama3}
+      QDRANT_HOST: qdrant
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env}
+      OBSIDIAN_HOST: host.docker.internal
+      POSTGRES_USER: ${POSTGRES_USER:-hermes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-hermes}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hermes}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hermes}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      HF_TOKEN: ${HF_TOKEN}
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+      HF_HOME: /app/backend/data/.cache/huggingface
+      XDG_CACHE_HOME: /app/backend/data/.cache
+      DISTILLED_SKILLS_DIR: /app/backend/data/skills
+      HOME: /app/backend/data
+      PYTHONDONTWRITEBYTECODE: "1"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./backend:/app/backend
-      - ./hermes_sdk:/app/hermes_sdk
-      - ./scripts:/app/scripts
-      - ./.env:/app/.env
-      - /var/run/docker.sock:/var/run/docker.sock
+      - backend_data:/app/backend/data
       - sandbox_data:/app/backend/data/sandbox
     depends_on:
       qdrant:
@@ -51,11 +77,26 @@ services:
       dockerfile: Dockerfile
     container_name: jarvis-dashboard
     restart: unless-stopped
+    <<: *lockdown
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /var/cache/nginx:mode=1777
+      - /var/run:mode=1777
+      - /run:mode=1777
+      - /var/log/nginx:mode=1777
+    user: "101:101"
     ports:
-      - "9119:80"
+      - "127.0.0.1:9119:8080"
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - hermes-net
 
@@ -63,16 +104,14 @@ services:
     image: postgres:16-alpine
     container_name: jarvis-db
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=hermes
+      POSTGRES_USER: ${POSTGRES_USER:-hermes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-hermes}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d hermes"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -80,14 +119,15 @@ services:
       - hermes-net
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.13.2
     container_name: jarvis-qdrant
     restart: unless-stopped
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    <<: *lockdown
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env}
     volumes:
       - qdrant_data:/qdrant/storage
+    # Image has no shell; backend degrades if Qdrant is down on startup.
     networks:
       - hermes-net
 
@@ -96,13 +136,31 @@ services:
       context: ./sandbox
     container_name: jarvis-sandbox
     restart: unless-stopped
+    <<: *lockdown
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    user: "10002:10002"
+    environment:
+      HOME: /tmp
+      IPYTHONDIR: /tmp/ipython
+      MPLCONFIGDIR: /tmp/matplotlib
+      JUPYTER_RUNTIME_DIR: /tmp/jupyter
+      JUPYTER_DATA_DIR: /tmp/jupyter-data
     deploy:
       resources:
         limits:
-          cpus: '1.0'
+          cpus: "1.0"
           memory: 2G
+          pids: 256
     volumes:
       - sandbox_data:/mnt/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/openapi.json')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - sandbox-net
 
@@ -116,3 +174,4 @@ volumes:
   qdrant_data:
   postgres_data:
   sandbox_data:
+  backend_data:

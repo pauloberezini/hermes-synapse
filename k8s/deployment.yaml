@@ -1,3 +1,5 @@
+# EXAMPLE ONLY — not production-ready (plaintext passwords, no PVC, no secrets).
+# Self-hosted pilots should use docker-compose.yml. See docs/guide/getting-started.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -8,6 +8,23 @@ from backend.subagents import ResearchAgent, CodeAgent, AnalystAgent, call_llm, 
 
 logger = logging.getLogger("hermes.orchestrator")
 
+
+def _skill_names(raw) -> set:
+    if raw is None:
+        return set()
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return {str(s).strip() for s in raw if str(s).strip()}
+    return {s.strip() for s in str(raw).split(",") if s.strip()}
+
+
+def _python_sandbox_permitted(child_agent, active_skills, parent_skills) -> bool:
+    """Code/analyst may run only when python_sandbox survives skill intersection."""
+    if "python_sandbox" not in _skill_names((child_agent or {}).get("skills")):
+        return False
+    if parent_skills is not None:
+        return "python_sandbox" in _skill_names(active_skills)
+    return True
+
 PLANNER_SYSTEM_PROMPT = """You are the Planner in the Jarvis multi-agent system. 
 Your task is to break down a complex user query into a sequence of steps to be executed by specialized sub-agents:
 1. "research" — search for information on the Internet (DuckDuckGo, web pages, news, quotes, Wikipedia). Always use this agent when fresh news, stock/crypto quotes, or external web search are needed.
@@ -706,26 +723,36 @@ Rules:
                     state.add_trace("Research Agent", "Search", f"Error: {str(e)}", "error")
                     
             elif agent_type == "code":
-                try:
-                    res = await CodeAgent(api_key, model).run_and_correct(contextual_instructions)
-                    state.results.append({"step": state.current_step_idx, "agent": "code", "output": res})
-                    status = "success" if res["success"] else "error"
-                    msg = f"Execution successful (attempts: {res['attempts']}). Output:\n{res['stdout'][:120].strip()}" if res["success"] else f"Error: {res['stderr']}"
-                    state.add_trace("Code Agent", "Execute", msg, status)
-                except Exception as e:
-                    state.results.append({"step": state.current_step_idx, "agent": "code", "error": str(e)})
-                    state.add_trace("Code Agent", "Execute", f"Error: {str(e)}", "error")
+                if not _python_sandbox_permitted(child_agent, active_skills, parent_skills):
+                    msg = "python_sandbox is not in the effective skill set; skipping code execution."
+                    state.results.append({"step": state.current_step_idx, "agent": "code", "error": msg})
+                    state.add_trace("Code Agent", "Skip", msg, "error")
+                else:
+                    try:
+                        res = await CodeAgent(api_key, model).run_and_correct(contextual_instructions)
+                        state.results.append({"step": state.current_step_idx, "agent": "code", "output": res})
+                        status = "success" if res["success"] else "error"
+                        msg = f"Execution successful (attempts: {res['attempts']}). Output:\n{res['stdout'][:120].strip()}" if res["success"] else f"Error: {res['stderr']}"
+                        state.add_trace("Code Agent", "Execute", msg, status)
+                    except Exception as e:
+                        state.results.append({"step": state.current_step_idx, "agent": "code", "error": str(e)})
+                        state.add_trace("Code Agent", "Execute", f"Error: {str(e)}", "error")
                     
             elif agent_type == "analyst":
-                try:
-                    res = await AnalystAgent(api_key, model).run(contextual_instructions)
-                    state.results.append({"step": state.current_step_idx, "agent": "analyst", "output": res})
-                    status = "success" if res["success"] else "error"
-                    msg = f"Chart generated {res.get('plot_url')}" if res["success"] else f"Error: {res.get('error')}"
-                    state.add_trace("Analyst Agent", "Plot", msg, status)
-                except Exception as e:
-                    state.results.append({"step": state.current_step_idx, "agent": "analyst", "error": str(e)})
-                    state.add_trace("Analyst Agent", "Plot", f"Error: {str(e)}", "error")
+                if not _python_sandbox_permitted(child_agent, active_skills, parent_skills):
+                    msg = "python_sandbox is not in the effective skill set; skipping code execution."
+                    state.results.append({"step": state.current_step_idx, "agent": "analyst", "error": msg})
+                    state.add_trace("Analyst Agent", "Skip", msg, "error")
+                else:
+                    try:
+                        res = await AnalystAgent(api_key, model).run(contextual_instructions)
+                        state.results.append({"step": state.current_step_idx, "agent": "analyst", "output": res})
+                        status = "success" if res["success"] else "error"
+                        msg = f"Chart generated {res.get('plot_url')}" if res["success"] else f"Error: {res.get('error')}"
+                        state.add_trace("Analyst Agent", "Plot", msg, status)
+                    except Exception as e:
+                        state.results.append({"step": state.current_step_idx, "agent": "analyst", "error": str(e)})
+                        state.add_trace("Analyst Agent", "Plot", f"Error: {str(e)}", "error")
                     
             else:
                 # Custom Sub-agent execution

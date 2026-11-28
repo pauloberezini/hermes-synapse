@@ -11,7 +11,7 @@ export default {
         h(
           'p',
           { class: 'hero-limits' },
-          'Known limits today: the two agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.',
+          'Known limits today: Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.',
         ),
     }),
   enhanceApp({ app }) {

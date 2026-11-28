@@ -46,7 +46,7 @@ def test_agent_mesh_api_endpoints():
         "node_id": "node_beta",
         "endpoint_url": "http://192.168.1.50:9119",
         "display_name": "Beta Node",
-        "capabilities": ["bcm", "obsidian_rag"],
+        "capabilities": ["python_sandbox", "obsidian_rag"],
         "status": "online"
     }
     reg_res = client.post("/api/mesh/peers/register", json=peer_payload, headers=headers)
@@ -65,8 +65,8 @@ def test_agent_mesh_api_endpoints():
         "task_id": "task_002",
         "requester_node_id": "local_root",
         "target_node_id": "node_beta",
-        "action": "execute_trade_check",
-        "input_data": {"symbol": "EURUSD"}
+        "action": "search",
+        "input_data": {"query": "quantum computing"}
     }
     disp_res = client.post("/api/mesh/dispatch", json=dispatch_payload, headers=headers)
     assert disp_res.status_code == 200
