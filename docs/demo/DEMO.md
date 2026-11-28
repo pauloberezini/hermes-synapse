@@ -19,7 +19,7 @@ Live dashboard clicks are **optional** and labeled. They need Compose plus a mod
 - **Scripted:** the "agent" is `scripts/demo.py`, not Jarvis + an LLM.
 - **Mocked:** shell and sandbox HTTP. The reject payload is a customer-CSV POST to `exports.partner.example` and must not run.
 - **Missing on purpose:** there is no `send_payment` tool. The export is `execute_command`; code is `execute_code`.
-- **Not claimed:** the zip export is tamper-evident when you pin the head hash and carries no signatures. The JSON export carries signatures on checkpoints. The private key lives on the same host as the log.
+- **Not claimed:** the zip export is not a signature scheme. It is tamper-evident when you pin the head hash and carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log.
 
 ## 0:00–0:30 — Setup
 
