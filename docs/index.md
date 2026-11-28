@@ -1,54 +1,37 @@
 ---
 layout: home
-title: Runtime governance for AI agents
+title: Approve the exact call your AI agent is about to make
 titleTemplate: :title | Hermes Synapse
-description: Self-hosted runtime governance and a human approval layer for AI agents. Payload-bound approvals, an append-only decision log, and offline verification. MIT.
+description: Hermes Synapse is a self-hosted approval layer for AI agents that touch money or production systems. An approval covers one payload and works once. Every step lands in a hash-chained log you can check offline.
 head:
   - - meta
     - name: keywords
       content: Hermes Synapse, AI agent governance, human-in-the-loop, approval gate, runtime governance, multi-agent orchestrator, MCP, decision log, SupplyAlpha
 hero:
   name: HERMES SYNAPSE
-  text: Runtime governance for AI agents
-  tagline: Approve the exact payload. Consume it once. Verify the chain offline. Self-hosted DAG orchestrator with a human approval layer, MIT licensed.
+  text: Approve the exact call your AI agent is about to make.
+  tagline: Hermes Synapse is a self-hosted approval layer for AI agents that touch money or production systems. An approval covers one payload and works once. Every step lands in a hash-chained log you can check offline.
   image:
     src: /og-image.png
     alt: Hermes Synapse Communication Link showing a Sys Ops command waiting for human approval
   actions:
     - theme: brand
-      text: Quick start
-      link: /guide/getting-started
+      text: Run the approvals demo
+      link: /guide/approvals
     - theme: alt
-      text: Security model
-      link: /guide/security
-    - theme: alt
-      text: Star on GitHub
-      link: https://github.com/pauloberezini/hermes-synapse
+      text: Become a design partner
+      link: https://www.linkedin.com/in/pauloberezini/
 
 features:
-  - icon: 🛡️
-    title: Payload-bound approvals
-    details: Risky tools stop at PENDING until a human reviews CLAIM, SOURCE, args, and bundle_hash. Approve does not run the tool. The next identical call is CONSUMED once.
-  - icon: 🔗
-    title: Append-only decision log
-    details: REQUESTED, APPROVED, REJECTED, and CONSUMED events form a hash chain. Export a zip and check it offline with a stdlib Python script and --pin.
-  - icon: 🧠
-    title: DAG orchestration
-    details: Visual canvas of orchestrators and specialists. Dynamic LLM planning, cycle-safe graphs, and permission intersection so children cannot gain tools the parent does not have.
-  - icon: 🔌
-    title: MCP, plugins, OpenAI-compatible LLMs
-    details: Talk to any OpenAI-compatible API (OpenRouter, Ollama, vLLM). Connect MCP servers. Drop a backend plugin without the core importing it by name.
-  - icon: 💸
-    title: BudgetGuard
-    details: Per-session and global USD caps before the next LLM call. Paperclip-inspired spend control for runaway agent loops.
-  - icon: 🏢
-    title: Office, Kanban, mesh
-    details: 2.5D pixel office, atomic task checkout, heartbeat pulses, team presets, and a P2P agent mesh for capability matching.
+  - title: The agent asks and you decide.
+    details: Approving only records your decision. The agent then sends the same call again, and that call runs once. After that, the same call creates a new pending request.
+  - title: An auditor can check the log without us.
+    details: Requests, approvals, rejections and uses are chained with SHA-256. Export it and run one Python script. It needs no Hermes install and no network.
+  - title: It runs on your own machines with Docker Compose, under the MIT license.
+    details: Any OpenAI-compatible model works, including a local one. MCP tools that are not marked read-only wait for a human by default.
 ---
 
 ## Why Hermes Synapse
-
-Most multi-agent stacks are either hardwired workflows or unbounded chat loops. Hermes sits in the middle, then adds the control plane those stacks leave as a TODO.
 
 - A visual DAG of orchestrators and specialists. No cycles. Children inherit only the intersection of their skills and the parent's.
 - Dynamic LLM planning, not a hardcoded pipeline.
@@ -56,6 +39,8 @@ Most multi-agent stacks are either hardwired workflows or unbounded chat loops. 
 - An append-only, hash-chained decision log you can export and check with `scripts/verify_decision_log.py`. No Hermes install. No network.
 
 Self-hosted. MIT. Docker Compose. Built by [Pavel Bereznichenko](https://github.com/pauloberezini) at [SupplyAlpha.ai](https://supplyalpha.ai).
+
+How it compares to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop, and a Slack button: [comparison](/guide/comparison).
 
 <div class="cta-row">
   <a class="primary" href="https://github.com/pauloberezini/hermes-synapse">Get the code on GitHub</a>

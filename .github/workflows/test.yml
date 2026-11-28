@@ -100,4 +100,5 @@ jobs:
           grep -q 'canonical' docs/.vitepress/dist/index.html
           grep -q 'https://pauloberezini.github.io/hermes-synapse/' docs/.vitepress/dist/sitemap.xml
           grep -q 'https://pauloberezini.github.io/hermes-synapse/guide/security.html' docs/.vitepress/dist/sitemap.xml
+          grep -q 'https://pauloberezini.github.io/hermes-synapse/guide/comparison.html' docs/.vitepress/dist/sitemap.xml
           ! grep -q 'https://pauloberezini.github.io/guide/' docs/.vitepress/dist/sitemap.xml
