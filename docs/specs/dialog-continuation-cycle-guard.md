@@ -1,9 +1,9 @@
 # Dialog Continuation Cycle Guard — Spec
 
-**Status:** Draft
+**Status:** Core shipped; the private plugin is not in this product tree.
 **Date:** 2026-10-23
-**Scope:** A dialog continuation must not schedule `bcm_run_autonomous_cycle` because the previous assistant tail contains words like `market` or `trade`. The current user line is what the operational gates read.
-**Related precedent:** [`dialog-followup-context.md`](./dialog-followup-context.md), `backend/context_manager.py` (`continuation_query`), `backend/orchestrator.py` (empty-plan gate), `backend/bcm/plugin.py` (`fallback_plan_steps`, `annotate_plan_steps`).
+**Scope:** A dialog continuation must not schedule a plugin autonomous cycle because the previous assistant tail contains words like `market` or `trade`. The current user line is what the operational gates read.
+**Related precedent:** [`dialog-followup-context.md`](./dialog-followup-context.md), `backend/context_manager.py` (`continuation_query`), `backend/orchestrator.py` (empty-plan gate). Optional plugin hooks: `fallback_plan_steps`, `annotate_plan_steps`.
 
 ---
 
@@ -161,7 +161,7 @@ digraph DialogContinuationCycleGuard {
   }
 
   subgraph cluster_plugin {
-    label="BCM plugin (private)" style="dashed" color="darkorange"
+    label="optional plugin hooks" style="dashed" color="darkorange"
     RULE [label="planner_trading_rule\nsentence (shipped)" shape="component"]
     FALL [label="fallback_plan_steps\nno cycle from the tail" shape="component"]
     ANN [label="annotate_plan_steps\nno BTC inject from the tail" shape="component"]

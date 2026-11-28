@@ -12,7 +12,7 @@ Goal: every public release (`vX.Y.Z` pushed by `scripts/export_oss.sh`) ships wi
 
 ## Scope
 
-In: `CHANGELOG.md`, `docs/guide/getting-started.md`, release checklist. Out: VitePress theme/config, new guide pages, private plugin docs (they stay under `docs/specs/bcm-*`, excluded from export).
+In: `CHANGELOG.md`, `docs/guide/getting-started.md`, release checklist. Out: VitePress theme/config, new guide pages.
 
 ## Tasks
 

@@ -6,7 +6,7 @@ Goal: close the gaps the OSS review (2026-10-10) found in the auto-hire change (
 
 The review passed: no vendor lock-in, every new env var has a default, migrations cover SQLite and Postgres, 261 tests green. These issues remain:
 
-1. **Trading domain in core.** `backend/agent_factory.py` hardcodes trading stopwords (`market`, `trade`, `trading`, `купить`) in `_STOP` and an `options_analyst` / `опцион` special case in `gap_spec`. The same change removed options wording from `backend/bcm/plugin.py`. It moved into core instead of leaving. This breaks the parent spec's "Core, not plugin" principle: a community plugin can't supply its own vocabulary or names.
+1. **Trading domain in core.** `backend/agent_factory.py` hardcodes trading stopwords (`market`, `trade`, `trading`, `купить`) in `_STOP` and an `options_analyst` / `опцион` special case in `gap_spec`. Domain wording belonged in a plugin hook, not in core. This breaks the parent spec's "Core, not plugin" principle: a community plugin can't supply its own vocabulary or names.
 2. **Raw SQL outside the database layer.** `_materialize_hires` in `backend/orchestrator.py` imports the private `backend.database._execute` and writes `hire_reason` twice. "Awaiting confirmation" is encoded as a `PENDING:` string prefix inside a free-text field. The parent spec asks for a *disabled* agent in `ask` mode. A text prefix is not a state, and nothing else in the codebase (UI, `call_subagent`, router) honours it.
 3. **Privilege from a naming convention.** `management_tools_for` in `backend/agent.py` grants `create_subagent` / `list_subagents` / `call_subagent` to any agent whose id ends with `_orchestrator`. An imported or marketplace agent named `foo_orchestrator` with `agent_type="agent"` gets hiring rights.
 4. **Duplicated "unused" rule.** The 30-day rule is written twice: in `database.list_unused_auto_agents` and again in `frontend/src/components/NetworkTab.tsx`, with its own timestamp parsing. The two can drift (timezone, Postgres `TIMESTAMP` vs SQLite text).
@@ -49,7 +49,7 @@ The review passed: no vendor lock-in, every new env var has a default, migration
   # generic: slug_id(token), token.capitalize()
   ```
 
-- `backend/bcm/plugin.py` implements both hooks. It returns the trading stopwords, and `{"id": "options_analyst", "name": "Options Analyst", ...}` when the gap token matches `option*` / `опцион*`. The incident replay keeps working with BCM installed, and core no longer knows the word.
+- An optional plugin can implement both hooks (trading stopwords, and a named specialist when the gap token matches a domain word). Core no longer knows those words.
 
 ### 2. Hire state in the data layer
 
@@ -110,7 +110,7 @@ def management_tools_for(subagent: dict) -> set:
 
 ## Tasks
 
-- [x] **1. Domain out of core** — trim `_STOP`; `gap_stopwords` + `gap_spec` hooks; BCM plugin implements them; remove the options branch from `gap_spec`.
+- [x] **1. Domain out of core** — trim `_STOP`; `gap_stopwords` + `gap_spec` hooks; optional plugins implement them; remove the options branch from `gap_spec`.
 - [x] **2. `hire_status`** — migration (SQLite + Postgres, PENDING data fix); `set_hire_status`; getters; `_materialize_hires` without `_execute`; router and `call_subagent` refuse pending; `POST /api/subagents/{id}/confirm`.
 - [x] **3. Explicit privilege** — `management_tools_for` and the `web_search` grant use `agent_type` only; fix seed data if needed.
 - [x] **4. `unused` flag** — backend helper + field; `NetworkTab.tsx` reads it; `AUTO_HIRE_UNUSED_DAYS`.
@@ -124,7 +124,7 @@ Extend `backend/tests/test_auto_hire.py`:
 
 - With no plugin loaded, `gap_spec(q, "options", "")` returns a generic slug (`options`), not `options_analyst`. `keyword_gap` treats `market` as a normal token.
 - With a stub plugin returning `gap_spec` / `gap_stopwords`, the plugin result wins and plugin stopwords are skipped.
-- BCM plugin: `gap_spec(..., "options", ...)` → `options_analyst` (incident replay still passes).
+- Stub plugin: `gap_spec(..., "options", ...)` can return a named specialist; core without a plugin stays generic.
 - `AUTO_HIRE=ask`: a created agent has `hire_status='pending'` and `hire_reason` has no `PENDING:` prefix. The router does not run it. `call_subagent` refuses it. After `POST /api/subagents/{id}/confirm`, it runs.
 - Migration: a row with `hire_reason='PENDING: x'` becomes `hire_status='pending'`, `hire_reason='x'`.
 - `grep`-style test: no `from backend.database import _execute` outside `backend/database.py` (add to `test_public_hygiene.py`).

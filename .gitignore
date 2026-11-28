@@ -90,16 +90,11 @@ backend/data/*.corrupt*
 backend/data/*.bak*
 backend/data/*.json
 backend/data/.current_otp
-backend/data/bcm_peak_equity
 backend/data/plots/
 backend/data/uploads/
 !backend/data/.gitkeep
 obsidian/
 
-# BCM plugin runtime artifacts (plugin source is private-git, excluded by export_oss.sh)
-backend/bcm/node_modules/
-backend/bcm/package-lock.json
-backend/bcm/*.log
 backend/logs/
 
 # Local databases and scratch files

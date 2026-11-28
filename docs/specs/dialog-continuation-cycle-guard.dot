@@ -18,7 +18,7 @@ digraph DialogContinuationCycleGuard {
   }
 
   subgraph cluster_plugin {
-    label="BCM plugin (private)" style="dashed" color="darkorange"
+    label="optional plugin hooks" style="dashed" color="darkorange"
     RULE [label="planner_trading_rule\nsentence (shipped)" shape="component"]
     FALL [label="fallback_plan_steps\nno cycle from the tail" shape="component"]
     ANN [label="annotate_plan_steps\nno BTC inject from the tail" shape="component"]
