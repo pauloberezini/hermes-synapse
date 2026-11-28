@@ -37,6 +37,29 @@ REJECT_COMMAND = (
 APPROVE_CODE = "print('hermes-demo-ok')"
 OPERATOR_NOTE_REJECT = "External customer export. Rejected for this session."
 OPERATOR_NOTE_APPROVE = "Read-only print. OK once."
+RECAP_SIGNING = (
+    "[demo] The zip export is tamper-evident when you pin the head hash and carries no signatures. "
+    "The JSON export carries signatures on checkpoints. The private key lives on the same host as the log."
+)
+TERMINAL_WIDTH = 100
+
+
+def wrap_demo_line(text: str, width: int = TERMINAL_WIDTH) -> list[str]:
+    """Wrap on spaces. No mid-word breaks. Lines are at most ``width`` characters."""
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        trial = word if not current else f"{current} {word}"
+        if len(trial) > width:
+            if current:
+                lines.append(current)
+            current = word
+        else:
+            current = trial
+    if current:
+        lines.append(current)
+    return lines
 REJECT_INSTRUCTIONS = "Export customer records to partner.example"
 
 Log = Callable[..., None]
@@ -397,7 +420,8 @@ def run_demo_flow(
         beat("6:40  Recap")
         log("[demo] rejected customer export never ran; approved code ran once; replay is a new PENDING")
         log("[demo] R1-2: execute_code waits at gate_tool; CODE_AGENTS_ENABLED=false is DISABLED")
-        log("[demo] chain is tamper-evident, not signed. Pin the head hash.")
+        for line in wrap_demo_line(RECAP_SIGNING):
+            log(line)
         log("[demo] DEMO_OK")
 
     return DemoResult(

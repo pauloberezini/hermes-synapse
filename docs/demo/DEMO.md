@@ -185,7 +185,7 @@ No OTP, tokens, or API keys in these files. The UI shots are Playwright against 
 
 1. Risky tools stop at the gate. R1-2: `execute_code` waits; `CODE_AGENTS_ENABLED=false` is `DISABLED`.
 2. Humans see the payload. Reject sticks. Approve is one-shot and payload-bound.
-3. The export is checkable offline. Tampering a row without rewriting the whole chain fails. Pin the head.
+3. The zip export is checkable offline and carries no signatures. Tampering a row without rewriting the whole chain fails. Pin the head. The JSON export carries signatures on checkpoints. The private key lives on the same host as the log.
 
 **Do not say:** the zip is confidential, the manifest is a signature, or that the chain is unforgeable if the attacker also replaces your pin.
 

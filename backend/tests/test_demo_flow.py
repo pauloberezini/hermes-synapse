@@ -101,6 +101,18 @@ def test_demo_cli_headless(tmp_path: Path) -> None:
     assert "CODE_AGENTS_ENABLED=true (explicit, consume path)" in proc.stdout
     assert "CODE_AGENTS_ENABLED=false (explicit, kill switch)" in proc.stdout
     assert "status=DISABLED" in proc.stdout
+    recap = " ".join(proc.stdout.split())
+    assert (
+        "The zip export is tamper-evident when you pin the head hash and carries no signatures. "
+        "The JSON export carries signatures on checkpoints. "
+        "The private key lives on the same host as the log."
+    ) in recap
+    assert "chain is tamper-evident, not signed" not in proc.stdout
+    recap_src = (_ROOT / "scripts" / "demo.py").read_text(encoding="utf-8")
+    assert "The zip export is tamper-evident when you pin the head hash" in recap_src
+    start = recap_src.index("The zip export is tamper-evident")
+    snippet = recap_src[start : start + 400]
+    assert "\u2013" not in snippet and "\u2014" not in snippet
 
 
 def test_makefile_has_demo_targets() -> None:
@@ -143,6 +155,15 @@ def test_demo_media_files_exist() -> None:
     frames = gif.count(b"\x2c")
     assert width >= 600 and height >= 200, (width, height)
     assert frames >= 10, frames
+
+
+def test_demo_recap_wraps_to_terminal_width() -> None:
+    demo = _demo()
+    lines = demo.wrap_demo_line(demo.RECAP_SIGNING, width=demo.TERMINAL_WIDTH)
+    assert lines
+    assert all(len(line) <= demo.TERMINAL_WIDTH for line in lines)
+    assert " ".join(lines) == demo.RECAP_SIGNING
+    assert all("\u2013" not in line and "\u2014" not in line for line in lines)
 
 
 def test_demo_media_has_no_vm_paths() -> None:
