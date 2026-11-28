@@ -198,7 +198,8 @@ def _tamper_zip(src: Path, dest: Path) -> int:
 
 
 def _verify_zip(path: Path, pin: str | None = None) -> subprocess.CompletedProcess[str]:
-    argv = [sys.executable, str(_ROOT / "scripts" / "verify_decision_log.py"), str(path)]
+    # ponytail: demo_verify.py is the only offline checker this stand calls.
+    argv = [sys.executable, str(_ROOT / "scripts" / "demo_verify.py"), str(path)]
     if pin:
         argv.extend(["--pin", pin])
     return subprocess.run(argv, capture_output=True, text=True, check=False)
@@ -340,7 +341,7 @@ def run_demo_flow(
         if not checked.ok:
             raise RuntimeError(f"verify failed: {checked.error}")
 
-        beat("4:50  Export + offline verify_decision_log.py --pin")
+        beat("4:50  Export + offline scripts/demo_verify.py --pin")
         blob, filename = dl.export_zip(exported_by="demo-operator")
         export_path = out_dir / filename
         export_path.write_bytes(blob)

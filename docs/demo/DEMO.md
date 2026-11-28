@@ -15,7 +15,7 @@ Live dashboard clicks are **optional** and labeled. They need Compose plus a mod
 
 ## Honesty label (say this first)
 
-- **Real:** `HIGH_RISK_TOOLS`, `gate_tool`, `ApprovalQueue` (one-time, payload-bound), SHA-256 hash-chained `approval_decisions`, `scripts/verify_decision_log.py`.
+- **Real:** `HIGH_RISK_TOOLS`, `gate_tool`, `ApprovalQueue` (one-time, payload-bound), SHA-256 hash-chained `approval_decisions`. Offline check goes through `scripts/demo_verify.py` (today a thin wrap of the hash-chain CLI).
 - **Scripted:** the "agent" is `scripts/demo.py`, not Jarvis + an LLM.
 - **Mocked:** shell and sandbox HTTP. The reject payload looks like `rm -rf /var/lib/hermes-demo` and must not run.
 - **Missing on purpose:** there is no `send_payment` tool. Delete is `execute_command`; code is `execute_code`.
@@ -115,7 +115,7 @@ make demo
 ok checked=N head=H
 ```
 
-from `scripts/verify_decision_log.py <zip> --pin <head>`. Exit 0. The checker is stdlib-only and is **not** inside the zip.
+from `scripts/demo_verify.py <zip> --pin <head>`. Exit 0. That wrapper is the demo's only offline checker; swap `HERMES_DEMO_VERIFIER` when a newer CLI lands. The checker is **not** inside the zip.
 
 **Optional UI:** there is no hash-chain screen. Use
 
@@ -124,7 +124,7 @@ curl -f -H "Authorization: Bearer <TOKEN>" \
   http://127.0.0.1:9119/api/governance/decisions/verify
 curl -f -H "Authorization: Bearer <TOKEN>" \
   http://127.0.0.1:9119/api/governance/decisions/export.zip -o decisions.zip
-python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
+python3 scripts/demo_verify.py decisions.zip --pin <head_hash>
 ```
 
 ## 5:30–6:40 — Tamper one record
@@ -159,6 +159,7 @@ exit 1. In-DB `verify` on the untouched demo DB is still ok — we tampered the 
 | `make demo PAUSE=1` | Same, wait for Enter at each beat |
 | `make demo-reset` | Delete the demo DB and leftover zips |
 | `python3 scripts/demo.py --seed` | Two PENDING rows only (still mocked) |
+| `python3 scripts/demo_verify.py <zip> [--pin HASH]` | Demo offline verify (wraps the current checker) |
 
 Headless check: `cd backend && uv run pytest tests/test_demo_flow.py`.
 
@@ -168,6 +169,7 @@ Headless check: `cd backend && uv run pytest tests/test_demo_flow.py`.
 |---|---|
 | `send_payment` | Does not exist. Not faked. |
 | Dashboard hash-chain viewer | API + this script only |
+| Offline checker | `scripts/demo_verify.py` wraps today's hash-chain CLI. Point `HERMES_DEMO_VERIFIER` at a newer one later. Do not fork the chain walker here. |
 | Live model retry | Not this stand. Guide: [Approvals walkthrough](../guide/approvals.md) |
 | RBAC | Untouched. Operator principal is `demo-operator` / `otp` |
 | `BudgetGuard` / `PIIGuard` | Real, not exercised here |

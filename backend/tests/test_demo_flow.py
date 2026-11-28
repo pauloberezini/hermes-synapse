@@ -90,6 +90,16 @@ def test_makefile_has_demo_targets() -> None:
     text = (_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "demo:" in text
     assert "demo-reset:" in text
+    assert ".PHONY: demo demo-reset" in text
+
+
+def test_demo_offline_verify_goes_through_wrapper() -> None:
+    demo = (_ROOT / "scripts" / "demo.py").read_text(encoding="utf-8")
+    assert "demo_verify.py" in demo
+    assert "verify_decision_log.py" not in demo
+    wrapper = (_ROOT / "scripts" / "demo_verify.py").read_text(encoding="utf-8")
+    assert "HERMES_DEMO_VERIFIER" in wrapper
+    assert "verify_decision_log.py" in wrapper
 
 
 def test_demo_guide_drops_false_security_claims() -> None:
