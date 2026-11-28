@@ -26,6 +26,9 @@ services:
     environment:
       ENV: development
       ALLOW_LOCAL_AUTH_FALLBACK: "1"
+      # DEV ONLY: code agents on so local iteration can hit the sandbox.
+      # Pilot compose (docker-compose.yml) defaults this to false.
+      CODE_AGENTS_ENABLED: "true"
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       LLM_API_BASE: ${LLM_API_BASE:-https://openrouter.ai/api/v1}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}

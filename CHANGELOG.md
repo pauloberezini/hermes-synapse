@@ -9,7 +9,8 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 ### 🛡️ R1-2: gate `execute_code`
 - Code Engineer / Data Analyst sandbox calls go through `gate_tool` (permission intersection, one-shot payload-bound HITL, decision log).
 - Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set.
-- Kill switch `CODE_AGENTS_ENABLED` (default true); unrecognised values fail closed.
+- Kill switch `CODE_AGENTS_ENABLED` (**default false**); unrecognised and unset values fail closed.
+- **Migration:** installs that relied on the previous default-on behavior must set `CODE_AGENTS_ENABLED=true` in `.env` and recreate the backend.
 
 ### 🛡️ Pilot compose hardening
 - OpenAPI-to-MCP proxy (`backend/mcp_openapi_proxy.py`) has no default host; unset `OPENAPI_URL` exits instead of calling a third-party URL.

@@ -76,7 +76,7 @@ cp .env.example .env
 | `LLM_API_BASE` / `LLM_MODEL` | if not OpenRouter | local: `http://host.docker.internal:11434/v1` and `llama3`; key can be `local` |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `TELEGRAM_ADMIN_ID` | production OTP | BotFather + `@userinfobot` |
 | `ALLOW_LOCAL_AUTH_FALLBACK` | no Telegram | set `1` so `/api/auth/request-code` writes `/app/backend/data/.current_otp` |
-| `CODE_AGENTS_ENABLED` | no | `true`/`1`/`yes`/`on` (default) runs `execute_code` after HITL. Any other value **fails closed** |
+| `CODE_AGENTS_ENABLED` | no | **off by default.** Set `true` only if you want Code Engineer / Data Analyst sandbox execution (still HITL-gated). Unset and unrecognised values fail closed |
 | `POSTGRES_USER` / `POSTGRES_DB` | no | default `hermes` / `hermes` |
 
 Generate the three compose secrets (do not reuse the sample output):
@@ -190,23 +190,31 @@ curl -sS -X POST -H "Authorization: Bearer $TOKEN" \
 
 Measured: PENDING → APPROVED in under a second. Identical `gate_tool` call then returned `None` (consume); `execute_command("df -h /")` ran with `exit_code: 0`. `GET /api/governance/decisions/verify` → `ok checked=3`.
 
-## `CODE_AGENTS_ENABLED`
+## Enabling code agents (explicit)
 
-Kill switch for Code Engineer / Data Analyst sandbox POSTs. Unrecognised values fail closed.
+Pilot compose and `.env.example` default **`CODE_AGENTS_ENABLED=false`**. Unset and unrecognised values fail closed: no sandbox POST, no approval row, no LLM self-correction. Sys Ops `execute_command` is unrelated and still HITL-gated.
+
+**Risk.** `true` lets the Code Engineer / Data Analyst run operator-approved Python inside `jarvis-sandbox` (1 CPU, 2 GiB, isolated `sandbox-net`, non-root uid 10002). Approve still does not run the tool; the next identical payload is consumed once. Do not enable on a shared host unless that is acceptable.
+
+To turn it on:
 
 ```bash
 # .env — then recreate backend so the running process sees it
-CODE_AGENTS_ENABLED=false
+CODE_AGENTS_ENABLED=true
 docker compose up -d --force-recreate --no-deps backend
 ```
 
+To turn it off, set `false` (or anything other than `true`/`1`/`yes`/`on`) and recreate.
+
 | Value | `code_agents_enabled()` | `execute_code` |
 |---|---|---|
-| unset / `true` / `1` / `yes` / `on` | true | HITL gate, then sandbox |
-| `false` | false | `status=DISABLED`, no approval row |
+| unset / `false` / `0` / `off` | false | `status=DISABLED`, no approval row |
+| `true` / `1` / `yes` / `on` | true | HITL gate, then sandbox |
 | `maybe` (or anything else) | false | same fail-closed |
 
-Verified inside the backend container on this install.
+`docker-compose.dev.yml` (DEV ONLY) hardcodes `CODE_AGENTS_ENABLED=true` so local hot-reload can hit the sandbox. Pilot `docker-compose.yml` defaults to false.
+
+Existing installs that relied on the old default-on behavior must set `CODE_AGENTS_ENABLED=true`.
 
 ## Backup (Postgres + Qdrant + volumes)
 
@@ -341,7 +349,8 @@ Verified here: `ok checked=3` then `--pin` on the 64-char head.
 | `/var/run/docker.sock` in the backend | you passed the opt-in overlay | remove it unless you have a skill that truly needs Docker. Host-root equivalent |
 | volume tarballs missing after `docker run -v /tmp/backup:/backup` | `DOCKER_HOST` is a **remote** engine; that bind-mount is the engine host | stream `tar czf -` to stdout, as in Backup |
 | UI chat never creates a PENDING row | no working LLM | configure OpenRouter/Ollama, or use the `gate_tool` API path above |
-| `CODE_AGENTS_ENABLED=false` in `.env` but code still gates | env_file is read at **container start** | `--force-recreate --no-deps backend` |
+| Code Engineer returns `DISABLED` | `CODE_AGENTS_ENABLED` defaults to false | set `true` in `.env` and `--force-recreate --no-deps backend` (see [Enabling code agents](#enabling-code-agents-explicit)) |
+| `.env` change has no effect | env_file is read at **container start** | `--force-recreate --no-deps backend` |
 
 Containers run as `10001` (backend) and `10002` (sandbox). Frontend compose user is `101:101` (nginx). Postgres alpine uses uid `70`. Qdrant in this stack writes its volume as root.
 
@@ -353,7 +362,7 @@ Verified on a clean clone, `docker compose up -d --build`:
 - dashboard `127.0.0.1:9119`, data stores unpublished, no docker.sock
 - OTP Telegram-only default **and** `.current_otp` with `ALLOW_LOCAL_AUTH_FALLBACK=1`
 - first gated `execute_command` PENDING → APPROVE → CONSUME via API
-- `CODE_AGENTS_ENABLED` true / false / unrecognised
+- `CODE_AGENTS_ENABLED` defaults off; true / false / unrecognised fail-closed
 - `export.zip` + `scripts/verify_decision_log.py --pin`
 - Postgres dump + volume tars, restore, chain still `ok`
 - image tag rollback `--no-build`

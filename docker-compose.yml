@@ -46,6 +46,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-hermes}
       DATABASE_URL: postgresql://${POSTGRES_USER:-hermes}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hermes}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      # Fail-safe: execute_code is off unless the operator sets true.
+      CODE_AGENTS_ENABLED: ${CODE_AGENTS_ENABLED:-false}
       HF_TOKEN: ${HF_TOKEN}
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
       HF_HOME: /app/backend/data/.cache/huggingface
