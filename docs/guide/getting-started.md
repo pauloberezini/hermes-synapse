@@ -38,7 +38,9 @@ docker compose up -d --build
 
 For hot-reload without those secrets, use the [dev compose](#development-hot-reload) file.
 
-Login is a 6-digit OTP sent to Telegram when `TELEGRAM_CHAT_ID` is set. In development it is also written to `backend/data/.current_otp` (the code is not printed in logs).
+Login is a 6-digit OTP sent to Telegram when `TELEGRAM_CHAT_ID` is set. On a VM without Telegram, set `ALLOW_LOCAL_AUTH_FALLBACK=1` so the code is written to `backend/data/.current_otp` (mode `0600`; the plaintext is not printed in logs).
+
+Full customer-VM install (hardware, secrets, first approval, backup/restore, upgrade/rollback, offline verify): [Pilot runbook](../pilot-runbook).
 
 After login you land on Communication Link (Main Terminal):
 

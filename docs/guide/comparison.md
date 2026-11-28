@@ -24,7 +24,7 @@ These four solve neighbouring problems, and I would not pick Hermes for all of t
 - You already run agents on LangGraph, CrewAI or the OpenAI Agents SDK and cannot move them. Use AGT, or LangGraph interrupts if you are on LangGraph.
 - You need one policy language across many frameworks. AGT does that and Hermes does not.
 - You need enforced roles, such as a separate approver group, this quarter. Role checks exist in the code and are not wired to routes yet.
-- You want generated Python to run without a human. Code Engineer and Data Analyst `execute_code` waits at the same gate; `CODE_AGENTS_ENABLED=false` turns the sandbox off.
+- You want generated Python to run without a human. Code Engineer and Data Analyst are off by default; set `CODE_AGENTS_ENABLED=true` to enable them, and they still wait at the same gate.
 - You need a signed, non-repudiable log or a vendor with a support contract. Hermes has neither.
 - You already run AGT and only need approvals. Its coordinator already covers exact-action approvals that expire. Hermes would add a screen. It would also add one more system to run.
 - You need access control by user, shadow-agent discovery or SSO across a whole company. Gateway and identity products such as Runlayer, Mintive and Okta for AI Agents work on that layer. Hermes does not.

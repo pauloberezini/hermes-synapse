@@ -195,7 +195,7 @@ Documented in full on [Integrations](/guide/integrations). What the tree actuall
 
 Approvals are bound to **session + action + payload**. `bundle_hash` is SHA-256 over a canonical view of the redacted evidence (args, plan, upstream hashes, flags). `description` and `links` are not in that hash. Approve does not execute. Consume is one-shot. The decision log is append-only and tamper-evident when you pin the head hash. Secrets that match known formats are redacted in evidence.
 
-The **Code Engineer** (and Data Analyst) `execute_code` path goes through `gate_tool` like other high-risk tools: one-shot, payload-bound approval, decision-log entry. Set `CODE_AGENTS_ENABLED=false` to disable sandbox execution entirely. Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code, Cursor or other MCP clients.
+The **Code Engineer** (and Data Analyst) `execute_code` path is **off by default** (`CODE_AGENTS_ENABLED=false`). When enabled it goes through `gate_tool` like other high-risk tools: one-shot, payload-bound approval, decision-log entry. Unrecognised values fail closed. Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code, Cursor or other MCP clients.
 
 Full write-up: [Security model](/guide/security).
 
@@ -210,7 +210,7 @@ docker compose up -d --build
 # OTP is sent to Telegram (dev fallback: backend/data/.current_otp)
 ```
 
-Step-by-step, Ollama, and auto-hire: [Getting started](/guide/getting-started).
+Step-by-step, Ollama, and auto-hire: [Getting started](/guide/getting-started). Customer VM (secrets, first approval, backup, rollback): [Pilot runbook](/pilot-runbook).
 
 ## Built by SupplyAlpha.ai
 

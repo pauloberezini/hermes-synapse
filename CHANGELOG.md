@@ -9,7 +9,8 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 ### 🛡️ R1-2: gate `execute_code`
 - Code Engineer / Data Analyst sandbox calls go through `gate_tool` (permission intersection, one-shot payload-bound HITL, decision log).
 - Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set.
-- Kill switch `CODE_AGENTS_ENABLED` (default true); unrecognised values fail closed.
+- Kill switch `CODE_AGENTS_ENABLED` (**default false**); unrecognised and unset values fail closed.
+- **Migration:** installs that relied on the previous default-on behavior must set `CODE_AGENTS_ENABLED=true` in `.env` and recreate the backend.
 
 ### 🛡️ Pilot compose hardening
 - OpenAPI-to-MCP proxy (`backend/mcp_openapi_proxy.py`) has no default host; unset `OPENAPI_URL` exits instead of calling a third-party URL.
@@ -18,6 +19,10 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 - `/var/run/docker.sock` removed; opt-in overlay `docker-compose.docker-sock.yml` with a warning sidecar.
 - Non-root users, `cap_drop: ALL`, `no-new-privileges`, and read-only rootfs where practical. Qdrant API key wired into the backend client.
 - `docker-compose.dev.yml` stays a clearly marked dev-only hot-reload path.
+- `ALLOW_LOCAL_AUTH_FALLBACK` is interpolable from `.env` (default `0`). Set `1` on a VM without Telegram so OTP is written to `backend/data/.current_otp`.
+- Pilot runbook: `docs/pilot-runbook.md` (clean-VM install, measured resources, backup/restore, upgrade/rollback, offline `verify_decision_log.py`).
+- `POST /api/auth/request-code` returns 400/503/500 on failure (body still `{"status":"error","message":"..."}`).
+- Production secret check prints one `FATAL:` line naming the variables and `openssl rand -hex 32`, then exits without a uvicorn traceback.
 
 ### 🧹 Hygiene
 - **Private BCM plugin is not in this product.** `backend/bcm/` was already isolated from the tree; leftover schema (`trade_traces`, `self_learning_metrics`), Docker FIX/charting/FRED packages, `GRAPHRAG_API_URL`, gitignore plugin paths, and test fixtures that named the desk are gone. The generic plugin loader stays so other optional `backend/<name>/plugin.py` modules can still register.
