@@ -95,3 +95,8 @@ def test_approvals_guide_drops_false_security_claims() -> None:
     assert "export.zip" in guide
     for banned in ("chain intact", "encrypted", "signed manifest"):
         assert banned not in guide, banned
+    demo_path = _ROOT / "docs" / "demo" / "DEMO.md"
+    if demo_path.exists():
+        demo = demo_path.read_text(encoding="utf-8")
+        for banned in ("chain intact", "encrypted", "signed manifest"):
+            assert banned not in demo, banned

@@ -127,7 +127,9 @@ npm run dev
 
 ## First gated demo
 
-Do **not** use the Code Engineer for this (see [Security - known limitations](./security.md#known-limitations)).
+No LLM key: `make demo` (scripted agent, mocked tool bodies). Talk track: [7-minute demo](../demo/DEMO.md).
+
+A live dashboard run still works with Sys Ops. Do **not** paste a destructive command into Communication Link (see [Security - known limitations](./security.md#known-limitations)).
 
 1. New chat. Send: `Ask Sys Ops to run \`df -h /\` on the server.`
 2. Open **Governance Approvals**, read CLAIM and SOURCE, approve with a note.

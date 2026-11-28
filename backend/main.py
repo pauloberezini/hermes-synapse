@@ -132,6 +132,11 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
     init_db()
+    try:
+        from backend.audit_signing import ensure_install_key
+        ensure_install_key()
+    except Exception as exc:
+        logger.warning("audit signing key init failed: %s", exc)
     
     from backend.rag import init_rag
     init_rag()
@@ -1012,6 +1017,29 @@ async def export_decisions_api(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@app.get("/api/governance/decisions/export.signed.json")
+async def export_signed_decisions_api(
+    since: Optional[str] = Query(default=None, alias="from"),
+    until: Optional[str] = Query(default=None, alias="to"),
+    tenant: str = "default",
+) -> Response:
+    """Download a signed JSON audit bundle (records + checkpoints + public key)."""
+    from backend.decision_log import export_signed_bundle
+
+    body, filename = export_signed_bundle(tenant, since=since, until=until)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.get("/api/governance/audit/key")
+async def audit_key_api():
+    """Read-only installation public key and fingerprint. Auth via existing middleware."""
+    from backend.audit_signing import ensure_install_key
+
+    return ensure_install_key().public_info()
 
 @app.post("/api/governance/approvals/{request_id}/resolve")
 async def resolve_approval_api(

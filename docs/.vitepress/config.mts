@@ -123,6 +123,7 @@ export default defineConfig({
           { text: 'Pilot runbook', link: '/pilot-runbook' },
           { text: 'Approvals walkthrough', link: '/guide/approvals' },
           { text: 'Comparison', link: '/guide/comparison' },
+          { text: '7-minute demo', link: '/demo/DEMO' },
           { text: 'Video demos', link: '/videos/' },
         ],
       },
@@ -136,6 +137,7 @@ export default defineConfig({
         text: 'Product',
         items: [
           { text: 'Security model', link: '/guide/security' },
+          { text: 'Signed audit log', link: '/security/signed-audit-log' },
           { text: 'Integrations', link: '/guide/integrations' },
           { text: 'Budgeting and governance', link: '/guide/paperclip-governance' },
           { text: 'Task engine and Kanban', link: '/guide/task-engine' },
