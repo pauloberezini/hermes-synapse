@@ -82,6 +82,25 @@ describe('App Component', () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/auth\/request-code$/), expect.any(Object));
   });
 
+  it('shows request-code error body on non-2xx', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({
+        status: 'error',
+        message: 'TELEGRAM_CHAT_ID is not configured on backend.',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /request code in telegram/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/TELEGRAM_CHAT_ID is not configured on backend/i)).toBeInTheDocument();
+    });
+  });
+
   it('renders main application when authenticated', async () => {
     localStorage.setItem('jarvis_auth_token', 'mock_token');
     

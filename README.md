@@ -269,7 +269,7 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 
 | ID | What it means |
 |---|---|
-| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to the source (`{"code": ...}`) and consumed once. A PENDING/REJECTED result does not enter the auto-correct loop; each new script is a new payload. Nested orchestrators skip code/analyst when `python_sandbox` is missing from the skill intersection. `CODE_AGENTS_ENABLED=false` disables execution entirely (fail closed on unrecognised values). |
+| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to the source (`{"code": ...}`) and consumed once. A PENDING/REJECTED result does not enter the auto-correct loop; each new script is a new payload. Nested orchestrators skip code/analyst when `python_sandbox` is missing from the skill intersection. `CODE_AGENTS_ENABLED` defaults to false (fail closed on unset and unrecognised values). |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
 | **R2-6** | OTP sessions are not persisted across process restarts. |

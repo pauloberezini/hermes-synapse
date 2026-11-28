@@ -14,6 +14,12 @@ from backend.orchestrator import run_orchestration
 from backend.subagents import CodeAgent, execute_code
 
 
+@pytest.fixture(autouse=True)
+def enable_code_agents(monkeypatch: pytest.MonkeyPatch):
+    """HITL-gate tests opt in; kill-switch tests override this."""
+    monkeypatch.setenv("CODE_AGENTS_ENABLED", "true")
+
+
 def _ok_sandbox(stdout: str = "ok\n"):
     resp = MagicMock()
     resp.status_code = 200
@@ -89,6 +95,15 @@ def test_execute_code_writes_decision_log():
 
     events = [e["event"] for e in dl.history(req_id)]
     assert events == ["REQUESTED", "APPROVED", "CONSUMED"]
+
+
+def test_default_code_agents_disabled(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("CODE_AGENTS_ENABLED", raising=False)
+    with patch("backend.subagents.requests.post") as mock_post:
+        res = execute_code("print(1)")
+    mock_post.assert_not_called()
+    assert res["status"] == "DISABLED"
+    assert res["success"] is False
 
 
 def test_kill_switch_blocks_execute_code(monkeypatch: pytest.MonkeyPatch):

@@ -143,7 +143,7 @@ Do not write "everything is gated." These items are open on `main`:
 
 | ID | Meaning |
 |---|---|
-| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to `{"code": ...}` and consumed once. Auto-correction does not run on PENDING/REJECTED; a corrected script is a new payload. Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set. `CODE_AGENTS_ENABLED` (default true) is a fail-closed kill switch. |
+| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to `{"code": ...}` and consumed once. Auto-correction does not run on PENDING/REJECTED; a corrected script is a new payload. Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set. `CODE_AGENTS_ENABLED` (default false) is a fail-closed kill switch. |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
 | **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |

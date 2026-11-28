@@ -541,7 +541,7 @@ export default function App() {
     try {
       const res = await fetch('/api/auth/request-code', { method: 'POST' });
       const data = await res.json();
-      if (data.status === 'success') {
+      if (res.ok && data.status === 'success') {
         setAuthStatus('sent');
       } else {
         setAuthStatus('error');

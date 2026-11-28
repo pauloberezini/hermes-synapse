@@ -118,6 +118,7 @@ export default defineConfig({
         text: 'Start here',
         items: [
           { text: 'Quick start', link: '/guide/getting-started' },
+          { text: 'Pilot runbook', link: '/pilot-runbook' },
           { text: 'Approvals walkthrough', link: '/guide/approvals' },
           { text: '7-minute demo', link: '/demo/DEMO' },
           { text: 'Video demos', link: '/videos/' },

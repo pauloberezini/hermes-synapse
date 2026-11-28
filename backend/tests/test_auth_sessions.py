@@ -140,3 +140,39 @@ def test_otp_not_written_to_logs(caplog):
             os.environ["TELEGRAM_CHAT_ID"] = original_chat_id
         else:
             os.environ.pop("TELEGRAM_CHAT_ID", None)
+
+
+def test_request_code_not_configured_returns_400(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("ALLOW_LOCAL_AUTH_FALLBACK", raising=False)
+    monkeypatch.delenv("ENV", raising=False)
+    import backend.bot
+
+    original_bot = backend.bot.telegram_app
+    backend.bot.telegram_app = None
+    try:
+        resp = TestClient(app).post("/api/auth/request-code")
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["status"] == "error"
+        assert "TELEGRAM_CHAT_ID" in body["message"]
+    finally:
+        backend.bot.telegram_app = original_bot
+
+
+def test_request_code_bot_uninitialized_returns_503(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.delenv("ALLOW_LOCAL_AUTH_FALLBACK", raising=False)
+    monkeypatch.delenv("ENV", raising=False)
+    import backend.bot
+
+    original_bot = backend.bot.telegram_app
+    backend.bot.telegram_app = None
+    try:
+        resp = TestClient(app).post("/api/auth/request-code")
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "error"
+        assert "not initialized" in body["message"]
+    finally:
+        backend.bot.telegram_app = original_bot
