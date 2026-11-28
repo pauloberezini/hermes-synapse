@@ -11,14 +11,14 @@ Built for SecOps, SRE and AI platform teams that have an agent they like and a s
 </div>
 
 1. An approval covers one call. Approving only records your decision. The agent then sends the same call again and it runs once. Change an argument and you get a new request.
-2. Security can check the log without us. Requests, approvals, rejections and uses are chained with SHA-256. Export the log, run one Python script from the standard library, and it fails if a row was changed or dropped.
+2. Security can check the zip export without us. Requests, approvals, rejections and uses are chained with SHA-256. Export a zip, run one Python script from the standard library, and it fails if a row was changed or dropped. The signature check adds one package (cryptography).
 3. Agents only get narrower. A child agent gets the tools that appear in both its own list and its parent's. BudgetGuard stops LLM calls once a session or global spend cap is reached.
 
 It runs on your own machines with Docker Compose, under the MIT license. Any OpenAI-compatible model works, including a local one. MCP tools that are not marked read-only wait for a human by default.
 
 [Run the approvals demo](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html) · [Read the security model](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Regulated fintech use case](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html) · [Talk about a pilot](https://www.linkedin.com/in/pauloberezini/)
 
-Known limits today: Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.
+Known limits today: Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The zip export is tamper-evident when you pin its head hash, and it carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. One maintainer.
 
 <div align="center">
 
@@ -243,7 +243,7 @@ SQLite and Postgres triggers abort `UPDATE`/`DELETE` on `approval_decisions` and
 
 ![GET /api/governance/decisions showing seq, event, actor, entry_hash, prev_hash](docs/assets/screenshots/decision-log-hash-chain-api.png)
 
-This is **tamper-evident**, not a signed or encrypted ledger. Someone who rewrites the whole chain *and* the copy of the head hash you kept can still pass an unpinned check. Pin the head.
+The zip export is **tamper-evident** when you pin the head hash, and it carries no signatures. Someone who rewrites the whole chain *and* the copy of the head hash you kept can still pass an unpinned zip check. Pin the head. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. This is not an encrypted ledger.
 
 ### Verify and export
 
@@ -291,7 +291,7 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 | **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
-| Verifier | Tamper-evident with `--pin`. Not a signature. Not encrypted. |
+| Verifier | The zip export is tamper-evident with `--pin` and carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. Not encrypted. |
 | PIIGuard | Known regexes only. |
 
 Roadmap for signed manifests: [ROADMAP.md](ROADMAP.md) and `docs/specs/approvals-demo-hardening-phase2.md`.

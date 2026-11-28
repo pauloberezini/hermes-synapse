@@ -29,7 +29,7 @@ cTrader publishes official MCP servers. An agent in Claude Code or Cursor can us
 | Criteria for when a human approves | High-risk tools and MCP tools that are not marked read-only wait for a person. You choose which tools those are. | No policy language. The list lives in code and plugins. |
 | Documentation kept and retrievable | Every request, approval, rejection and use is a row in an append-only log. Export gives a zip with the rows, the evidence and a manifest. | Retention periods and backups are yours to run. |
 | Who approved what | Each decision stores the approver's subject, roles and login method, and a hash of the exact payload. | The approve endpoint does not check roles. You cannot yet limit approval to a named group. |
-| Proof the record was not edited | A SHA-256 chain with database triggers against UPDATE and DELETE, and an offline verifier. | The verifier needs a pinned head hash to catch a full rewrite. The log is not signed. |
+| Proof the record was not edited | A SHA-256 chain with database triggers against UPDATE and DELETE, and an offline verifier. | The zip export is tamper-evident when you pin the head hash, and it carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. |
 
 ## What Hermes does not do
 

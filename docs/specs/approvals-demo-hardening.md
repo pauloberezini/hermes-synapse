@@ -87,7 +87,7 @@ def broadcast_sync(message: Dict[str, Any]) -> None:
 
 **F6 — colour.** The status chip maps PENDING → amber, APPROVED → green, and **everything else** → red (`ApprovalsModal.tsx:325-345`). CONSUMED is a normal terminal state.
 
-**F7 — guide drift.** `export_zip` writes `decisions.jsonl`, `evidence/<id>.json`, a plain `manifest.json`, and `VERIFY.md` (`backend/decision_log.py:181-228`). No signature, no encryption. The verifier prints `ok checked=N head=H` and, on failure, `FAIL seq=N <reason>` to stderr with exit 1 (`scripts/verify_decision_log.py:133`, covered by `backend/tests/test_verify_script_unit.py:84`).
+**F7 — guide drift.** `export_zip` writes `decisions.jsonl`, `evidence/<id>.json`, a plain `manifest.json`, and `VERIFY.md` (`backend/decision_log.py:181-228`). The zip export has no signature and no encryption. The verifier prints `ok checked=N head=H` and, on failure, `FAIL seq=N <reason>` to stderr with exit 1 (`scripts/verify_decision_log.py:133`, covered by `backend/tests/test_verify_script_unit.py:84`).
 
 ### Objective
 
