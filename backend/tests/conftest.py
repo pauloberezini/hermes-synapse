@@ -74,7 +74,7 @@ def clean_test_database():
                 cur.execute(f"DROP TRIGGER IF EXISTS {trigger}")
             except Exception:
                 pass
-        for table in ["bcm_decision_traces", "trade_traces", "trades", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_evidence", "approval_requests", "approval_decisions"]:
+        for table in ["bcm_decision_traces", "trade_traces", "trades", "app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_evidence", "approval_requests", "approval_decisions", "auth_sessions", "auth_otp"]:
             try:
                 cur.execute(f"DELETE FROM {table}")
             except Exception:

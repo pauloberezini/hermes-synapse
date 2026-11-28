@@ -586,6 +586,13 @@ export default function App() {
   };
 
   const handleLogout = useCallback(() => {
+    const token = localStorage.getItem('jarvis_auth_token');
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     localStorage.removeItem('jarvis_auth_token');
     setIsAuthenticated(false);
     if (wsRef.current) {

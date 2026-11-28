@@ -131,8 +131,8 @@ Exit 0 prints `ok checked=N head=H`. Exit 1 prints `FAIL seq=N <reason>`. A miss
 
 ## Login, identity, intersection, budgets
 
-- Dashboard login is a 6-digit OTP (5 minute TTL, single use), printed in the backend log, optionally sent on Telegram, and written to `backend/data/.current_otp` (mode `0600`) as a fallback (`backend/auth.py`).
-- Local OTP sessions live in an in-memory set. A backend restart drops them (R2-6).
+- Dashboard login is a 6-digit OTP (5 minute TTL, single use, hashed in the database, 5 failed attempts lock the code out). It is sent on Telegram and, in development, written to `backend/data/.current_otp` (mode `0600`). The plaintext code is not written to logs (`backend/auth.py`).
+- Local OTP sessions are stored as SHA-256 token hashes in `auth_sessions` (12h sliding TTL, logout sets `revoked_at`) so they survive restarts and work across replicas.
 - Optional `JWT_SECRET` enables HS256 JWT sessions (`alg=none` is rejected). Roles: admin > editor > operator > viewer.
 - Child tools = child skills ∩ parent skills. Auto-hire uses the same cap (`backend/agent_factory.py`).
 - `BudgetGuard` enforces per-session and global USD caps before LLM calls.
@@ -146,7 +146,7 @@ Do not write "everything is gated." These items are open on `main`:
 | **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to `{"code": ...}` and consumed once. Auto-correction does not run on PENDING/REJECTED; a corrected script is a new payload. Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set. `CODE_AGENTS_ENABLED` (default true) is a fail-closed kill switch. |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
-| **R2-6** | OTP sessions are not persisted across process restarts. |
+| **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
 | Verifier | Tamper-evident with `--pin`. Not a signature. |
