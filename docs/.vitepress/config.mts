@@ -48,7 +48,7 @@ export default defineConfig({
   description: DESCRIPTION,
   lang: 'en-US',
   base: '/hermes-synapse/',
-  srcExclude: ['**/specs/**'],
+  srcExclude: ['**/specs/**', '**/spikes/**'],
   ignoreDeadLinks: [/^https?:\/\/localhost/],
   lastUpdated: true,
   cleanUrls: false,

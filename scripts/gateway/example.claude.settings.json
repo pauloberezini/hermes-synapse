@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PROJECT_DIR}/scripts/gateway/claude_pre_tool_use.py",
+            "timeout": 50,
+            "onFailure": "block",
+            "statusMessage": "Waiting for Hermes approval"
+          }
+        ]
+      }
+    ]
+  }
+}

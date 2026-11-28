@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "env HERMES_HOOK_FORMAT=cursor python scripts/gateway/claude_pre_tool_use.py",
+        "timeout": 50,
+        "failClosed": true,
+        "matcher": "Shell|Write|Delete"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "env HERMES_HOOK_FORMAT=cursor python scripts/gateway/claude_pre_tool_use.py",
+        "timeout": 50,
+        "failClosed": true
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "env HERMES_HOOK_FORMAT=cursor python scripts/gateway/claude_pre_tool_use.py",
+        "timeout": 50,
+        "failClosed": true
+      }
+    ]
+  }
+}

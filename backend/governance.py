@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -552,6 +553,25 @@ class ApprovalQueue:
             cursor.execute(sql, (request_id,))
             row = cursor.fetchone()
         return row[0] if row else None
+
+    @staticmethod
+    def wait_for_decision(
+        request_id: int,
+        timeout_s: float = 50.0,
+        poll_s: float = 0.1,
+    ) -> Optional[str]:
+        """Poll until the request leaves PENDING, or ``timeout_s`` elapses.
+
+        The default timeout sits under the MCP TypeScript SDK's 60s request
+        timeout so a waiting gateway can still reply. Returns the last status
+        (including PENDING on timeout) or None if the id is missing.
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        status = ApprovalQueue.get_status(request_id)
+        while status == ApprovalQueue.STATUS_PENDING and time.monotonic() < deadline:
+            time.sleep(max(0.01, float(poll_s)))
+            status = ApprovalQueue.get_status(request_id)
+        return status
 
     @staticmethod
     def count_pending() -> int:
