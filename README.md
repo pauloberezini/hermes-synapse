@@ -298,11 +298,7 @@ docker compose up -d --build
 - Dashboard: [http://localhost:9119](http://localhost:9119)
 - API: [http://localhost:8000](http://localhost:8000)
 
-Login: the OTP is printed in the backend log (and sent to Telegram if configured):
-
-```bash
-docker logs jarvis-backend | grep "Generated OTP Code"
-```
+Login: a 6-digit OTP is sent to Telegram when configured. In development it is also written to `backend/data/.current_otp` (not printed in logs).
 
 **Local model (Ollama)** in `.env`:
 

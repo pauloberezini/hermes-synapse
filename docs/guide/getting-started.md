@@ -28,11 +28,7 @@ docker compose up -d --build
 - **Dashboard:** [http://localhost:9119](http://localhost:9119)
 - **API:** [http://localhost:8000](http://localhost:8000)
 
-Login is a 6-digit OTP. It is printed in the backend log, optionally sent on Telegram, and written to `backend/data/.current_otp` as a fallback:
-
-```bash
-docker logs jarvis-backend | grep "Generated OTP Code"
-```
+Login is a 6-digit OTP sent to Telegram when `TELEGRAM_CHAT_ID` is set. In development it is also written to `backend/data/.current_otp` (the code is not printed in logs).
 
 After login you land on Communication Link (Main Terminal):
 

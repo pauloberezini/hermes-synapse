@@ -218,7 +218,7 @@ cd hermes-synapse
 cp .env.example .env
 docker compose up -d --build
 # Dashboard: http://localhost:9119
-# docker logs jarvis-backend | grep "Generated OTP Code"
+# OTP is sent to Telegram (dev fallback: backend/data/.current_otp)
 ```
 
 Step-by-step, Ollama, and auto-hire: [Getting started](/guide/getting-started).

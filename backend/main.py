@@ -277,7 +277,7 @@ async def request_code():
     import asyncio
     
     code = generate_otp()
-    logger.info(f"Generated OTP Code: {code}")
+    logger.info("OTP generated; delivery via Telegram or emergency fallback.")
 
     allow_fallback = (
         os.getenv("ALLOW_LOCAL_AUTH_FALLBACK", "").lower() in ("1", "true", "yes")
@@ -349,13 +349,27 @@ async def request_code():
 
 @app.post("/api/auth/verify-code")
 async def verify_code(req: AuthVerifyRequest):
-    from backend.auth import verify_otp, create_session
-    if verify_otp(req.code):
+    from backend.auth import verify_otp_status, create_session
+    from fastapi import HTTPException
+    status = verify_otp_status(req.code)
+    if status == "ok":
         token = create_session()
         return {"status": "success", "token": token}
-    else:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Invalid or expired access code.")
+    if status == "locked":
+        raise HTTPException(
+            status_code=429,
+            detail="Too many invalid access code attempts. Request a new code.",
+        )
+    raise HTTPException(status_code=401, detail="Invalid or expired access code.")
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request):
+    from backend.auth import destroy_session
+    auth_header = request.headers.get("Authorization") or ""
+    token = auth_header.split(" ", 1)[1].strip() if auth_header.startswith("Bearer ") else ""
+    destroy_session(token)
+    return {"status": "success"}
 
 from fastapi.staticfiles import StaticFiles
 import os

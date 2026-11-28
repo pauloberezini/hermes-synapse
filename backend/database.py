@@ -957,12 +957,38 @@ def _do_init_sqlite_schema(conn):
             timestamp TEXT NOT NULL
         )
     """)
+    _init_auth_tables(cursor)
+
     from backend.plugins import hook as _plugin_hook
     _plugin_hook("init_schema", cursor, "sqlite")
 
     _auto_heal_subagents_and_skills(cursor)
     conn.commit()
 
+
+
+def _init_auth_tables(cursor) -> None:
+    """Login sessions and hashed OTP state shared across workers/replicas."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_sha256 TEXT PRIMARY KEY,
+            subject TEXT NOT NULL DEFAULT 'local-admin',
+            roles TEXT NOT NULL DEFAULT 'admin',
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            revoked_at INTEGER
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS auth_otp (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            code_hash TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            locked INTEGER NOT NULL DEFAULT 0
+        )
+    """)
 
 
 def _auto_heal_subagents_and_skills(cursor):
@@ -1475,6 +1501,8 @@ def _init_postgres_schema():
                     timestamp TEXT NOT NULL
                 )
             """)
+            _init_auth_tables(cursor)
+
             from backend.plugins import hook as _plugin_hook
             _plugin_hook("init_schema", cursor, "postgres")
 
@@ -3866,6 +3894,129 @@ def db_get_skill_owner(skill_id: str) -> Optional[str]:
     if rows:
         return rows[0][0]
     return None
+
+
+# ─── AUTH SESSIONS / OTP (R2-6) ──────────────────────────────────────────────
+
+def upsert_auth_otp(code_hash: str, expires_at: int) -> None:
+    """Replace the single active OTP row (hash only, attempts reset)."""
+    _execute(
+        """
+        INSERT INTO auth_otp (id, code_hash, expires_at, attempts, locked)
+        VALUES (1, ?, ?, 0, 0)
+        ON CONFLICT(id) DO UPDATE SET
+            code_hash = excluded.code_hash,
+            expires_at = excluded.expires_at,
+            attempts = 0,
+            locked = 0
+        """,
+        (code_hash, expires_at),
+    )
+
+
+def get_auth_otp() -> Optional[Dict[str, Any]]:
+    rows = _execute(
+        "SELECT code_hash, expires_at, attempts, locked FROM auth_otp WHERE id = 1"
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "code_hash": row[0],
+        "expires_at": int(row[1]),
+        "attempts": int(row[2]),
+        "locked": int(row[3]),
+    }
+
+
+def increment_auth_otp_failure(max_attempts: int) -> Optional[Dict[str, Any]]:
+    _execute(
+        """
+        UPDATE auth_otp
+        SET attempts = attempts + 1,
+            locked = CASE WHEN attempts + 1 >= ? THEN 1 ELSE locked END
+        WHERE id = 1
+        """,
+        (max_attempts,),
+    )
+    return get_auth_otp()
+
+
+def consume_auth_otp(code_hash: str, now: int) -> bool:
+    n = _rowcount(
+        "DELETE FROM auth_otp WHERE id = 1 AND code_hash = ? AND locked = 0 AND expires_at > ?",
+        (code_hash, now),
+    )
+    return n > 0
+
+
+def clear_auth_otp() -> None:
+    _execute("DELETE FROM auth_otp WHERE id = 1")
+
+
+def upsert_auth_session(
+    token_sha256: str,
+    subject: str,
+    roles: str,
+    created_at: int,
+    expires_at: int,
+    last_seen_at: int,
+) -> None:
+    _execute(
+        """
+        INSERT INTO auth_sessions (
+            token_sha256, subject, roles, created_at, expires_at, last_seen_at, revoked_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(token_sha256) DO UPDATE SET
+            subject = excluded.subject,
+            roles = excluded.roles,
+            expires_at = excluded.expires_at,
+            last_seen_at = excluded.last_seen_at,
+            revoked_at = NULL
+        """,
+        (token_sha256, subject, roles, created_at, expires_at, last_seen_at),
+    )
+
+
+def get_auth_session(token_sha256: str) -> Optional[Dict[str, Any]]:
+    rows = _execute(
+        """
+        SELECT token_sha256, subject, roles, created_at, expires_at, last_seen_at, revoked_at
+        FROM auth_sessions WHERE token_sha256 = ?
+        """,
+        (token_sha256,),
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "token_sha256": row[0],
+        "subject": row[1],
+        "roles": row[2],
+        "created_at": int(row[3]),
+        "expires_at": int(row[4]),
+        "last_seen_at": int(row[5]),
+        "revoked_at": None if row[6] is None else int(row[6]),
+    }
+
+
+def touch_auth_session(token_sha256: str, last_seen_at: int, expires_at: int, now: int) -> None:
+    _execute(
+        """
+        UPDATE auth_sessions
+        SET last_seen_at = ?, expires_at = ?
+        WHERE token_sha256 = ? AND revoked_at IS NULL AND expires_at > ?
+        """,
+        (last_seen_at, expires_at, token_sha256, now),
+    )
+
+
+def revoke_auth_session(token_sha256: str, revoked_at: int) -> None:
+    _execute(
+        "UPDATE auth_sessions SET revoked_at = ? WHERE token_sha256 = ? AND revoked_at IS NULL",
+        (revoked_at, token_sha256),
+    )
 
 
 # Auto-initialize database schema on import to prevent missing tables
