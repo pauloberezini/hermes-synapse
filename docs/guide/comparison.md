@@ -34,7 +34,7 @@ These four solve neighbouring problems, and I would not pick Hermes for all of t
 
 - A small team, agents that can change something you would have to explain later (money, production systems, customer data), and a reviewer or auditor who will ask "who approved exactly what".
 - You are happy to run the agents in Hermes and want the approval screen, the log and the offline verifier in one Docker Compose file on day one. AGT has deeper policy and wider framework coverage. Hermes has the screen and the verifier already built.
-- You want to read what you run: about 23,000 lines of backend Python, MIT licensed.
+- You want to read what you run: over 20,000 lines of backend Python, MIT licensed.
 
 ## Sources
 
