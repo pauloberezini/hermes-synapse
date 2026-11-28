@@ -228,9 +228,22 @@ def _create_backend() -> DatabaseBackend:
                 e,
                 DB_PATH,
             )
+            _apply_sqlite_path_override()
             return SQLiteBackend()
+    _apply_sqlite_path_override()
     logger.info("Database backend: SQLite with WAL mode (path=%s)", DB_PATH)
     return SQLiteBackend()
+
+
+def _apply_sqlite_path_override() -> None:
+    """``HERMES_SQLITE_PATH`` points a gateway subprocess at its own sqlite file."""
+    global DB_PATH, DB_DIR
+    override = os.environ.get("HERMES_SQLITE_PATH", "").strip()
+    if not override:
+        return
+    DB_PATH = override
+    DB_DIR = os.path.dirname(os.path.abspath(override)) or "."
+    os.makedirs(DB_DIR, exist_ok=True)
 
 
 # Module-level singleton backend

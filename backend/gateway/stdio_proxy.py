@@ -1,18 +1,21 @@
-"""Stdio MCP proxy: client NDJSON <-> Hermes gate <-> upstream stdio MCP server.
+"""Stdio MCP proxy: client <-> Hermes gate <-> one upstream stdio MCP server.
 
-Framing matches ``backend/mcp_client.py`` and ``backend/mcp_openapi_proxy.py``
-(newline-delimited JSON-RPC), not LSP Content-Length. High-risk ``tools/call``
-goes through ``decide``; everything else is forwarded.
+Framing is newline-delimited JSON-RPC (MCP spec 2025-11-25 and the official
+Python/TS SDKs). High-risk ``tools/call`` goes through ``decide``; everything
+else is forwarded. Default is pending-retry, not a blocking wait.
 """
 
 from __future__ import annotations
 
 import json
+import queue
 import subprocess
 import sys
+import threading
 from typing import Any, Callable, Optional, TextIO
 
 from backend.gateway.decide import decide, settings_from_env
+from backend.gateway.framing import encode_message, read_message
 
 
 def log(msg: str) -> None:
@@ -37,6 +40,7 @@ def handle_rpc(
     wait: bool,
     timeout_s: float,
     on_timeout: str,
+    cancel=None,
 ) -> Optional[dict]:
     """Dispatch one JSON-RPC frame. None means no response (notification)."""
     method = req.get("method")
@@ -70,6 +74,7 @@ def handle_rpc(
             timeout_s=timeout_s,
             on_timeout=on_timeout,
             display_name=display_name,
+            cancel=cancel,
         )
         if decision.effect == "allow":
             return upstream(req)
@@ -89,23 +94,23 @@ def handle_rpc(
     return upstream(req)
 
 
-def read_ndjson(stream: TextIO) -> Optional[dict]:
-    line = stream.readline()
-    if not line:
-        return None
-    line = line.strip()
-    if not line:
-        return read_ndjson(stream)
-    return json.loads(line)
-
-
-def write_ndjson(stream: TextIO, msg: dict) -> None:
-    stream.write(json.dumps(msg, ensure_ascii=False) + "\n")
+def write_message(stream: TextIO, msg: dict) -> None:
+    stream.write(encode_message(msg))
     stream.flush()
 
 
-def serve(upstream_cmd: list[str]) -> int:
+def serve(
+    upstream_cmd: list[str],
+    *,
+    stdin: TextIO | None = None,
+    stdout: TextIO | None = None,
+) -> int:
+    from backend.database import init_db
+
+    init_db()
     cfg = settings_from_env()
+    stdin = stdin if stdin is not None else sys.stdin
+    stdout = stdout if stdout is not None else sys.stdout
     log(
         f"starting upstream={upstream_cmd!r} wait={cfg['wait']} "
         f"timeout={cfg['timeout_s']} on_timeout={cfg['on_timeout']}"
@@ -122,22 +127,39 @@ def serve(upstream_cmd: list[str]) -> int:
         log("upstream pipes missing")
         return 1
     tools_cache: dict[str, dict] = {}
+    cancel = threading.Event()
+    incoming: queue.Queue[dict | None] = queue.Queue()
 
     def upstream(req: dict) -> dict:
-        write_ndjson(proc.stdin, req)
+        write_message(proc.stdin, req)
         if req.get("id") is None:
             return {}
         while True:
-            msg = read_ndjson(proc.stdout)
+            msg = read_message(proc.stdout)
             if msg is None:
                 raise RuntimeError("upstream MCP server closed")
             if msg.get("id") == req.get("id"):
                 return msg
-            write_ndjson(sys.stdout, msg)
+            write_message(stdout, msg)
 
+    def reader() -> None:
+        try:
+            while True:
+                msg = read_message(stdin)
+                if msg is None:
+                    cancel.set()
+                    incoming.put(None)
+                    return
+                incoming.put(msg)
+        except Exception as exc:
+            log(f"stdin reader: {exc}")
+            cancel.set()
+            incoming.put(None)
+
+    threading.Thread(target=reader, daemon=True).start()
     try:
         while True:
-            req = read_ndjson(sys.stdin)
+            req = incoming.get()
             if req is None:
                 break
             try:
@@ -150,19 +172,25 @@ def serve(upstream_cmd: list[str]) -> int:
                     wait=cfg["wait"],
                     timeout_s=cfg["timeout_s"],
                     on_timeout=cfg["on_timeout"],
+                    cancel=cancel,
                 )
             except Exception as exc:
                 log(f"error: {exc}")
                 if req.get("id") is not None:
-                    write_ndjson(sys.stdout, {
+                    write_message(stdout, {
                         "jsonrpc": "2.0",
                         "id": req.get("id"),
                         "error": {"code": -32603, "message": str(exc)},
                     })
                 continue
             if res is not None:
-                write_ndjson(sys.stdout, res)
+                try:
+                    write_message(stdout, res)
+                except BrokenPipeError:
+                    cancel.set()
+                    break
     finally:
+        cancel.set()
         proc.terminate()
         try:
             proc.wait(timeout=3)

@@ -559,16 +559,18 @@ class ApprovalQueue:
         request_id: int,
         timeout_s: float = 50.0,
         poll_s: float = 0.1,
+        cancel=None,
     ) -> Optional[str]:
         """Poll until the request leaves PENDING, or ``timeout_s`` elapses.
 
-        The default timeout sits under the MCP TypeScript SDK's 60s request
-        timeout so a waiting gateway can still reply. Returns the last status
-        (including PENDING on timeout) or None if the id is missing.
+        ``cancel`` is an object with ``is_set()`` (a ``threading.Event``).
+        When it fires, return ``CANCELLED`` without consuming the row.
         """
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         status = ApprovalQueue.get_status(request_id)
         while status == ApprovalQueue.STATUS_PENDING and time.monotonic() < deadline:
+            if cancel is not None and getattr(cancel, "is_set", lambda: False)():
+                return "CANCELLED"
             time.sleep(max(0.01, float(poll_s)))
             status = ApprovalQueue.get_status(request_id)
         return status

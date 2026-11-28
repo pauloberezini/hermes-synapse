@@ -26,6 +26,13 @@ class GateDecision:
     body: dict[str, Any] | None = None
 
 
+def pending_retry_error(action_name: str, request_id: int | None) -> str:
+    return (
+        f"Pending approval for {action_name} (request_id={request_id}). "
+        "Retry this tool with identical arguments after a human approves it in Hermes."
+    )
+
+
 def _register_for_gate(name: str, annotations: dict | None) -> None:
     """Make ``gate_tool`` treat names that are not in HIGH_RISK_TOOLS as MCP-gated."""
     if name in HIGH_RISK_TOOLS:
@@ -47,6 +54,27 @@ def _parse_gate(raw: Optional[str]) -> dict | None:
     return parsed if isinstance(parsed, dict) else {"status": "ERROR", "error": raw}
 
 
+def _log_event(event: str, request_id: int | None, action_name: str, payload: dict, reason: str) -> None:
+    from backend.decision_log import append as dl_append
+
+    bundle_hash = None
+    rid = int(request_id or 0)
+    if rid:
+        detail = ApprovalQueue.get_detail(rid)
+        if detail:
+            bundle_hash = detail.get("bundle_hash")
+    dl_append(
+        event,
+        request_id=rid,
+        actor="system",
+        action_name=action_name,
+        payload=payload or {},
+        bundle_hash=bundle_hash,
+        reason=reason,
+        auth_method="system",
+    )
+
+
 def decide(
     agent_id: str,
     action_name: str,
@@ -54,16 +82,17 @@ def decide(
     *,
     annotations: dict | None = None,
     known_mcp: bool = False,
-    wait: bool = True,
+    wait: bool = False,
     timeout_s: float = 50.0,
     on_timeout: str = ON_TIMEOUT_FAIL_CLOSED,
     display_name: str = "gateway",
+    cancel=None,
 ) -> GateDecision:
     """Create/match an approval, optionally wait, then allow / deny / pending.
 
-    ``gate_tool`` stays retry-based. This wrapper adds the blocking wait the
-    MCP proxy needs, and a ``pending_retry`` timeout mode that returns
-    PENDING_APPROVAL instead of hanging past the client's request timeout.
+    Default is pending-retry: enqueue, return PENDING_APPROVAL, do not block.
+    ``gate_tool`` stays retry-based. Optional wait is capped and cancelled
+    when ``cancel.is_set()`` (client disconnect).
     """
     if not needs_approval(action_name, annotations, known_mcp=known_mcp):
         return GateDecision(effect="allow")
@@ -97,10 +126,19 @@ def decide(
             body=body,
         )
 
+    pending = GateDecision(
+        effect="pending",
+        request_id=request_id,
+        status=status,
+        error=pending_retry_error(action_name, request_id),
+        body=body,
+    )
     if not wait:
-        return GateDecision(effect="pending", request_id=request_id, status=status, error=error, body=body)
+        return pending
 
-    waited = ApprovalQueue.wait_for_decision(int(request_id or 0), timeout_s=timeout_s)
+    waited = ApprovalQueue.wait_for_decision(
+        int(request_id or 0), timeout_s=timeout_s, cancel=cancel,
+    )
     if waited == ApprovalQueue.STATUS_APPROVED:
         blocked2 = gate_tool(agent_id or "gateway", action_name, payload or {})
         if blocked2 is None:
@@ -121,18 +159,31 @@ def decide(
             error=error or f"Human rejected {action_name}.",
             body=body,
         )
-
-    if on_timeout == ON_TIMEOUT_PENDING_RETRY:
+    if waited == "CANCELLED":
+        _log_event(
+            "TIMEOUT",
+            request_id,
+            action_name,
+            payload or {},
+            "client_disconnect",
+        )
         return GateDecision(
-            effect="pending",
+            effect="deny",
             request_id=request_id,
-            status="PENDING_APPROVAL",
-            error=error or (
-                f"Awaiting human approval for {action_name}. "
-                "Retry with identical arguments after approval."
-            ),
+            status="CANCELLED",
+            error=f"Client disconnected while waiting for approval of {action_name} (request_id={request_id}).",
             body=body,
         )
+
+    _log_event(
+        "TIMEOUT",
+        request_id,
+        action_name,
+        payload or {},
+        "wait_timeout",
+    )
+    if on_timeout == ON_TIMEOUT_PENDING_RETRY:
+        return pending
     return GateDecision(
         effect="deny",
         request_id=request_id,
@@ -146,9 +197,14 @@ def decide(
 
 
 def settings_from_env() -> dict[str, Any]:
-    """Read wait/timeout/session from the process environment."""
-    wait_raw = os.environ.get("HERMES_GATEWAY_WAIT", "1").strip().lower()
-    wait = wait_raw not in ("0", "false", "no")
+    """Read wait/timeout/session from the process environment.
+
+    MCP default is pending-retry (``HERMES_GATEWAY_WAIT=0``). Wait mode is
+    optional and capped at 50s; the proxy does not emit progress
+    notifications, so MCP ``resetTimeoutOnProgress`` will not extend it.
+    """
+    wait_raw = os.environ.get("HERMES_GATEWAY_WAIT", "0").strip().lower()
+    wait = wait_raw in ("1", "true", "yes")
     try:
         timeout_s = float(os.environ.get("HERMES_GATEWAY_WAIT_TIMEOUT_S", "50"))
     except ValueError:
@@ -159,7 +215,7 @@ def settings_from_env() -> dict[str, Any]:
     display_name = os.environ.get("HERMES_GATEWAY_AGENT_NAME", "gateway").strip() or "gateway"
     return {
         "wait": wait,
-        "timeout_s": timeout_s,
+        "timeout_s": min(timeout_s, 50.0) if wait else timeout_s,
         "on_timeout": on_timeout,
         "session_id": session_id,
         "display_name": display_name,

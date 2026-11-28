@@ -16,6 +16,14 @@ def _events_for(request_id: int) -> list[str]:
     return [row["event"] for row in dl.history(int(request_id))]
 
 
+def test_settings_default_is_pending_retry(monkeypatch):
+    from backend.gateway.decide import settings_from_env
+
+    monkeypatch.delenv("HERMES_GATEWAY_WAIT", raising=False)
+    cfg = settings_from_env()
+    assert cfg["wait"] is False
+
+
 def test_safe_tool_allows_without_queue_row():
     before = ApprovalQueue.count_pending()
     d = decide("s1", "Read", {"path": "README.md"}, wait=False)
@@ -98,7 +106,7 @@ def test_timeout_fail_closed_leaves_pending_row():
     assert d.status == "TIMEOUT"
     assert ApprovalQueue.get_status(d.request_id) == "PENDING"
     assert 0.2 <= elapsed < 1.5
-    assert _events_for(d.request_id) == ["REQUESTED"]
+    assert _events_for(d.request_id) == ["REQUESTED", "TIMEOUT"]
 
 
 def test_timeout_pending_retry_returns_pending_quickly_enough():
@@ -117,6 +125,81 @@ def test_timeout_pending_retry_returns_pending_quickly_enough():
     assert elapsed < 1.5
     later = decide("s_pr", "execute_command", {"command": "sleep 9"}, wait=False)
     assert later.request_id == d.request_id
+    assert "TIMEOUT" in _events_for(d.request_id)
+
+
+def test_pending_retry_then_approve_consumes_once():
+    payload = {"command": "echo once"}
+    first = decide("s_once", "execute_command", payload, wait=False)
+    assert first.effect == "pending"
+    ApprovalQueue.resolve(first.request_id, "APPROVED")
+    second = decide("s_once", "execute_command", payload, wait=False)
+    assert second.effect == "allow"
+    assert ApprovalQueue.get_status(first.request_id) == "CONSUMED"
+    third = decide("s_once", "execute_command", payload, wait=False)
+    assert third.effect == "pending"
+    assert third.request_id != first.request_id
+    assert _events_for(first.request_id) == ["REQUESTED", "APPROVED", "CONSUMED"]
+
+
+def test_different_payload_is_a_new_request():
+    a = decide("s_hash", "execute_command", {"command": "echo a"}, wait=False)
+    b = decide("s_hash", "execute_command", {"command": "echo b"}, wait=False)
+    assert a.request_id != b.request_id
+
+
+def test_disconnect_cancels_wait_without_consume():
+    cancel = threading.Event()
+
+    def _flip():
+        time.sleep(0.15)
+        cancel.set()
+
+    t = threading.Thread(target=_flip)
+    t.start()
+    d = decide(
+        "s_disc",
+        "execute_command",
+        {"command": "echo disc"},
+        wait=True,
+        timeout_s=5.0,
+        cancel=cancel,
+    )
+    t.join(timeout=3)
+    assert d.status == "CANCELLED"
+    assert ApprovalQueue.get_status(d.request_id) == "PENDING"
+    assert _events_for(d.request_id) == ["REQUESTED", "TIMEOUT"]
+
+
+def test_timeout_chain_verifies_offline(tmp_path):
+    from backend.decision_log import export_zip, verify
+
+    d = decide(
+        "s_ver",
+        "execute_command",
+        {"command": "echo verify"},
+        wait=True,
+        timeout_s=0.2,
+        on_timeout="fail_closed",
+    )
+    assert d.status == "TIMEOUT"
+    result = verify()
+    assert result.ok, result.error
+    blob, _name = export_zip()
+    zip_path = tmp_path / "decisions.zip"
+    zip_path.write_bytes(blob)
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    verifier = Path(__file__).resolve().parents[2] / "scripts" / "verify_decision_log.py"
+    proc = subprocess.run(
+        [sys.executable, str(verifier), str(zip_path), "--pin", result.head_hash],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "ok" in proc.stdout
 
 
 def test_wait_for_decision_returns_pending_on_timeout():

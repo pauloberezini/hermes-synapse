@@ -1,11 +1,17 @@
 import inspect
 import json
+import os
+import sys
 import threading
 import time
+from pathlib import Path
 
-from backend.gateway.stdio_proxy import handle_rpc, tool_result
+from backend.gateway.stdio_proxy import handle_rpc, serve, tool_result
 from backend.governance import ApprovalQueue
 from backend.mcp_client import MCPServerClient, forget_mcp_server_tools
+
+ROOT = Path(__file__).resolve().parents[2]
+FAKE = ROOT / "backend" / "tests" / "gateway_fake_mcp.py"
 
 
 def teardown_function():
@@ -190,3 +196,74 @@ def test_client_deadline_leaves_pending_while_proxy_still_waiting():
     pending = [r for r in ApprovalQueue.get_pending() if r["agent_id"] == "p_to"]
     assert pending
     t.join(timeout=3)
+
+
+def test_pending_retry_then_approve_then_upstream_runs():
+    up = FakeUpstream()
+    cache: dict = {}
+    _rpc(up, cache, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    blocked = _rpc(up, cache, {
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "execute_command", "arguments": {"command": "echo once"}},
+    }, session_id="p_retry")
+    body = json.loads(blocked["result"]["content"][0]["text"])
+    assert body["status"] == "PENDING_APPROVAL"
+    assert "Retry this tool" in body["error"]
+    ApprovalQueue.resolve(body["request_id"], "APPROVED")
+    ran = _rpc(up, cache, {
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "execute_command", "arguments": {"command": "echo once"}},
+    }, session_id="p_retry")
+    assert ran["result"]["content"][0]["text"] == "ran execute_command"
+    assert not ran["result"].get("isError")
+
+
+def test_e2e_ndjson_pipes_through_serve():
+    c2p_r, c2p_w = os.pipe()
+    p2c_r, p2c_w = os.pipe()
+    proxy_in = os.fdopen(c2p_r, "r")
+    proxy_out = os.fdopen(p2c_w, "w")
+    client_in = os.fdopen(p2c_r, "r")
+    client_out = os.fdopen(c2p_w, "w")
+
+    t = threading.Thread(
+        target=serve,
+        args=([sys.executable, str(FAKE)],),
+        kwargs={"stdin": proxy_in, "stdout": proxy_out},
+        daemon=True,
+    )
+    t.start()
+
+    def rpc(obj):
+        client_out.write(json.dumps(obj) + "\n")
+        client_out.flush()
+        return json.loads(client_in.readline())
+
+    try:
+        init = rpc({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                       "clientInfo": {"name": "pipe", "version": "0"}},
+        })
+        assert init["result"]["serverInfo"]["name"] == "fake-upstream"
+        listed = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        names = [tool["name"] for tool in listed["result"]["tools"]]
+        assert "ping" in names
+        ping = rpc({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "ping", "arguments": {"msg": "x"}},
+        })
+        assert "ran" in ping["result"]["content"][0]["text"]
+        blocked = rpc({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {"name": "execute_command", "arguments": {"command": "echo x"}},
+        })
+        body = json.loads(blocked["result"]["content"][0]["text"])
+        assert blocked["result"]["isError"] is True
+        assert body["status"] == "PENDING_APPROVAL"
+    finally:
+        try:
+            client_out.close()
+        except OSError:
+            pass
+        t.join(timeout=3)
