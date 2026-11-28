@@ -1,0 +1,8 @@
+| seq | request_id | tool | decision | event | actor_subject | actor_roles | auth_method | reason | occurred_at (UTC) | payload_sha256 | synthetic | role_status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | execute_command | REQUESTED | REQUESTED | agent:demo-reject | [] | agent |  | 2026-11-28T16:23:10.861768+00:00 | `eef2106a53cce3890254e4b39fe6279ae9d9c78875d1e048e5b5db346e8183f6` | True | recorded, not verified |
+| 2 | 2 | execute_code | REQUESTED | REQUESTED | agent:demo-approve | [] | agent |  | 2026-11-28T16:23:10.961867+00:00 | `b7c8dedce8520f2888205523b29766e80fc3d54817833916072e1c75fc70cb8a` | True | recorded, not verified |
+| 3 | 1 | execute_command | REJECTED | REJECTED | demo-operator | ["admin"] | otp | External customer export. Rejected for this session. | 2026-11-28T16:23:10.965297+00:00 | `eef2106a53cce3890254e4b39fe6279ae9d9c78875d1e048e5b5db346e8183f6` | True | recorded, not verified |
+| 4 | 2 | execute_code | APPROVED | APPROVED | demo-operator | ["admin"] | otp | Read-only print. OK once. | 2026-11-28T16:23:10.969796+00:00 | `b7c8dedce8520f2888205523b29766e80fc3d54817833916072e1c75fc70cb8a` | True | recorded, not verified |
+| 5 | 2 | execute_code | CONSUMED | CONSUMED | system | [] | system |  | 2026-11-28T16:23:10.972489+00:00 | `b7c8dedce8520f2888205523b29766e80fc3d54817833916072e1c75fc70cb8a` | True | recorded, not verified |
+| 6 | 3 | execute_code | REQUESTED | REQUESTED | agent:demo-approve | [] | agent |  | 2026-11-28T16:23:10.976400+00:00 | `b7c8dedce8520f2888205523b29766e80fc3d54817833916072e1c75fc70cb8a` | True | recorded, not verified |

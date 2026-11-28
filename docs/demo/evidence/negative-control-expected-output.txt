@@ -1,0 +1,3 @@
+FAIL seq=1 entry_hash mismatch
+exit 1
+edited: the reason of seq 1

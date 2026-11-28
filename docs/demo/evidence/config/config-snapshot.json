@@ -1,0 +1,38 @@
+{
+  "commit": "ad1305c552f0a5a0b2ccd81b6085f888fea35764",
+  "CODE_AGENTS_ENABLED": {
+    "pilot_default": false,
+    "sources": [
+      ".env.example:47",
+      "docker-compose.yml:50",
+      "backend/subagents.py:code_agents_enabled()"
+    ],
+    "demo_pinned_for_approval_step": "true",
+    "demo_pinned_for_kill_switch_step": "false",
+    "accepted_on": [
+      "1",
+      "true",
+      "yes",
+      "on"
+    ]
+  },
+  "high_risk_tools": [
+    "assign_role",
+    "change_agent_skills",
+    "clear_decision_logs",
+    "clear_history",
+    "create_obsidian_note",
+    "create_subagent",
+    "delete_subagent",
+    "delete_todoist_task",
+    "execute_code",
+    "execute_command",
+    "export_or_purge_audit",
+    "set_log_level",
+    "update_subagent"
+  ],
+  "high_risk_tools_source": "backend.governance._high_risk_names()",
+  "mcp_rule": "an MCP tool needs approval unless it is marked readOnlyHint true or destructiveHint false; omitted annotations follow MCP defaults (readOnlyHint false, destructiveHint true)",
+  "mcp_rule_source": "backend.mcp_client.mcp_tool_needs_approval",
+  "mcp_rule_doc": "True when an MCP tool is not marked read-only."
+}

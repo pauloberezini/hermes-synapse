@@ -163,75 +163,136 @@ def _evidence():
     return mod
 
 
-def test_evidence_pack_from_demo_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+SAMPLE_NAME = "hermes-evidence-sample.zip"
+
+
+def _assert_evidence_layout(out: Path) -> None:
+    import hashlib
     import json
     import zipfile
 
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    summary = (out / "SUMMARY.md").read_text(encoding="utf-8")
+    for doc in (readme, summary):
+        assert "not legal advice" in doc.lower()
+        assert "does not make you compliant" in doc.lower()
+    limits = (out / "limits" / "known-limits.md").read_text(encoding="utf-8")
+    assert limits.count("\n") >= 10
+    for needle in (
+        "RBAC",
+        "signatures",
+        "SOC 2",
+        "gateway",
+        "off by default",
+        "scripted agent",
+        "mocked",
+    ):
+        assert needle in readme, needle
+        assert needle.lower() in limits.lower() or needle in limits or needle in readme
+    assert "recorded and not enforced" in readme
+    assert "off-host" in readme
+    pin = (out / "pinned-head-hash.txt").read_text(encoding="utf-8").strip()
+    assert len(pin) == 64 and all(ch in "0123456789abcdef" for ch in pin)
+    ok = (out / "verifier-ok.txt").read_text(encoding="utf-8")
+    fail = (out / "negative-control-expected-output.txt").read_text(encoding="utf-8")
+    assert ok.startswith("ok checked=")
+    assert "FAIL seq=1 entry_hash mismatch" in fail
+    assert "exit 1" in fail
+    assert "reason of seq 1" in fail
+    cfg = json.loads((out / "config" / "config-snapshot.json").read_text(encoding="utf-8"))
+    assert cfg["CODE_AGENTS_ENABLED"]["pilot_default"] is False
+    assert "approval_path" not in cfg["CODE_AGENTS_ENABLED"]
+    assert "demo_pinned_for_approval_step" in cfg["CODE_AGENTS_ENABLED"]
+    assert "execute_code" in cfg["high_risk_tools"]
+    assert cfg["commit"]
+    assert "mcp_rule" in cfg
+    bundled = (out / "verifier" / "verify_decision_log.py").read_bytes()
+    assert bundled == (_ROOT / "scripts" / "verify_decision_log.py").read_bytes()
+    with zipfile.ZipFile(out / "decision-log.zip") as archive:
+        log_rows = [
+            json.loads(line)
+            for line in archive.read("decisions.jsonl").decode().splitlines()
+            if line.strip()
+        ]
+    calls = json.loads((out / "approvals" / "calls.json").read_text(encoding="utf-8"))
+    assert len(calls) == len(log_rows) == 6
+    events = {row["event"] for row in calls}
+    assert events >= {"REQUESTED", "APPROVED", "REJECTED", "CONSUMED"}
+    by_seq = {int(row["seq"]): row for row in log_rows}
+    for row in calls:
+        src = by_seq[int(row["seq"])]
+        assert int(row["request_id"]) == int(src["request_id"])
+        assert row["event"] == src["event"]
+        assert row["actor_subject"] == src["actor_subject"]
+        assert row["actor_roles"] == src["actor_roles"]
+        assert row["auth_method"] == src["auth_method"]
+        assert row["occurred_at"] == src["occurred_at"]
+        assert row["synthetic"] is True
+        assert row["role_status"] == "recorded, not verified"
+        assert "UTC" in (out / "approvals" / "calls.md").read_text(encoding="utf-8")
+    manifest = json.loads((out / "MANIFEST.json").read_text(encoding="utf-8"))
+    sample = out / "hermes-evidence-sample.zip"
+    with zipfile.ZipFile(sample) as archive:
+        names = set(archive.namelist())
+    assert "SPEC.md" not in names
+    assert "hermes-evidence-sample.zip" not in names
+    assert "verifier/verify_decision_log.py" in names
+    for rel, meta in manifest["files"].items():
+        path = out / rel
+        assert path.is_file(), rel
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert digest == meta["sha256"], rel
+        assert path.stat().st_size == meta["size"]
+        assert rel in names
+    for name in names:
+        if name != "MANIFEST.json":
+            assert name in manifest["files"], name
+    blob = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in out.rglob("*")
+        if path.is_file()
+        and path.suffix in {".md", ".json", ".csv", ".txt", ".py"}
+        and path.name != "SPEC.md"
+        and path.name != SAMPLE_NAME
+    )
+    for banned in ("ed25519", "audit-log"):
+        assert banned not in blob.lower(), banned
+    assert "synthetic" in readme.lower()
+    verifier = out / "verifier" / "verify_decision_log.py"
+    proc_ok = subprocess.run(
+        [sys.executable, str(verifier), str(out / "decision-log.zip"), "--pin", pin],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(out),
+    )
+    assert proc_ok.returncode == 0, proc_ok.stderr + proc_ok.stdout
+    proc_fail = subprocess.run(
+        [sys.executable, str(verifier), str(out / "decision-log.tampered.zip")],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(out),
+    )
+    assert proc_fail.returncode == 1
+    assert "entry_hash mismatch" in (proc_fail.stderr or proc_fail.stdout)
+
+
+def test_evidence_pack_from_demo_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     demo = _demo()
     monkeypatch.setenv("CODE_AGENTS_ENABLED", "false")
     demo.run_demo_flow(export_dir=tmp_path, log=lambda *_a, **_k: None)
     out = tmp_path / "evidence"
     sample = _evidence().assemble(export_dir=tmp_path, out_dir=out)
     assert sample.is_file()
-    ok = (out / "verifier-ok.txt").read_text(encoding="utf-8")
-    fail = (out / "verifier-fail.txt").read_text(encoding="utf-8")
-    assert ok.startswith("ok checked=")
-    assert "FAIL" in fail and "entry_hash mismatch" in fail
-    calls = json.loads((out / "calls.json").read_text(encoding="utf-8"))
-    assert {row["decision"] for row in calls} == {"APPROVED", "REJECTED"}
-    for row in calls:
-        assert set(row) == {"tool", "decision", "timestamp", "payload_sha256"}
-        assert len(row["payload_sha256"]) == 64
-    policy = json.loads((out / "policy.json").read_text(encoding="utf-8"))
-    assert "execute_code" in policy["HIGH_RISK_TOOLS"]
-    assert policy["CODE_AGENTS_ENABLED"]["approval_path"] == "true"
-    assert policy["CODE_AGENTS_ENABLED"]["kill_switch"] == "false"
-    readme = (out / "README.md").read_text(encoding="utf-8")
-    assert "verify_decision_log.py" in readme
-    assert "Ed25519" in readme
-    with zipfile.ZipFile(sample) as archive:
-        names = set(archive.namelist())
-    assert "decision-log.zip" in names
-    assert "README.md" in names
-    assert "hermes-evidence-sample.zip" not in names
+    _assert_evidence_layout(out)
 
 
 def test_committed_evidence_sample() -> None:
-    import json
-    import zipfile
-
     folder = _ROOT / "docs" / "demo" / "evidence"
-    sample = folder / "hermes-evidence-sample.zip"
-    assert sample.is_file()
-    for name in (
-        "README.md",
-        "policy.json",
-        "calls.json",
-        "calls.csv",
-        "calls.md",
-        "verifier-ok.txt",
-        "verifier-fail.txt",
-        "decision-log.zip",
-        "decision-log.tampered.zip",
-    ):
-        path = folder / name
-        assert path.is_file(), name
-    ok = (folder / "verifier-ok.txt").read_text(encoding="utf-8")
-    fail = (folder / "verifier-fail.txt").read_text(encoding="utf-8")
-    assert ok.startswith("ok checked=")
-    assert "FAIL" in fail
-    calls = json.loads((folder / "calls.json").read_text(encoding="utf-8"))
-    blob = " ".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in folder.iterdir()
-        if path.suffix in {".md", ".json", ".csv", ".txt"}
-    )
-    for banned in ("/agent/repos", "/home/ubuntu", "Ed25519 signature"):
-        assert banned not in blob, banned
-    assert "rm -rf" not in json.dumps(calls)
-    with zipfile.ZipFile(sample) as archive:
-        assert "decision-log.zip" in archive.namelist()
-        assert "hermes-evidence-sample.zip" not in archive.namelist()
+    assert (folder / "hermes-evidence-sample.zip").is_file()
+    assert (folder / "SPEC.md").is_file()
+    _assert_evidence_layout(folder)
 
 
 def test_demo_guide_drops_false_security_claims() -> None:

@@ -1,4 +1,0 @@
-| tool | decision | timestamp | payload_sha256 |
-| --- | --- | --- | --- |
-| execute_command | REJECTED | 2026-11-28T16:15:09.634343+00:00 | `eef2106a53cce3890254e4b39fe6279ae9d9c78875d1e048e5b5db346e8183f6` |
-| execute_code | APPROVED | 2026-11-28T16:15:09.636959+00:00 | `b7c8dedce8520f2888205523b29766e80fc3d54817833916072e1c75fc70cb8a` |

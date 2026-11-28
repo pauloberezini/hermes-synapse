@@ -1,0 +1,63 @@
+{
+  "package": "hermes-evidence-sample",
+  "build_time_utc": "2026-11-28T16:23:11.291831+00:00",
+  "main_commit": "c263738efa6bd8c8d5dd88174c3632394c21ba9b",
+  "demo_commit": "ad1305c552f0a5a0b2ccd81b6085f888fea35764",
+  "generator": "scripts/demo_evidence.py",
+  "data_source": "scripted demo, mocked shell and sandbox",
+  "python": "3.12.3",
+  "files": {
+    "README.md": {
+      "sha256": "efc9b3d42cbcd3f07a5c386ac2c23efb4f6a4fdf366c12ee7da02cf33996aaa7",
+      "size": 2752
+    },
+    "SUMMARY.md": {
+      "sha256": "0a3b8fb881a2ed455bab7bd550f08483451a76abc70ee64daa6cc1d89ff78733",
+      "size": 3287
+    },
+    "approvals/calls.csv": {
+      "sha256": "2babc986c69d75c592466661fabd346c2a4397cf0f616fded203970ef66c4268",
+      "size": 1373
+    },
+    "approvals/calls.json": {
+      "sha256": "e3ddb57755c1cd5da1258aebd7ec09a795407bbd3f41b6d20caeaba099c15e5c",
+      "size": 2790
+    },
+    "approvals/calls.md": {
+      "sha256": "ecd28896d96b06c5c2043a37ee6de34d3dbd4c7bd4690acc2ce3ff01f42eb843",
+      "size": 1640
+    },
+    "config/config-snapshot.json": {
+      "sha256": "b38b1ea5bf68e067d68d9248445b34150166b3ab3d26d4e1719fcb01b95c4e3a",
+      "size": 1153
+    },
+    "decision-log.tampered.zip": {
+      "sha256": "e5895a572a394e2f9ea091c029ba9e0dc54419a7b562da15efce588c4af89f54",
+      "size": 2895
+    },
+    "decision-log.zip": {
+      "sha256": "bccbb992a0360db9550f548c4937c7229339086f4db2054e43eb2f5729058c3c",
+      "size": 2888
+    },
+    "limits/known-limits.md": {
+      "sha256": "012fd1a4f3db298675fa6e0df82f7ab5559da7a9024db333e6be43b6688a50e0",
+      "size": 1261
+    },
+    "negative-control-expected-output.txt": {
+      "sha256": "07d02c281ff9c42ee6afaa9b2629dfb10284617ad6639b2da1eb91bf729ced21",
+      "size": 66
+    },
+    "pinned-head-hash.txt": {
+      "sha256": "874bfefba8d47e55b02689e2b288bb47fbedcb70b24a02e80d42f3ee10c88f49",
+      "size": 65
+    },
+    "verifier/verify_decision_log.py": {
+      "sha256": "0602813a0628264e274153442f065d6203c7213611dc8857b84538dcb9e9255b",
+      "size": 5855
+    },
+    "verifier-ok.txt": {
+      "sha256": "e6ce4038779b72f350232871e816cccd0f6942eac35570c1656a46ec58284f17",
+      "size": 83
+    }
+  }
+}
