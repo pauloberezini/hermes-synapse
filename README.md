@@ -2,19 +2,23 @@
 
 # Hermes Synapse
 
-## Approve the exact call your AI agent is about to make.
+## Runtime governance and human approvals for AI agents
 
-Hermes Synapse is a self-hosted approval layer for AI agents that touch money or production systems. An approval covers one payload and works once. Every step lands in a hash-chained log you can check offline.
+Your agent works in the demo. Security will not sign off on production, because nobody can show who approved what it did. Hermes Synapse holds risky tool calls until a person approves that exact call, and writes every step to a hash-chained log you can check offline.
+
+Built for SecOps, SRE and AI platform teams that have an agent they like and a security review they cannot pass yet.
 
 </div>
 
-1. The agent asks and you decide. Approving only records your decision. The agent then sends the same call again, and that call runs once. After that, the same call creates a new pending request.
-2. An auditor can check the log without us. Requests, approvals, rejections and uses are chained with SHA-256. Export it and run one Python script. It needs no Hermes install and no network.
-3. It runs on your own machines with Docker Compose, under the MIT license. Any OpenAI-compatible model works, including a local one. MCP tools that are not marked read-only wait for a human by default.
+1. An approval covers one call. Approving only records your decision. The agent then sends the same call again and it runs once. Change an argument and you get a new request.
+2. Security can check the log without us. Requests, approvals, rejections and uses are chained with SHA-256. Export the log, run one Python script from the standard library, and it fails if a row was changed or dropped.
+3. Agents only get narrower. A child agent gets the tools that appear in both its own list and its parent's. BudgetGuard stops LLM calls once a session or global spend cap is reached.
 
-[Run the approvals demo](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html) · [Become a design partner](https://www.linkedin.com/in/pauloberezini/)
+It runs on your own machines with Docker Compose, under the MIT license. Any OpenAI-compatible model works, including a local one. MCP tools that are not marked read-only wait for a human by default.
 
-Known limits today: agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Agents have to run inside Hermes. The log is tamper-evident when you pin its head hash, not signed. Per-role approval rights are planned, not shipped. One maintainer.
+[Run the approvals demo](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html) · [Read the security model](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Regulated fintech use case](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html) · [Talk about a pilot](https://www.linkedin.com/in/pauloberezini/)
+
+Known limits today: the two agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Agents have to run inside Hermes. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.
 
 <div align="center">
 
@@ -41,13 +45,13 @@ docker compose up -d --build
 ## Why
 
 - A visual DAG of orchestrators and specialists. No cycles. Children cannot gain tools the parent does not have.
-- Dynamic LLM planning, not a hardcoded pipeline.
-- A real gate on risky tools: the operator reviews the claim and the source, approves a payload hash, then the agent must send the **same** call again before anything runs. A replay is a new `PENDING` request, not a free pass.
+- Dynamic LLM planning instead of a hardcoded pipeline.
+- A gate on risky tools. The operator reads the claim and the source, approves a payload hash, and then the agent has to send the same call again before anything runs. A replay is a new `PENDING` request.
 - An append-only, hash-chained decision log you can export and check with a stdlib Python script. No Hermes install, no network.
 
 Self-hosted. MIT. Docker Compose. Built by [Pavel Bereznichenko](https://github.com/pauloberezini) at [SupplyAlpha.ai](https://supplyalpha.ai).
 
-How it compares to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop, and a Slack button: [comparison](https://pauloberezini.github.io/hermes-synapse/guide/comparison.html).
+How it compares to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop and a Slack button: [comparison](https://pauloberezini.github.io/hermes-synapse/guide/comparison.html). For teams under financial regulation: [regulated fintech](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html).
 
 ---
 

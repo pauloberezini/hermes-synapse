@@ -11,7 +11,7 @@ export default {
         h(
           'p',
           { class: 'hero-limits' },
-          'Known limits today: agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Agents have to run inside Hermes. The log is tamper-evident when you pin its head hash, not signed. Per-role approval rights are planned, not shipped. One maintainer.',
+          'Known limits today: the two agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Agents have to run inside Hermes. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.',
         ),
     }),
   enhanceApp({ app }) {

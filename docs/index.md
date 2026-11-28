@@ -1,16 +1,16 @@
 ---
 layout: home
-title: Approve the exact call your AI agent is about to make
+title: Runtime governance and human approvals for AI agents
 titleTemplate: :title | Hermes Synapse
-description: Hermes Synapse is a self-hosted approval layer for AI agents that touch money or production systems. An approval covers one payload and works once. Every step lands in a hash-chained log you can check offline.
+description: Hermes Synapse holds risky AI agent tool calls until a person approves that exact call, and writes every step to a hash-chained log you can verify offline. Self-hosted, MIT.
 head:
   - - meta
     - name: keywords
-      content: Hermes Synapse, AI agent governance, human-in-the-loop, approval gate, runtime governance, multi-agent orchestrator, MCP, decision log, SupplyAlpha
+      content: Hermes Synapse, AI agent governance, human-in-the-loop, approval gate, runtime governance, MCP, decision log, audit log, SecOps, SRE, AI platform
 hero:
   name: HERMES SYNAPSE
-  text: Approve the exact call your AI agent is about to make.
-  tagline: Hermes Synapse is a self-hosted approval layer for AI agents that touch money or production systems. An approval covers one payload and works once. Every step lands in a hash-chained log you can check offline.
+  text: Runtime governance and human approvals for AI agents.
+  tagline: Your agent works in the demo. Security will not sign off on production, because nobody can show who approved what it did. Hermes holds risky tool calls until a person approves that exact call, and logs every step in a chain you can check offline.
   image:
     src: /og-image.png
     alt: Hermes Synapse Communication Link showing a Sys Ops command waiting for human approval
@@ -19,28 +19,32 @@ hero:
       text: Run the approvals demo
       link: /guide/approvals
     - theme: alt
-      text: Become a design partner
+      text: Talk about a pilot
       link: https://www.linkedin.com/in/pauloberezini/
 
 features:
-  - title: The agent asks and you decide.
-    details: Approving only records your decision. The agent then sends the same call again, and that call runs once. After that, the same call creates a new pending request.
-  - title: An auditor can check the log without us.
-    details: Requests, approvals, rejections and uses are chained with SHA-256. Export it and run one Python script. It needs no Hermes install and no network.
-  - title: It runs on your own machines with Docker Compose, under the MIT license.
-    details: Any OpenAI-compatible model works, including a local one. MCP tools that are not marked read-only wait for a human by default.
+  - title: An approval covers one call.
+    details: Approving only records your decision. The agent then sends the same call again and it runs once. Change an argument and you get a new request.
+  - title: Security can check the log without us.
+    details: Requests, approvals, rejections and uses are chained with SHA-256. Export the log and run one Python script from the standard library. It needs no Hermes install and no network.
+  - title: Agents only get narrower.
+    details: A child agent gets the tools in both its own list and its parent's. BudgetGuard stops LLM calls when a session or global spend cap is reached.
 ---
 
-## Why Hermes Synapse
+## Who it is for
+
+SecOps, SRE and AI platform teams at companies of roughly 50 to 500 people. You have an agent that is almost useful. Security or compliance wants to know who can make it act, who approved what, and whether the record can be trusted. Hermes is the layer that answers those three questions.
+
+## What is in the box
 
 - A visual DAG of orchestrators and specialists. No cycles. Children inherit only the intersection of their skills and the parent's.
-- Dynamic LLM planning, not a hardcoded pipeline.
-- A real gate on risky tools: the operator reviews the claim and the source, approves a payload hash, then the agent must send the **same** call again before anything runs. A replay is a new `PENDING` request, not a free pass.
+- Dynamic LLM planning instead of a hardcoded pipeline.
+- A gate on risky tools. The operator reads the claim and the source, approves a payload hash, and then the agent has to send the same call again before anything runs. A replay is a new `PENDING` request.
 - An append-only, hash-chained decision log you can export and check with `scripts/verify_decision_log.py`. No Hermes install. No network.
 
 Self-hosted. MIT. Docker Compose. Built by [Pavel Bereznichenko](https://github.com/pauloberezini) at [SupplyAlpha.ai](https://supplyalpha.ai).
 
-How it compares to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop, and a Slack button: [comparison](/guide/comparison).
+Where it fits next to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop and a Slack button: [comparison](/guide/comparison). Under financial regulation, such as the Israel Securities Authority draft directive on AI: [regulated fintech](/use-cases/regulated-fintech).
 
 <div class="cta-row">
   <a class="primary" href="https://github.com/pauloberezini/hermes-synapse">Get the code on GitHub</a>
