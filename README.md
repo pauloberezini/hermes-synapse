@@ -179,7 +179,7 @@ Hermes is a **runtime governance layer**, not a claim that every code path is ga
 
 Built-in high-risk names (`HIGH_RISK_TOOLS`):
 
-`execute_command`, `create_obsidian_note`, `delete_todoist_task`, `create_subagent`, `update_subagent`, `delete_subagent`, `change_agent_skills`, `assign_role`, `clear_history`, `clear_decision_logs`, `set_log_level`, `export_or_purge_audit`
+`execute_command`, `execute_code`, `create_obsidian_note`, `delete_todoist_task`, `create_subagent`, `update_subagent`, `delete_subagent`, `change_agent_skills`, `assign_role`, `clear_history`, `clear_decision_logs`, `set_log_level`, `export_or_purge_audit`
 
 Plugins can add names via `high_risk_tools()`. MCP tools go through `mcp_tool_needs_approval`: omitted annotations follow MCP defaults (`readOnlyHint` false, `destructiveHint` true) and wait; a tool opts out with `readOnlyHint: true` or `destructiveHint: false`.
 
@@ -269,7 +269,7 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 
 | ID | What it means |
 |---|---|
-| **R1-2** | The **Code Engineer** (and Data Analyst, which reuses it) runs generated Python via `CodeAgent.run_and_correct` → `execute_code`. That path never calls `gate_tool`. Retry-based gating also does not fit generated code: the script changes every turn, so an "identical arguments" retry would never consume. Treat the code-agent sandbox as **out of the approval gate** until a replay-the-approved-source path exists. Do not demo it as gated. |
+| **R1-2** | Closed. `execute_code` is in `HIGH_RISK_TOOLS` and calls `gate_tool` before the sandbox POST. Approval is bound to the source (`{"code": ...}`) and consumed once. A PENDING/REJECTED result does not enter the auto-correct loop; each new script is a new payload. Nested orchestrators skip code/analyst when `python_sandbox` is missing from the skill intersection. `CODE_AGENTS_ENABLED=false` disables execution entirely (fail closed on unrecognised values). |
 | **R2-4** | Raw tool args remain in `approval_requests.payload` for matching. Evidence and HTTP responses are masked. |
 | **R2-2** | A `REJECTED` call stays rejected for that session with no cooldown. |
 | **R2-6** | OTP sessions are not persisted across process restarts. |
@@ -325,7 +325,7 @@ docker compose -f docker-compose.dev.yml up
 
 ## Demo walkthrough
 
-Use Sys Ops (`shell_execution` → `execute_command`). **Do not use the Code Engineer for this demo** (see R1-2). Never put a real key in the prompt.
+Use Sys Ops (`shell_execution` → `execute_command`) or Code Engineer (`python_sandbox` → `execute_code`). Both wait for Approve, then a retry of the identical payload. Never put a real key in the prompt.
 
 1. New chat, for example "Disk check". Send: `Ask Sys Ops to run \`df -h /\` on the server.`
 2. Execution stops. The Approvals badge counts up. Open **Governance Approvals**.
@@ -374,7 +374,7 @@ Seeded on first launch (keys optional; missing keys return a clear error):
 |---|---|
 | **Jarvis (Main)** - root orchestrator | - |
 | **Search Agent** | `web_search` (SearXNG, weather, RSS) |
-| **Code Engineer** | `python_sandbox` (not approval-gated; see R1-2) |
+| **Code Engineer** | `python_sandbox` (`execute_code` is HITL-gated) |
 | **Data Analyst** | `python_sandbox` (reuses Code Engineer) |
 | **Scheduler** | `timers_alarms` |
 | **Market Monitor** | `market_monitor` |
@@ -392,7 +392,7 @@ Other dashboard surfaces: visual DAG canvas, 2.5D pixel office, Kanban task boar
 
 Shipped on current `main` includes DAG orchestration, PostgreSQL, Qdrant / GraphRAG, Telegram, MCP client, plugin boundary, `hermes_sdk`, marketplace registry, voice in the browser, OTP + optional JWT RBAC, Paperclip-style BudgetGuard, HITL approvals with evidence bundles, and the immutable decision log.
 
-Still ahead: production multi-cluster mesh, WebRTC voice / local multimodal, marketplace monetization beyond the no-op adapter, code-agent gating (R1-2), persistent login sessions, and a signed export manifest.
+Still ahead: production multi-cluster mesh, WebRTC voice / local multimodal, marketplace monetization beyond the no-op adapter, persistent login sessions, and a signed export manifest.
 
 See [ROADMAP.md](ROADMAP.md) for the full specification.
 

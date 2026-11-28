@@ -1,7 +1,17 @@
 import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
+from backend.governance import ApprovalQueue
 from backend.subagents import ResearchAgent, CodeAgent, AnalystAgent, execute_code
+
+
+def _approved_execute(code_str: str):
+    """Run execute_code after consuming a one-shot approval for that source."""
+    first = execute_code(code_str)
+    if first.get("status") == "PENDING_APPROVAL" and first.get("request_id"):
+        ApprovalQueue.resolve(first["request_id"], "APPROVED")
+        return execute_code(code_str)
+    return first
 
 @pytest.fixture(autouse=True)
 def mock_docker_disabled():
@@ -21,7 +31,7 @@ def test_execute_code_success():
         }
         mock_post.return_value = mock_resp
 
-        res = execute_code("print('hello world')")
+        res = _approved_execute("print('hello world')")
         assert res["success"] is True
         assert res["stdout"].strip() == "hello world"
         assert res["stderr"] == ""
@@ -39,7 +49,7 @@ def test_execute_code_syntax_error():
         }
         mock_post.return_value = mock_resp
 
-        res = execute_code("print('hello world")
+        res = _approved_execute("print('hello world")
         assert res["success"] is False
         assert "SyntaxError" in res["stderr"]
         assert res["returncode"] != 0
@@ -80,7 +90,8 @@ async def test_code_agent_self_correction():
     bad_code = "```python\nprint('bad code\n```"
     good_code = "```python\nprint('good code')\n```"
     
-    with patch("backend.subagents.call_llm", new_callable=AsyncMock) as mock_call, \
+    with patch("backend.governance.gate_tool", return_value=None), \
+         patch("backend.subagents.call_llm", new_callable=AsyncMock) as mock_call, \
          patch("backend.subagents.requests.post") as mock_post:
         
         mock_call.side_effect = [bad_code, good_code]

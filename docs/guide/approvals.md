@@ -38,7 +38,7 @@ When an autonomous agent invokes a sensitive action (for example `execute_comman
 
 ### Step 1: Trigger an Approval Request
 
-Use the orchestrator with a Sys Ops step that holds `execute_command`. Do not use the `code` agent: it runs generated Python in a sandbox and never consults the approval gate.
+Use the orchestrator with a Sys Ops step that holds `execute_command`, or a Code Engineer step that holds `execute_code`. Both wait for a one-shot, payload-bound approval.
 
 From the Web UI Communication Link, ask the orchestrator to run a shell command:
 

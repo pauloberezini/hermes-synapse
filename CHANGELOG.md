@@ -6,6 +6,11 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ## 🚀 [Unreleased]
 
+### 🛡️ R1-2: gate `execute_code`
+- Code Engineer / Data Analyst sandbox calls go through `gate_tool` (permission intersection, one-shot payload-bound HITL, decision log).
+- Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set.
+- Kill switch `CODE_AGENTS_ENABLED` (default true); unrecognised values fail closed.
+
 ## 🚀 [v1.5.0] - 2026-11-01
 
 ### 🏛️ Hierarchical Governance & Approval System

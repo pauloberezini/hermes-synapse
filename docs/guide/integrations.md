@@ -77,7 +77,7 @@ Created on first launch (`backend/database.py` `_get_default_agents`). Missing k
 |---|---|
 | Jarvis (Main) | Root orchestrator |
 | Search Agent | `web_search` |
-| Code Engineer | `python_sandbox` (not approval-gated; see [Security](./security.md#known-limitations)) |
+| Code Engineer | `python_sandbox` (`execute_code` is HITL-gated; see [Security](./security.md)) |
 | Data Analyst | `python_sandbox` |
 | Scheduler | `timers_alarms` |
 | Market Monitor | `market_monitor` |

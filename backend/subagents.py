@@ -404,8 +404,72 @@ def safety_check(code_str: str) -> Optional[str]:
     return None
 
 
+# Gate / kill-switch outcomes. Self-correction must not treat these as a code bug.
+_GATE_BLOCKED = frozenset({
+    "PENDING_APPROVAL",
+    "REJECTED",
+    "DISABLED",
+    "FORBIDDEN",
+    "INVALID_ARGUMENTS",
+})
+
+
+def code_agents_enabled() -> bool:
+    """Kill switch for sandbox execution. Unrecognised values fail closed."""
+    raw = (os.getenv("CODE_AGENTS_ENABLED") or "true").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _blocked_exec(status: str, stderr: str, request_id: Any = None) -> Dict[str, Any]:
+    result = {
+        "success": False,
+        "stdout": "",
+        "stderr": stderr,
+        "returncode": -4,
+        "display_data": [],
+        "status": status,
+    }
+    if request_id is not None:
+        result["request_id"] = request_id
+    return result
+
+
 def execute_code(code_str: str) -> Dict[str, Any]:
     """Runs Python code using the isolated stateful Sandbox container."""
+    import json as _json
+    from backend.governance import budget_session, current_agent_tools, gate_tool
+
+    if not code_agents_enabled():
+        logger.warning("Code execution BLOCKED by CODE_AGENTS_ENABLED kill switch")
+        return _blocked_exec("DISABLED", "Code execution disabled (CODE_AGENTS_ENABLED).")
+
+    allowed = current_agent_tools.get()
+    # python_sandbox currently maps to execute_command; accept either name.
+    if allowed is not None and not (allowed & {"execute_code", "execute_command"}):
+        logger.warning("Code execution BLOCKED: execute_code not in caller's effective tools")
+        return _blocked_exec(
+            "FORBIDDEN",
+            "execute_code is not in the caller's effective tools.",
+        )
+
+    payload = {"code": code_str}
+    blocked = gate_tool(budget_session.get() or "default", "execute_code", payload)
+    if blocked is not None:
+        try:
+            body = _json.loads(blocked)
+        except Exception:
+            body = {"status": "PENDING_APPROVAL", "error": blocked}
+        logger.warning(
+            "Code execution BLOCKED by gate_tool: status=%s request_id=%s",
+            body.get("status"),
+            body.get("request_id"),
+        )
+        return _blocked_exec(
+            body.get("status") or "PENDING_APPROVAL",
+            body.get("error") or blocked,
+            body.get("request_id"),
+        )
+
     # ── Safety guard (from Fugu architecture) ──────────────────────
     safety_error = safety_check(code_str)
     if safety_error:
@@ -716,6 +780,16 @@ class CodeAgent:
         return text.strip()
 
     async def run_and_correct(self, prompt: str) -> Dict[str, Any]:
+        if not code_agents_enabled():
+            return {
+                "code": "",
+                "success": False,
+                "stdout": "",
+                "stderr": "CodeAgent disabled (CODE_AGENTS_ENABLED).",
+                "attempts": 0,
+                "display_data": [],
+                "status": "DISABLED",
+            }
         messages = [
             {"role": "system", "content": "Вы — Code Agent. Напишите чистый Python код для решения задачи. "
                                           "КРИТИЧЕСКОЕ ТРЕБОВАНИЕ: Вы категорически не имеете права выдумывать демонстрационные, вымышленные или фейковые спортивные матчи! "
@@ -731,8 +805,13 @@ class CodeAgent:
         exec_result = execute_code(code_str)
         attempts = 1
         
-        # Self-correction loop: retry up to 2 corrections
-        while not exec_result["success"] and attempts < 3:
+        # Self-correction loop: retry up to 2 corrections.
+        # A gated block is not a code error; each new source needs its own approval.
+        while (
+            not exec_result["success"]
+            and attempts < 3
+            and exec_result.get("status") not in _GATE_BLOCKED
+        ):
             logger.info(f"Code Agent execution failed (Attempt {attempts}). Triggering self-correction...")
             correction_messages = [
                 {"role": "system", "content": "Вы — Code Agent. Код, который вы написали, завершился ошибкой. Исправьте его. Выведите исправленный Python код ТОЛЬКО в разметке ```python ... ``` без дополнительных объяснений."},
@@ -743,7 +822,7 @@ class CodeAgent:
             exec_result = execute_code(code_str)
             attempts += 1
             
-        return {
+        result = {
             "code": code_str,
             "success": exec_result["success"],
             "stdout": exec_result["stdout"],
@@ -751,6 +830,11 @@ class CodeAgent:
             "attempts": attempts,
             "display_data": exec_result.get("display_data", [])
         }
+        if exec_result.get("status"):
+            result["status"] = exec_result["status"]
+        if exec_result.get("request_id") is not None:
+            result["request_id"] = exec_result["request_id"]
+        return result
 
 class AnalystAgent:
     def __init__(self, api_key: str, model: str):
