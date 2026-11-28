@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,6 +28,9 @@ CYAN = (0, 240, 255)
 GREEN = (16, 185, 129)
 RED = (239, 68, 68)
 AMBER = (245, 158, 11)
+CAST_COLS = 100
+CAST_ROWS = 24
+GIF_MAX_BYTES = 3 * 1024 * 1024
 
 
 def _venv_py() -> str:
@@ -48,7 +52,15 @@ def _run_demo() -> str:
     )
     if proc.returncode != 0:
         raise SystemExit(proc.stderr or proc.stdout or "demo failed")
-    return proc.stdout.replace("\r\n", "\n")
+    return _neutral_text(proc.stdout.replace("\r\n", "\n"))
+
+
+def _neutral_text(text: str) -> str:
+    """Drop VM checkout paths from recorded terminal output."""
+    out = text
+    for src in (str(_ROOT), "/agent/repos/hermes-synapse", "/agent/repos"):
+        out = out.replace(src, "~/hermes-synapse")
+    return out
 
 
 def _color_for(line: str) -> tuple[int, int, int]:
@@ -67,8 +79,8 @@ def write_cast(text: str, path: Path) -> None:
     lines = text.splitlines()
     header = {
         "version": 2,
-        "width": 100,
-        "height": 38,
+        "width": CAST_COLS,
+        "height": CAST_ROWS,
         "timestamp": 0,
         "env": {"TERM": "xterm-256color", "SHELL": "/bin/bash"},
     }
@@ -101,20 +113,60 @@ def _draw_terminal(lines: list[str], *, width: int = 920, pad: int = 16):
     return img
 
 
-def write_gif(text: str, path: Path) -> None:
-    lines = text.splitlines()
-    frames = []
-    for i in range(1, len(lines) + 1):
-        frames.append(_draw_terminal(lines[:i]))
-    frames += [_draw_terminal(lines)] * 12
-    frames[0].save(
-        path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=90,
-        loop=0,
-        optimize=True,
-    )
+def write_gif_from_cast(cast_path: Path, gif_path: Path) -> tuple[int, int, int]:
+    """Render the asciinema cast with agg at a fixed terminal size (not a growing strip)."""
+    agg = shutil.which("agg") or str(Path.home() / ".local" / "bin" / "agg")
+    if not Path(agg).is_file():
+        raise SystemExit("agg not found; install https://github.com/asciinema/agg")
+    cmd = [
+        agg,
+        "--cols",
+        str(CAST_COLS),
+        "--rows",
+        str(CAST_ROWS),
+        "--font-size",
+        "14",
+        "--font-dir",
+        "/usr/share/fonts/truetype/dejavu",
+        "--font-family",
+        "DejaVu Sans Mono",
+        "--theme",
+        "github-dark",
+        "--last-frame-duration",
+        "2",
+        str(cast_path),
+        str(gif_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise SystemExit(proc.stderr or proc.stdout or "agg failed")
+    return _assert_gif_animates(gif_path)
+
+
+def _assert_gif_animates(path: Path) -> tuple[int, int, int]:
+    from PIL import Image
+
+    size = path.stat().st_size
+    if size > GIF_MAX_BYTES:
+        raise SystemExit(f"GIF too large: {size} bytes")
+    im = Image.open(path)
+    width, height = im.size
+    frames = int(getattr(im, "n_frames", 1))
+    if width < 600 or height < 200:
+        raise SystemExit(f"GIF looks like a strip: {width}x{height}")
+    if frames < 10:
+        raise SystemExit(f"GIF not animated: {frames} frames")
+    samples: list[bytes] = []
+    inspect_dir = Path("/tmp/hermes-demo-gif-frames")
+    inspect_dir.mkdir(parents=True, exist_ok=True)
+    for idx in (0, frames // 3, (2 * frames) // 3, frames - 1):
+        im.seek(idx)
+        frame = im.convert("RGB")
+        samples.append(frame.tobytes())
+        frame.save(inspect_dir / f"frame-{idx}.png")
+    if len(set(samples)) < 2:
+        raise SystemExit("GIF frames are identical")
+    return width, height, frames
 
 
 def write_svg(text: str, path: Path) -> None:
@@ -254,7 +306,7 @@ def capture_ui(token: str) -> None:
         page.get_by_role("button", name="Approve").click()
         page.wait_for_timeout(400)
         page.get_by_role("button", name="Show evidence #1").click()
-        page.get_by_placeholder("resolver note...").fill("Destructive delete. Rejected for this session.")
+        page.get_by_placeholder("resolver note...").fill("External customer export. Rejected for this session.")
         page.get_by_role("button", name="Reject").click()
         page.wait_for_timeout(400)
         page.get_by_role("button", name="All").click()
@@ -273,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     MEDIA.mkdir(parents=True, exist_ok=True)
     text = _run_demo()
     write_cast(text, MEDIA / "make-demo.cast")
-    write_gif(text, MEDIA / "make-demo.gif")
+    gif_w, gif_h, gif_frames = write_gif_from_cast(MEDIA / "make-demo.cast", MEDIA / "make-demo.gif")
     write_svg(text, MEDIA / "make-demo.svg")
     write_excerpt_png(
         text,
@@ -303,9 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                     frontend.kill()
 
     gif_bytes = (MEDIA / "make-demo.gif").stat().st_size
-    if gif_bytes > 3 * 1024 * 1024:
-        raise SystemExit(f"GIF too large: {gif_bytes} bytes")
-    print(f"[demo-record] wrote {MEDIA} gif={gif_bytes}B")
+    print(f"[demo-record] wrote {MEDIA} gif={gif_bytes}B {gif_w}x{gif_h} frames={gif_frames}")
     return 0
 
 

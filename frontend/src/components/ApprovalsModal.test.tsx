@@ -55,6 +55,12 @@ describe('ApprovalsModal', () => {
     expect(await screen.findByText(/wants to run execute_command for step 1\/2/)).toBeInTheDocument();
   });
 
+  it('does not claim audit or evidence verification', async () => {
+    render(<ApprovalsModal isOpen onClose={() => {}} />);
+    expect(await screen.findByText(/Approve or reject gated tool calls/)).toBeInTheDocument();
+    expect(screen.queryByText(/audit & evidence verification/i)).not.toBeInTheDocument();
+  });
+
   it('lazy-loads evidence on expand and shows plan + truncation chip', async () => {
     render(<ApprovalsModal isOpen onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: /show evidence #7/i }));

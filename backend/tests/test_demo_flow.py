@@ -87,7 +87,8 @@ def test_demo_cli_headless(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "[demo] DEMO_OK" in proc.stdout
     assert "SCRIPTED AGENT" in proc.stdout
-    assert "rm -rf /var/lib/hermes-demo" in proc.stdout
+    assert "exports.partner.example/v1/customers" in proc.stdout
+    assert "rm -rf" not in proc.stdout
     assert "status=REJECTED" in proc.stdout
     assert "status=CONSUMED" in proc.stdout
     assert "entry_hash mismatch" in proc.stdout
@@ -129,7 +130,25 @@ def test_demo_media_files_exist() -> None:
         path = media / name
         assert path.is_file(), name
         assert path.stat().st_size > 100, name
-    assert (media / "make-demo.gif").stat().st_size < 3 * 1024 * 1024
+    gif = (media / "make-demo.gif").read_bytes()
+    assert len(gif) < 3 * 1024 * 1024
+    assert gif[:6] in (b"GIF87a", b"GIF89a")
+    width = int.from_bytes(gif[6:8], "little")
+    height = int.from_bytes(gif[8:10], "little")
+    frames = gif.count(b"\x2c")
+    assert width >= 600 and height >= 200, (width, height)
+    assert frames >= 10, frames
+
+
+def test_demo_media_has_no_vm_paths() -> None:
+    media = _ROOT / "docs" / "demo" / "media"
+    banned = ("/agent/repos", "/home/ubuntu", "cursor.com/agents")
+    for path in media.iterdir():
+        if path.suffix.lower() in {".png", ".gif"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for needle in banned:
+            assert needle not in text, f"{path.name} contains {needle}"
 
 
 def test_demo_guide_drops_false_security_claims() -> None:
@@ -140,5 +159,5 @@ def test_demo_guide_drops_false_security_claims() -> None:
     assert "CODE_AGENTS_ENABLED=false" in guide
     assert "CODE_AGENTS_ENABLED=true" in guide
     assert "./media/" in guide
-    for banned in ("chain intact", "encrypted", "signed manifest"):
+    for banned in ("chain intact", "encrypted", "signed manifest", "rm -rf"):
         assert banned not in guide, banned
