@@ -20,7 +20,7 @@ All of this is proposed text and can change. The directive covers licensees. A p
 
 ## Where agents already reach orders
 
-cTrader publishes official MCP servers. An agent in Claude Code or Cursor can use them to place, modify and close orders on a trading account. The ISA draft does not mention cTrader. The overlap is that an agent with that connection is exactly the case a human-involvement criterion has to describe.
+cTrader publishes official MCP servers. An agent in Claude Code or Cursor can use them to place, modify and close orders on a trading account. Hermes does not sit in front of those clients. Approvals cover agents running in Hermes, including their calls to external MCP tools such as cTrader, through Hermes's MCP client. The ISA draft does not mention cTrader. The overlap is that an agent with a live order connection is exactly the case a human-involvement criterion has to describe.
 
 ## What Hermes does today
 
@@ -36,7 +36,7 @@ cTrader publishes official MCP servers. An agent in Claude Code or Cursor can us
 - It does not decide whether an order is suitable for a client. It checks nothing about the content of a call.
 - BudgetGuard caps LLM spend. It does not cap order size or market exposure.
 - The two agents that run generated Python, Code Engineer and Data Analyst, are outside the gate.
-- Agents have to run inside Hermes and reach cTrader through Hermes's MCP client. Hermes is not a gateway in front of someone else's Claude Code or Cursor session.
+- Approvals cover agents running in Hermes, including their calls to external MCP tools such as cTrader. There is no gateway in front of Claude Code, Cursor or other MCP clients.
 - It does not keep the register of technological tools that the draft proposes.
 
 ## What a pilot looks like

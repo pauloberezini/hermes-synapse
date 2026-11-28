@@ -195,7 +195,7 @@ Documented in full on [Integrations](/guide/integrations). What the tree actuall
 
 Approvals are bound to **session + action + payload**. `bundle_hash` is SHA-256 over a canonical view of the redacted evidence (args, plan, upstream hashes, flags). `description` and `links` are not in that hash. Approve does not execute. Consume is one-shot. The decision log is append-only and tamper-evident when you pin the head hash. Secrets that match known formats are redacted in evidence.
 
-The **Code Engineer** (and Data Analyst) `execute_code` path does **not** go through `gate_tool`. That is a known limitation (R1-2), not a footnote. Do not say "everything is gated."
+The **Code Engineer** (and Data Analyst) `execute_code` path does **not** go through `gate_tool`. That is a known limitation (R1-2), not a footnote. Do not say "everything is gated." Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code, Cursor or other MCP clients.
 
 Full write-up: [Security model](/guide/security).
 

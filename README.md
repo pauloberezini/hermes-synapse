@@ -18,7 +18,7 @@ It runs on your own machines with Docker Compose, under the MIT license. Any Ope
 
 [Run the approvals demo](https://pauloberezini.github.io/hermes-synapse/guide/approvals.html) · [Read the security model](https://pauloberezini.github.io/hermes-synapse/guide/security.html) · [Regulated fintech use case](https://pauloberezini.github.io/hermes-synapse/use-cases/regulated-fintech.html) · [Talk about a pilot](https://www.linkedin.com/in/pauloberezini/)
 
-Known limits today: the two agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Agents have to run inside Hermes. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.
+Known limits today: the two agents that run generated Python (Code Engineer, Data Analyst) are outside the gate. Approvals cover agents running in Hermes, including their calls to external MCP tools; there is no gateway in front of Claude Code, Cursor or other MCP clients. The approve endpoint does not check roles yet. The log is tamper-evident when you pin its head hash, not signed. One maintainer.
 
 <div align="center">
 
