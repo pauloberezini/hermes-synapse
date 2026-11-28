@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1364" viewBox="0 0 920 1364" role="img" aria-label="make demo">
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1382" viewBox="0 0 920 1382" role="img" aria-label="make demo">
 <rect width="100%" height="100%" fill="#0b1220"/>
 <style>text{font:13px "DejaVu Sans Mono", ui-monospace, monospace}</style>
 <text x="16" y="29" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.0s" dur="0.01s" fill="freeze"/>[demo] SCRIPTED AGENT — no LLM, no API keys</text>
@@ -60,11 +60,11 @@
 <text x="16" y="1037" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.92s" dur="0.01s" fill="freeze"/>[demo]   seq=6 event=REQUESTED actor=agent:demo-approve</text>
 <text x="16" y="1055" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.99s" dur="0.01s" fill="freeze"/></text>
 <text x="16" y="1073" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.06s" dur="0.01s" fill="freeze"/>=== 4:20  In-process verify ===</text>
-<text x="16" y="1091" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.13s" dur="0.01s" fill="freeze"/>[demo] verify ok=True checked=6 head=1284137f4f03cc3ed27cbd21769bb8038dbf28154efebb628ddb50b3d1a7a02d</text>
+<text x="16" y="1091" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.13s" dur="0.01s" fill="freeze"/>[demo] verify ok=True checked=6 head=920499bee1dba77ecbc7d2def03137e45ac4bbe273f0f6d26280619b1a66af96</text>
 <text x="16" y="1109" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.2s" dur="0.01s" fill="freeze"/></text>
 <text x="16" y="1127" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.27s" dur="0.01s" fill="freeze"/>=== 4:50  Export + offline scripts/demo_verify.py --pin ===</text>
 <text x="16" y="1145" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.34s" dur="0.01s" fill="freeze"/>[demo] export hermes-decisions-default-2026-11-28-2026-11-28.zip</text>
-<text x="16" y="1163" fill="#10b981" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.41s" dur="0.01s" fill="freeze"/>[demo] offline ok checked=6 head=1284137f4f03cc3ed27cbd21769bb8038dbf28154efebb628ddb50b3d1a7a02d</text>
+<text x="16" y="1163" fill="#10b981" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.41s" dur="0.01s" fill="freeze"/>[demo] offline ok checked=6 head=920499bee1dba77ecbc7d2def03137e45ac4bbe273f0f6d26280619b1a66af96</text>
 <text x="16" y="1181" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.48s" dur="0.01s" fill="freeze"/></text>
 <text x="16" y="1199" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.55s" dur="0.01s" fill="freeze"/>=== 5:40  Tamper one record — verification breaks ===</text>
 <text x="16" y="1217" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.62s" dur="0.01s" fill="freeze"/>[demo] rewrote reason on seq=1 in decisions.tampered.zip</text>
@@ -73,6 +73,7 @@
 <text x="16" y="1271" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.83s" dur="0.01s" fill="freeze"/>=== 6:40  Recap ===</text>
 <text x="16" y="1289" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.9s" dur="0.01s" fill="freeze"/>[demo] rejected customer export never ran; approved code ran once; replay is a new PENDING</text>
 <text x="16" y="1307" fill="#f59e0b" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.97s" dur="0.01s" fill="freeze"/>[demo] R1-2: execute_code waits at gate_tool; CODE_AGENTS_ENABLED=false is DISABLED</text>
-<text x="16" y="1325" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.04s" dur="0.01s" fill="freeze"/>[demo] chain is tamper-evident, not signed. Pin the head hash.</text>
-<text x="16" y="1343" fill="#10b981" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.11s" dur="0.01s" fill="freeze"/>[demo] DEMO_OK</text>
+<text x="16" y="1325" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.04s" dur="0.01s" fill="freeze"/>[demo] The zip export is tamper-evident when you pin the head hash and carries no signatures. The</text>
+<text x="16" y="1343" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.11s" dur="0.01s" fill="freeze"/>JSON export carries signatures on checkpoints. The private key lives on the same host as the log.</text>
+<text x="16" y="1361" fill="#10b981" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.18s" dur="0.01s" fill="freeze"/>[demo] DEMO_OK</text>
 </svg>

@@ -19,7 +19,7 @@ Live dashboard clicks are **optional** and labeled. They need Compose plus a mod
 - **Scripted:** the "agent" is `scripts/demo.py`, not Jarvis + an LLM.
 - **Mocked:** shell and sandbox HTTP. The reject payload is a customer-CSV POST to `exports.partner.example` and must not run.
 - **Missing on purpose:** there is no `send_payment` tool. The export is `execute_command`; code is `execute_code`.
-- **Not claimed:** the log is tamper-evident. It is not a signature scheme. Pin the head hash.
+- **Not claimed:** the zip export is tamper-evident when you pin the head hash and carries no signatures. The JSON export carries signatures on checkpoints. The private key lives on the same host as the log.
 
 ## 0:00–0:30 — Setup
 
@@ -185,7 +185,7 @@ No OTP, tokens, or API keys in these files. The UI shots are Playwright against 
 
 1. Risky tools stop at the gate. R1-2: `execute_code` waits; `CODE_AGENTS_ENABLED=false` is `DISABLED`.
 2. Humans see the payload. Reject sticks. Approve is one-shot and payload-bound.
-3. The export is checkable offline. Tampering a row without rewriting the whole chain fails. Pin the head.
+3. The zip export is checkable offline and carries no signatures. Tampering a row without rewriting the whole chain fails. Pin the head. The JSON export carries signatures on checkpoints. The private key lives on the same host as the log.
 
 **Do not say:** the zip is confidential, the manifest is a signature, or that the chain is unforgeable if the attacker also replaces your pin.
 
