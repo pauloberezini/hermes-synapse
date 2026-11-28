@@ -99,7 +99,7 @@ SQLite and Postgres triggers abort `UPDATE`/`DELETE` on `approval_decisions` and
 <figcaption>Each row points at the previous entry_hash. APPROVED is the operator; CONSUMED is system.</figcaption>
 </figure>
 
-This is **tamper-evident**, not a signed or encrypted ledger. Someone who rewrites the whole chain *and* the copy of the head hash you kept can still pass an unpinned check. Pin the head with `--pin`.
+The zip export is **tamper-evident**, not encrypted. Someone who rewrites the whole chain *and* the copy of the head hash you kept can still pass an unpinned check. Pin the head with `--pin`. Signed checkpoints (`docs/security/signed-audit-log.md`) add an Ed25519 signature over the chain head; that stops post-export edits and non-admin rewrites, not root on the host.
 
 ## Verify and export
 
@@ -108,6 +108,8 @@ This is **tamper-evident**, not a signed or encrypted ledger. Someone who rewrit
 | `GET /api/governance/decisions/verify` | Walk the chain, recompute `entry_hash` / `prev_hash`, re-hash stored evidence. |
 | `GET /api/governance/decisions` | Paginated log (`before_seq`, `limit`). |
 | `GET /api/governance/decisions/export` and `/export.zip` | Zip of `decisions.jsonl`, `evidence/<id>.json`, `manifest.json`, `VERIFY.md`. |
+| `GET /api/governance/decisions/export.signed.json` | Signed JSON bundle: records, checkpoints, public key. |
+| `GET /api/governance/audit/key` | Installation public key + fingerprint. |
 | `GET /api/governance/approvals` | Summaries; `payload` is masked. |
 | `POST /api/governance/approvals/{id}/resolve` | `APPROVED` or `REJECTED`. A client-supplied `bundle_hash` in the body is ignored. |
 
@@ -149,7 +151,7 @@ Do not write "everything is gated." These items are open on `main`:
 | **R2-6** | OTP sessions persist in `auth_sessions` (hash + TTL + revoke). |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
-| Verifier | Tamper-evident with `--pin`. Not a signature. |
+| Verifier | Zip + `--pin` is tamper-evident, not a signature. Signed JSON + `python -m hermes_audit_verify` is a signature over checkpoints; the key is on-host (see [signed audit log](../security/signed-audit-log.md)). |
 | PIIGuard | Known regexes only. |
 
 Demo guidance: Sys Ops `execute_command` and Code Engineer `execute_code` both wait for Approve, then a retry of the identical payload.

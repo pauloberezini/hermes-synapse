@@ -38,6 +38,7 @@ services:
     volumes:
       # Mount backend source for hot-reload
       - ./backend:/app/backend
+      - ./hermes_audit_verify.py:/app/hermes_audit_verify.py
       - ./.env:/app/.env
     depends_on:
       - qdrant

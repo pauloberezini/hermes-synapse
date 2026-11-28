@@ -90,6 +90,8 @@ backend/data/*.corrupt*
 backend/data/*.bak*
 backend/data/*.json
 backend/data/.current_otp
+backend/data/*.key
+backend/data/*.key.id
 backend/data/plots/
 backend/data/uploads/
 !backend/data/.gitkeep

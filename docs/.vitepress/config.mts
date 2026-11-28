@@ -126,6 +126,7 @@ export default defineConfig({
         text: 'Product',
         items: [
           { text: 'Security model', link: '/guide/security' },
+          { text: 'Signed audit log', link: '/security/signed-audit-log' },
           { text: 'Integrations', link: '/guide/integrations' },
           { text: 'Budgeting and governance', link: '/guide/paperclip-governance' },
           { text: 'Task engine and Kanban', link: '/guide/task-engine' },

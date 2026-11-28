@@ -41,12 +41,14 @@ RUN pip install --no-cache-dir \
     "apscheduler>=3.10.0" \
     "sqlalchemy>=2.0.0" \
     "psycopg[binary]>=3.1.0" \
-    "yfinance>=0.2.54"
+    "yfinance>=0.2.54" \
+    "cryptography>=42"
 
 # Copy source code and environment configuration
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
 COPY hermes_sdk/ /app/hermes_sdk/
+COPY hermes_audit_verify.py /app/hermes_audit_verify.py
 
 RUN groupadd --gid 10001 hermes \
     && useradd --uid 10001 --gid hermes --create-home --home-dir /home/hermes hermes \
