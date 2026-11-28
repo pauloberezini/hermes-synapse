@@ -7,6 +7,10 @@ This checkout implements P0 (G1, G2, G3, G4, G5, G6 text, G7, G11) and the
 requested P1 items (G9 MANIFEST, G12 negative-control exit code, G14 synthetic
 marker). It does not implement G8 directive mapping or any PDF.
 
+`origin/main` (c263738) is merged. `CODE_AGENTS_ENABLED` default is false in
+`.env.example`, `docker-compose.yml`, and `code_agents_enabled()`. The evidence
+snapshot reads those files. The demo still pins true/false per step.
+
 ## P0
 
 - G1 Disclaimer at the top of README.md and SUMMARY.md: not legal advice; does not make you compliant.
@@ -23,6 +27,13 @@ marker). It does not implement G8 directive mapping or any PDF.
 - G9 MANIFEST.json with SHA-256 and size of every other pack file.
 - G12 negative-control-expected-output.txt shows the FAIL line, exit 1, and that seq 1 reason was edited.
 - G14 synthetic marker on every calls row; README and SUMMARY say every payload, name and file is synthetic.
+
+## Closed by merging origin/main
+
+- G4 product gap: `.env.example:47`, `docker-compose.yml` compose default, and
+  `code_agents_enabled()` unset fallback are all `false` on this branch after
+  the merge. `config-snapshot.json` records the values read from those files,
+  not an intended override.
 
 ## Not in this pass
 

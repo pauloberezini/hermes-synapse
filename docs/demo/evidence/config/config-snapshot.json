@@ -1,12 +1,20 @@
 {
-  "commit": "ad1305c552f0a5a0b2ccd81b6085f888fea35764",
+  "commit": "fd36888f904251a4abb5868d25b477cfce1b0611",
   "CODE_AGENTS_ENABLED": {
     "pilot_default": false,
-    "sources": [
-      ".env.example:47",
-      "docker-compose.yml:50",
-      "backend/subagents.py:code_agents_enabled()"
-    ],
+    "read_from": {
+      ".env.example": {
+        "line": 47,
+        "value": "false"
+      },
+      "docker-compose.yml": {
+        "line": 50,
+        "value": "false"
+      },
+      "backend/subagents.py:code_agents_enabled": {
+        "unset_fallback": "false"
+      }
+    },
     "demo_pinned_for_approval_step": "true",
     "demo_pinned_for_kill_switch_step": "false",
     "accepted_on": [

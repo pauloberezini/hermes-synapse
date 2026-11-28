@@ -201,6 +201,10 @@ def _assert_evidence_layout(out: Path) -> None:
     assert "reason of seq 1" in fail
     cfg = json.loads((out / "config" / "config-snapshot.json").read_text(encoding="utf-8"))
     assert cfg["CODE_AGENTS_ENABLED"]["pilot_default"] is False
+    read_from = cfg["CODE_AGENTS_ENABLED"]["read_from"]
+    assert read_from[".env.example"]["value"] == "false"
+    assert read_from["docker-compose.yml"]["value"] == "false"
+    assert read_from["backend/subagents.py:code_agents_enabled"]["unset_fallback"] == "false"
     assert "approval_path" not in cfg["CODE_AGENTS_ENABLED"]
     assert "demo_pinned_for_approval_step" in cfg["CODE_AGENTS_ENABLED"]
     assert "execute_code" in cfg["high_risk_tools"]

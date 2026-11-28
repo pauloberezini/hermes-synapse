@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -180,19 +181,49 @@ def _write_calls(out_dir: Path, calls: list[dict[str, Any]]) -> None:
     (folder / "calls.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _read_code_agents_default() -> dict[str, Any]:
+    """Read the process default from the files on this commit. Do not invent it."""
+    env_line, env_val = None, None
+    for i, line in enumerate((_ROOT / ".env.example").read_text(encoding="utf-8").splitlines(), 1):
+        if line.startswith("CODE_AGENTS_ENABLED="):
+            env_line = i
+            env_val = line.split("=", 1)[1].strip().strip("\"'").lower()
+            break
+    compose_line, compose_val = None, None
+    for i, line in enumerate((_ROOT / "docker-compose.yml").read_text(encoding="utf-8").splitlines(), 1):
+        match = re.search(r"CODE_AGENTS_ENABLED:\s*\$\{CODE_AGENTS_ENABLED:-([^}]+)\}", line)
+        if match:
+            compose_line = i
+            compose_val = match.group(1).strip().lower()
+            break
+    sub_src = (_ROOT / "backend" / "subagents.py").read_text(encoding="utf-8")
+    match = re.search(
+        r'def code_agents_enabled\(\)[\s\S]*?os\.getenv\("CODE_AGENTS_ENABLED"\) or "([^"]+)"',
+        sub_src,
+    )
+    unset = match.group(1).lower() if match else None
+    # JSON false means the kill switch defaults off (same as code_agents_enabled()).
+    enabled_by_default = unset in ("1", "true", "yes", "on")
+    return {
+        "pilot_default": enabled_by_default,
+        "read_from": {
+            ".env.example": {"line": env_line, "value": env_val},
+            "docker-compose.yml": {"line": compose_line, "value": compose_val},
+            "backend/subagents.py:code_agents_enabled": {"unset_fallback": unset},
+        },
+    }
+
+
 def _config_snapshot() -> dict[str, Any]:
     from backend.governance import _high_risk_names
     from backend.mcp_client import mcp_tool_needs_approval
 
+    code_agents = _read_code_agents_default()
     return {
         "commit": _git("HEAD"),
         "CODE_AGENTS_ENABLED": {
-            "pilot_default": False,
-            "sources": [
-                ".env.example:47",
-                "docker-compose.yml:50",
-                "backend/subagents.py:code_agents_enabled()",
-            ],
+            "pilot_default": code_agents["pilot_default"],
+            "read_from": code_agents["read_from"],
             "demo_pinned_for_approval_step": "true",
             "demo_pinned_for_kill_switch_step": "false",
             "accepted_on": ["1", "true", "yes", "on"],
