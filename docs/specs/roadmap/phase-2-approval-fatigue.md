@@ -185,7 +185,7 @@ def test_policy_write_bumps_version(set_policy):
 
 ### 4.9 Acceptance
 
-- In a recorded 1-hour BCM desk session, the approval prompt count drops by 80 % or more compared with the baseline, and no WRITE or CRITICAL call slips through. Count it from `approval_requests` before and after.
+- In a recorded 1-hour desk session, the approval prompt count drops by 80 % or more compared with the baseline, and no WRITE or CRITICAL call slips through. Count it from `approval_requests` before and after.
 
 ---
 

@@ -85,7 +85,7 @@ def test_distill_log_entry_rejects_scheduled_automation():
             "session_id": "task_b2825bfb-64cc-4466-86fc-3766fec1cd87",
             "user_message": "Execute scheduled task: System Prompt: Autonomous AI Hedge Fund Manager",
             "assistant_response": "WAIT",
-            "traces": [{"agent": "bcm", "action": "Execute", "message": "ok", "status": "success"}],
+            "traces": [{"agent": "analyst", "action": "Execute", "message": "ok", "status": "success"}],
         })
 
 
@@ -97,7 +97,7 @@ def test_process_undistilled_logs_skips_scheduled_quietly(caplog):
         "session_id": "task_b2825bfb-64cc-4466-86fc-3766fec1cd87",
         "user_message": "Execute scheduled task: System Prompt: Autonomous AI Hedge Fund Manager",
         "assistant_response": "WAIT",
-        "traces": [{"agent": "bcm", "action": "Execute", "message": "ok", "status": "success"}],
+        "traces": [{"agent": "analyst", "action": "Execute", "message": "ok", "status": "success"}],
     }
     with patch("backend.database.db_get_undistilled_successful_logs", return_value=[scheduled]):
         with caplog.at_level("INFO"):

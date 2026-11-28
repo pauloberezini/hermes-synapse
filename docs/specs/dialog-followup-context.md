@@ -1,9 +1,9 @@
 # Dialog Follow-up Context — Spec
 
-**Status:** Draft
+**Status:** Core shipped; the private plugin is not in this product tree.
 **Date:** 2026-10-23
 **Scope:** When a human chat reply answers the assistant's previous question, the orchestration query must carry that previous turn. Scheduled cycles stay context-free.
-**Related precedent:** `backend/context_manager.py` (`sanitize_chat_history`, `build_subagent_messages`), `backend/skill_loop.py` (`_is_scheduled_automation_log`), `backend/bcm/plugin.py` (`planner_trading_rule`).
+**Related precedent:** `backend/context_manager.py` (`sanitize_chat_history`, `build_subagent_messages`), `backend/skill_loop.py` (`_is_scheduled_automation_log`). Optional plugin hook: `planner_trading_rule`.
 
 ---
 
@@ -138,7 +138,7 @@ digraph DialogFollowupContext {
   }
 
   subgraph cluster_plugin {
-    label="BCM plugin (private)" style="dashed" color="darkorange"
+    label="optional plugin hooks" style="dashed" color="darkorange"
     RULE [label="planner_trading_rule\ncontinuation exception" shape="component"]
   }
 

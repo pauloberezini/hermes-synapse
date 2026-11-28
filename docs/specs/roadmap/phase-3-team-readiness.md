@@ -175,7 +175,7 @@ def as_tenant(tenant_id: str): ...   # for scheduler, telegram bot, mesh inbound
 ```
 
 - The middleware sets `tenant_ctx` per request. Websocket connections set it once at connect.
-- Background jobs (`scheduler.py`, `bcm` session scheduler, Telegram `bot.py`) **must** wrap work in `as_tenant(...)`. A job definition row stores its `tenant_id`.
+- Background jobs (`scheduler.py`, Telegram `bot.py`) **must** wrap work in `as_tenant(...)`. A job definition row stores its `tenant_id`.
 - Telegram: map `chat_id → tenant_id` in a `channel_bindings` table. An unbound chat falls back to `default` only in solo mode. Otherwise the bot refuses.
 
 ### 8.3 Tables that gain `tenant_id TEXT NOT NULL DEFAULT 'default'`
@@ -235,7 +235,7 @@ def test_tenant_b_cannot_see_tenant_a_approvals(client, jwt_for):
 - `test_telegram_unbound_chat_refused_in_team_mode`
 - `test_rag_search_never_returns_other_tenant_docs`
 
-**`backend/tests/test_tenancy_sql_static.py`**: parses every SQL string literal in `backend/**/*.py` except `bcm/` and tests (`ast` walk over `Constant` nodes containing SELECT/UPDATE/DELETE). For each statement that touches a table in `TENANT_TABLES`, it asserts `tenant_id` appears. An allowlist covers migrations.
+**`backend/tests/test_tenancy_sql_static.py`**: parses every SQL string literal in `backend/**/*.py` except tests (`ast` walk over `Constant` nodes containing SELECT/UPDATE/DELETE). For each statement that touches a table in `TENANT_TABLES`, it asserts `tenant_id` appears. An allowlist covers migrations.
 
 **`backend/tests/test_tenancy_rls_pg.py`**: `@pytest.mark.postgres`, skipped without `TEST_DATABASE_URL`. It runs a raw `SELECT * FROM approval_requests` with `app.tenant_id='B'` and expects only B's rows. This proves RLS works even when code-level scoping is bypassed.
 
