@@ -221,7 +221,7 @@ docker compose up -d --build
 # OTP is sent to Telegram (dev fallback: backend/data/.current_otp)
 ```
 
-Step-by-step, Ollama, and auto-hire: [Getting started](/guide/getting-started).
+Step-by-step, Ollama, and auto-hire: [Getting started](/guide/getting-started). Customer VM (secrets, first approval, backup, rollback): [Pilot runbook](/pilot-runbook).
 
 ## Built by SupplyAlpha.ai
 

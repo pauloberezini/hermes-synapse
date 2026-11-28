@@ -19,7 +19,7 @@ def test_prod_compose_does_not_mount_docker_sock_or_publish_data_stores():
     assert "cap_drop" in text
     assert "no-new-privileges:true" in text
     assert "ENV: production" in text
-    assert "ALLOW_LOCAL_AUTH_FALLBACK" in text
+    assert "ALLOW_LOCAL_AUTH_FALLBACK: ${ALLOW_LOCAL_AUTH_FALLBACK:-0}" in text
 
 
 def test_docker_sock_overlay_is_opt_in_with_warning():
