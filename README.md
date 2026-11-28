@@ -227,7 +227,7 @@ SQLite and Postgres triggers abort `UPDATE`/`DELETE` on `approval_decisions` and
 
 ![GET /api/governance/decisions showing seq, event, actor, entry_hash, prev_hash](docs/assets/screenshots/decision-log-hash-chain-api.png)
 
-This is **tamper-evident**, not a signed or encrypted ledger. Someone who rewrites the whole chain *and* the copy of the head hash you kept can still pass an unpinned check. Pin the head.
+The zip export is **tamper-evident** when you pin the head hash, and it carries no signatures. Someone who rewrites the whole chain *and* the copy of the head hash you kept can still pass an unpinned zip check. Pin the head. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. This is not an encrypted ledger.
 
 ### Verify and export
 
@@ -275,7 +275,7 @@ python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 | **R2-6** | OTP sessions are not persisted across process restarts. |
 | **R3-1** | `COMPLEXITY_ROUTING` from the environment can leak into `backend/tests/test_agent.py` (test isolation, not a runtime bypass). |
 | Hash coverage | `bundle_hash` does not cover `description` / `links` / excerpts. |
-| Verifier | Tamper-evident with `--pin`. Not a signature. Not encrypted. |
+| Verifier | The zip export is tamper-evident with `--pin` and carries no signatures. The JSON export carries signatures on checkpoints. The signature check adds one package (cryptography). The private key lives on the same host as the log. Not encrypted. |
 | PIIGuard | Known regexes only. |
 
 Roadmap for gating the code agent, signed manifests, and persistent sessions: [ROADMAP.md](ROADMAP.md) and `docs/specs/approvals-demo-hardening-phase2.md`.
