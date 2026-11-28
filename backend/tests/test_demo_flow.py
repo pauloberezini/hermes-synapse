@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from backend.governance import ApprovalQueue, HIGH_RISK_TOOLS
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -22,10 +24,12 @@ def _demo():
     return mod
 
 
-def test_demo_flow_headless(tmp_path: Path) -> None:
+def test_demo_flow_headless(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     demo = _demo()
     assert "execute_command" in HIGH_RISK_TOOLS
     assert "execute_code" in HIGH_RISK_TOOLS
+    # Pilot default is fail-safe false. The stand must not depend on it.
+    monkeypatch.setenv("CODE_AGENTS_ENABLED", "false")
 
     result = demo.run_demo_flow(export_dir=tmp_path, log=lambda *_a, **_k: None)
 
@@ -40,6 +44,9 @@ def test_demo_flow_headless(tmp_path: Path) -> None:
     assert result.replay_status == "PENDING_APPROVAL"
     assert result.replay_request_id != result.approve_request_id
     assert ApprovalQueue.get_status(result.replay_request_id) == "PENDING"
+
+    assert result.kill_switch_status == "DISABLED"
+    assert result.kill_switch_sandbox_posts == 1
 
     events = [event for _seq, event, _actor in result.events]
     assert events.count("REQUESTED") >= 3
@@ -68,7 +75,7 @@ def test_demo_cli_headless(tmp_path: Path) -> None:
     env["HERMES_DEMO_DB"] = str(db)
     env["HERMES_DEMO_EXPORT"] = str(export_dir)
     env["PYTHONPATH"] = str(_ROOT)
-    env["CODE_AGENTS_ENABLED"] = "true"
+    env["CODE_AGENTS_ENABLED"] = "false"
     proc = subprocess.run(
         [sys.executable, str(_ROOT / "scripts" / "demo.py")],
         cwd=str(_ROOT),
@@ -84,6 +91,11 @@ def test_demo_cli_headless(tmp_path: Path) -> None:
     assert "status=REJECTED" in proc.stdout
     assert "status=CONSUMED" in proc.stdout
     assert "entry_hash mismatch" in proc.stdout
+    assert "R1-2 gate_tool stopped execute_code" in proc.stdout
+    assert "CODE_AGENTS_ENABLED=true (explicit, approval path)" in proc.stdout
+    assert "CODE_AGENTS_ENABLED=true (explicit, consume path)" in proc.stdout
+    assert "CODE_AGENTS_ENABLED=false (explicit, kill switch)" in proc.stdout
+    assert "status=DISABLED" in proc.stdout
 
 
 def test_makefile_has_demo_targets() -> None:
@@ -102,9 +114,31 @@ def test_demo_offline_verify_goes_through_wrapper() -> None:
     assert "verify_decision_log.py" in wrapper
 
 
+def test_demo_media_files_exist() -> None:
+    media = _ROOT / "docs" / "demo" / "media"
+    names = (
+        "make-demo.cast",
+        "make-demo.gif",
+        "make-demo.svg",
+        "ui-pending-execute-code.png",
+        "ui-approved-rejected.png",
+        "kill-switch-disabled.png",
+        "verify-ok-tamper-fail.png",
+    )
+    for name in names:
+        path = media / name
+        assert path.is_file(), name
+        assert path.stat().st_size > 100, name
+    assert (media / "make-demo.gif").stat().st_size < 3 * 1024 * 1024
+
+
 def test_demo_guide_drops_false_security_claims() -> None:
     guide = (_ROOT / "docs" / "demo" / "DEMO.md").read_text(encoding="utf-8")
     assert "make demo" in guide
     assert "scripted" in guide.lower()
+    assert "R1-2" in guide
+    assert "CODE_AGENTS_ENABLED=false" in guide
+    assert "CODE_AGENTS_ENABLED=true" in guide
+    assert "./media/" in guide
     for banned in ("chain intact", "encrypted", "signed manifest"):
         assert banned not in guide, banned

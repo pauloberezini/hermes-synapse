@@ -73,11 +73,20 @@ make demo
 
 **Optional UI:** Governance Approvals → expand evidence → **Reject**. A live retry needs the model to emit the same tool call again.
 
-## 1:30–3:30 — Approve path (one-time, payload-bound)
+## 1:30–3:20 — R1-2 approve path (`execute_code` at `gate_tool`)
 
-**Show:** the second PENDING row, `execute_code` / `print('hermes-demo-ok')`, agent `Code Engineer`, session `demo-approve`. Different payload, different `bundle_hash`.
+**Show:** the second PENDING row. This is R1-2: `execute_code` is in `HIGH_RISK_TOOLS` and `gate_tool` stops it before the sandbox.
 
-**Say:** Approve does **not** run the tool. The original call already returned `PENDING_APPROVAL`. The next identical call consumes the row once.
+**Say:** Code Engineer tried `print('hermes-demo-ok')`. You see the exact source, session `demo-approve`, and `bundle_hash`. Approve does **not** run the tool. The original call already returned `PENDING_APPROVAL`. The next identical call consumes the row once.
+
+**Expect:**
+
+```text
+[demo] CODE_AGENTS_ENABLED=true (explicit, approval path)
+[demo] R1-2 scripted Code Engineer → execute_code print('hermes-demo-ok')
+[demo] R1-2 gate_tool stopped execute_code: status=PENDING_APPROVAL payload={"code": "print('hermes-demo-ok')"}
+[demo]   CLAIM action=execute_code payload={"code": "print('hermes-demo-ok')"}
+```
 
 **Expect after Approve, before retry:**
 
@@ -103,7 +112,27 @@ make demo
 
 **Optional UI:** **Approve** (or `A` when focused) with a resolver note. Re-send the same chat. All tab shows `APPROVED` → `CONSUMED`. A third send is a new badge count.
 
-## 3:30–5:30 — Decision log, export, pin
+![Governance Approvals showing a pending execute_code payload](./media/ui-pending-execute-code.png)
+
+![Governance Approvals All tab after reject and approve](./media/ui-approved-rejected.png)
+
+## 3:20–3:40 — R1-2 kill switch (`CODE_AGENTS_ENABLED=false`)
+
+**Show:** the real `code_agents_enabled()` check. The stand sets `CODE_AGENTS_ENABLED=true` on every approval/`execute_code` step and `false` on this beat, so a fail-safe process default cannot change the story. `false` is not in `{1, true, yes, on}`, so it fails closed **before** `gate_tool` and **before** the sandbox POST.
+
+**Say:** Flip the kill switch. Same `execute_code` call comes back `DISABLED`. No new approval row. Sandbox post count stays 1.
+
+**Expect:**
+
+```text
+[demo] CODE_AGENTS_ENABLED=false (explicit, kill switch)
+[demo] R1-2 CODE_AGENTS_ENABLED=false → status=DISABLED success=False sandbox_posts=1
+[demo] R1-2 stderr='Code execution disabled (CODE_AGENTS_ENABLED).'
+```
+
+![Terminal: CODE_AGENTS_ENABLED=false refuses execute_code as DISABLED](./media/kill-switch-disabled.png)
+
+## 3:40–5:30 — Decision log, export, pin
 
 **Show:** the seq list.
 
@@ -141,11 +170,20 @@ FAIL seq=<n> entry_hash mismatch
 
 exit 1. In-DB `verify` on the untouched demo DB is still ok — we tampered the export, not the live chain.
 
+![Offline verify ok, then a tampered zip fails](./media/verify-ok-tamper-fail.png)
+
+## Recorded run
+
+- Asciinema: [make-demo.cast](./media/make-demo.cast) (`asciinema play docs/demo/media/make-demo.cast`)
+- Animated terminal: ![make demo](./media/make-demo.gif)
+
+No OTP, tokens, or API keys in these files. The UI shots are Playwright against a local backend+frontend with a scripted session token; the terminal artifacts are `make demo` itself.
+
 ## 6:40–7:00 — Close
 
 **Say:**
 
-1. Risky tools stop at the gate.
+1. Risky tools stop at the gate. R1-2: `execute_code` waits; `CODE_AGENTS_ENABLED=false` is `DISABLED`.
 2. Humans see the payload. Reject sticks. Approve is one-shot and payload-bound.
 3. The export is checkable offline. Tampering a row without rewriting the whole chain fails. Pin the head.
 

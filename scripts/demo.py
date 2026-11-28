@@ -38,6 +38,11 @@ OPERATOR_NOTE_APPROVE = "Read-only print. OK once."
 Log = Callable[..., None]
 
 
+def _code_agents(enabled: bool) -> None:
+    """Pin the kill switch. Do not rely on the process default (pilot is fail-safe)."""
+    os.environ["CODE_AGENTS_ENABLED"] = "true" if enabled else "false"
+
+
 @dataclass
 class DemoResult:
     """Observable outcomes of one demo walkthrough."""
@@ -59,6 +64,8 @@ class DemoResult:
     head_hash: str
     offline_ok: str
     offline_tamper: str
+    kill_switch_status: str
+    kill_switch_sandbox_posts: int
     events: list[tuple[int, str, str]] = field(default_factory=list)
     export_path: Path | None = None
     tamper_path: Path | None = None
@@ -135,8 +142,6 @@ def seed_pending(log: Log = print) -> tuple[int, int]:
     from backend.subagents import execute_code
     from backend.tools import execute_tool
 
-    os.environ["CODE_AGENTS_ENABLED"] = "true"
-
     log("[demo] scripted Sys Ops → execute_command", REJECT_COMMAND)
     with approval_context("Sys Ops", f"Delete the demo resource: {REJECT_COMMAND}", "sysops"):
         reject_raw = execute_tool(
@@ -148,7 +153,9 @@ def seed_pending(log: Log = print) -> tuple[int, int]:
     if reject_body.get("status") != "PENDING_APPROVAL":
         raise RuntimeError(f"expected PENDING_APPROVAL for delete, got {reject_body}")
 
-    log("[demo] scripted Code Engineer → execute_code", APPROVE_CODE)
+    log("[demo] R1-2 scripted Code Engineer → execute_code", APPROVE_CODE)
+    _code_agents(True)
+    log("[demo] CODE_AGENTS_ENABLED=true (explicit, approval path)")
     token = budget_session.set(APPROVE_SESSION)
     try:
         with approval_context("Code Engineer", f"Run {APPROVE_CODE}", "code_agent"):
@@ -157,6 +164,10 @@ def seed_pending(log: Log = print) -> tuple[int, int]:
         budget_session.reset(token)
     if approve_body.get("status") != "PENDING_APPROVAL":
         raise RuntimeError(f"expected PENDING_APPROVAL for execute_code, got {approve_body}")
+    log(
+        "[demo] R1-2 gate_tool stopped execute_code: "
+        f"status={approve_body.get('status')} payload={{\"code\": {APPROVE_CODE!r}}}"
+    )
 
     return int(reject_body["request_id"]), int(approve_body["request_id"])
 
@@ -233,7 +244,6 @@ def run_demo_flow(
     from backend.tools import execute_tool
     from backend import decision_log as dl
 
-    os.environ["CODE_AGENTS_ENABLED"] = "true"
     logging.getLogger("hermes.subagents").setLevel(logging.ERROR)
     logging.getLogger("hermes.governance").setLevel(logging.ERROR)
     out_dir = Path(export_dir) if export_dir is not None else Path(
@@ -304,6 +314,8 @@ def run_demo_flow(
             raise RuntimeError("sandbox ran on Approve")
 
         beat("2:50  Re-send identical payload → CONSUMED once")
+        _code_agents(True)
+        log("[demo] CODE_AGENTS_ENABLED=true (explicit, consume path)")
         token = budget_session.set(APPROVE_SESSION)
         try:
             with approval_context("Code Engineer", f"Run {APPROVE_CODE}", "code_agent"):
@@ -317,6 +329,8 @@ def run_demo_flow(
             raise RuntimeError(f"expected one consume, status={consumed_status} posts={sandbox_mock.call_count}")
 
         beat("3:20  Same call again is not a replay — new PENDING")
+        _code_agents(True)
+        log("[demo] CODE_AGENTS_ENABLED=true (explicit, replay path)")
         token = budget_session.set(APPROVE_SESSION)
         try:
             replay = execute_code(APPROVE_CODE)
@@ -329,6 +343,24 @@ def run_demo_flow(
             raise RuntimeError("replay reused the consumed approval")
         if sandbox_mock.call_count != 1:
             raise RuntimeError("sandbox ran on replay")
+
+        beat("3:30  R1-2 kill switch CODE_AGENTS_ENABLED=false")
+        _code_agents(False)
+        log("[demo] CODE_AGENTS_ENABLED=false (explicit, kill switch)")
+        token = budget_session.set("demo-kill-switch")
+        try:
+            disabled = execute_code("print('should-not-run')")
+        finally:
+            budget_session.reset(token)
+        log(
+            f"[demo] R1-2 CODE_AGENTS_ENABLED=false → status={disabled.get('status')} "
+            f"success={disabled.get('success')} sandbox_posts={sandbox_mock.call_count}"
+        )
+        log(f"[demo] R1-2 stderr={disabled.get('stderr')!r}")
+        if disabled.get("status") != "DISABLED":
+            raise RuntimeError(f"expected DISABLED, got {disabled}")
+        if sandbox_mock.call_count != 1:
+            raise RuntimeError("sandbox ran under kill switch")
 
         beat("3:40  Decision log (SHA-256 hash chain)")
         events = _decision_events()
@@ -362,6 +394,7 @@ def run_demo_flow(
 
         beat("6:40  Recap")
         log("[demo] rejected delete never ran; approved code ran once; replay is a new PENDING")
+        log("[demo] R1-2: execute_code waits at gate_tool; CODE_AGENTS_ENABLED=false is DISABLED")
         log("[demo] chain is tamper-evident, not signed. Pin the head hash.")
         log("[demo] DEMO_OK")
 
@@ -383,6 +416,8 @@ def run_demo_flow(
         head_hash=checked.head_hash,
         offline_ok=(offline.stdout or "").strip(),
         offline_tamper=(tampered.stderr or "").strip(),
+        kill_switch_status=str(disabled.get("status")),
+        kill_switch_sandbox_posts=sandbox_mock.call_count,
         events=events,
         export_path=export_path,
         tamper_path=tamper_path,

@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1364" viewBox="0 0 920 1364" role="img" aria-label="make demo">
+<rect width="100%" height="100%" fill="#0b1220"/>
+<style>text{font:13px "DejaVu Sans Mono", ui-monospace, monospace}</style>
+<text x="16" y="29" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.0s" dur="0.01s" fill="freeze"/>[demo] SCRIPTED AGENT — no LLM, no API keys</text>
+<text x="16" y="47" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.07s" dur="0.01s" fill="freeze"/>[demo] real modules: gate_tool, HIGH_RISK_TOOLS, ApprovalQueue, decision_log</text>
+<text x="16" y="65" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.14s" dur="0.01s" fill="freeze"/>[demo] mocked: backend.tools.execute_command, sandbox HTTP POST</text>
+<text x="16" y="83" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.21s" dur="0.01s" fill="freeze"/>[demo] there is no send_payment tool; delete is execute_command, code is execute_code</text>
+<text x="16" y="101" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.28s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="119" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.35s" dur="0.01s" fill="freeze"/>=== 0:00  Honesty label ===</text>
+<text x="16" y="137" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.42s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="155" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.49s" dur="0.01s" fill="freeze"/>=== 0:30  Reject path — risky execute_command ===</text>
+<text x="16" y="173" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.56s" dur="0.01s" fill="freeze"/>[demo] scripted Sys Ops → execute_command rm -rf /var/lib/hermes-demo</text>
+<text x="16" y="191" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.63s" dur="0.01s" fill="freeze"/>[demo] R1-2 scripted Code Engineer → execute_code print('hermes-demo-ok')</text>
+<text x="16" y="209" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.7s" dur="0.01s" fill="freeze"/>[demo] CODE_AGENTS_ENABLED=true (explicit, approval path)</text>
+<text x="16" y="227" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.77s" dur="0.01s" fill="freeze"/>[demo] R1-2 gate_tool stopped execute_code: status=PENDING_APPROVAL payload={"code": "print('hermes-demo-ok')"}</text>
+<text x="16" y="245" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.84s" dur="0.01s" fill="freeze"/>[demo] request #1 status=PENDING</text>
+<text x="16" y="263" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.91s" dur="0.01s" fill="freeze"/>[demo]   CLAIM agent='Sys Ops' session='demo-reject'</text>
+<text x="16" y="281" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="0.98s" dur="0.01s" fill="freeze"/>[demo]   CLAIM action=execute_command payload={"command": "rm -rf /var/lib/hermes-demo"}</text>
+<text x="16" y="299" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.05s" dur="0.01s" fill="freeze"/>[demo]   CLAIM bundle_hash=00abb1547e108409cc43cfd60784f77726123c9770b796f8f81560378fb8c493</text>
+<text x="16" y="317" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.12s" dur="0.01s" fill="freeze"/>[demo]   SOURCE plan.agent='sysops' flags=['direct_route']</text>
+<text x="16" y="335" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.19s" dur="0.01s" fill="freeze"/>[demo]   SOURCE instructions='Delete the demo resource: rm -rf /var/lib/hermes-demo'</text>
+<text x="16" y="353" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.26s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="371" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.33s" dur="0.01s" fill="freeze"/>=== 1:10  Human rejects the delete ===</text>
+<text x="16" y="389" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.4s" dur="0.01s" fill="freeze"/>[demo] operator REJECTED #1 note='Destructive delete. Rejected for this session.'</text>
+<text x="16" y="407" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.47s" dur="0.01s" fill="freeze"/>[demo] retry identical payload (same session)</text>
+<text x="16" y="425" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.54s" dur="0.01s" fill="freeze"/>[demo] retry status=REJECTED request_id=1</text>
+<text x="16" y="443" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.61s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="461" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.68s" dur="0.01s" fill="freeze"/>=== 1:30  Approve path — execute_code ===</text>
+<text x="16" y="479" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.75s" dur="0.01s" fill="freeze"/>[demo] request #2 status=PENDING</text>
+<text x="16" y="497" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.82s" dur="0.01s" fill="freeze"/>[demo]   CLAIM agent='Code Engineer' session='demo-approve'</text>
+<text x="16" y="515" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.89s" dur="0.01s" fill="freeze"/>[demo]   CLAIM action=execute_code payload={"code": "print('hermes-demo-ok')"}</text>
+<text x="16" y="533" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="1.96s" dur="0.01s" fill="freeze"/>[demo]   CLAIM bundle_hash=45ac61d2c57b6d7a691b6fdab4ed600271965e42795fb6a00aef773894ffce29</text>
+<text x="16" y="551" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.03s" dur="0.01s" fill="freeze"/>[demo]   SOURCE plan.agent='code_agent' flags=['direct_route']</text>
+<text x="16" y="569" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.1s" dur="0.01s" fill="freeze"/>[demo]   SOURCE instructions="Run print('hermes-demo-ok')"</text>
+<text x="16" y="587" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.17s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="605" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.24s" dur="0.01s" fill="freeze"/>=== 2:20  Human approves. Approve does not run the tool. ===</text>
+<text x="16" y="623" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.31s" dur="0.01s" fill="freeze"/>[demo] operator APPROVED #2 note='Read-only print. OK once.'</text>
+<text x="16" y="641" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.38s" dur="0.01s" fill="freeze"/>[demo] status=APPROVED sandbox_posts=0 (must be 0)</text>
+<text x="16" y="659" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.45s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="677" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.52s" dur="0.01s" fill="freeze"/>=== 2:50  Re-send identical payload → CONSUMED once ===</text>
+<text x="16" y="695" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.59s" dur="0.01s" fill="freeze"/>[demo] CODE_AGENTS_ENABLED=true (explicit, consume path)</text>
+<text x="16" y="713" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.66s" dur="0.01s" fill="freeze"/>[demo] execute_code → success=True stdout='hermes-demo-ok\n'</text>
+<text x="16" y="731" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.73s" dur="0.01s" fill="freeze"/>[demo] request #2 status=CONSUMED sandbox_posts=1</text>
+<text x="16" y="749" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.8s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="767" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.87s" dur="0.01s" fill="freeze"/>=== 3:20  Same call again is not a replay — new PENDING ===</text>
+<text x="16" y="785" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="2.94s" dur="0.01s" fill="freeze"/>[demo] CODE_AGENTS_ENABLED=true (explicit, replay path)</text>
+<text x="16" y="803" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.01s" dur="0.01s" fill="freeze"/>[demo] replay status=PENDING_APPROVAL request_id=3</text>
+<text x="16" y="821" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.08s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="839" fill="#f59e0b" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.15s" dur="0.01s" fill="freeze"/>=== 3:30  R1-2 kill switch CODE_AGENTS_ENABLED=false ===</text>
+<text x="16" y="857" fill="#f59e0b" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.22s" dur="0.01s" fill="freeze"/>[demo] CODE_AGENTS_ENABLED=false (explicit, kill switch)</text>
+<text x="16" y="875" fill="#f59e0b" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.29s" dur="0.01s" fill="freeze"/>[demo] R1-2 CODE_AGENTS_ENABLED=false → status=DISABLED success=False sandbox_posts=1</text>
+<text x="16" y="893" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.36s" dur="0.01s" fill="freeze"/>[demo] R1-2 stderr='Code execution disabled (CODE_AGENTS_ENABLED).'</text>
+<text x="16" y="911" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.43s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="929" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.5s" dur="0.01s" fill="freeze"/>=== 3:40  Decision log (SHA-256 hash chain) ===</text>
+<text x="16" y="947" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.57s" dur="0.01s" fill="freeze"/>[demo]   seq=1 event=REQUESTED actor=agent:demo-reject</text>
+<text x="16" y="965" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.64s" dur="0.01s" fill="freeze"/>[demo]   seq=2 event=REQUESTED actor=agent:demo-approve</text>
+<text x="16" y="983" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.71s" dur="0.01s" fill="freeze"/>[demo]   seq=3 event=REJECTED actor=demo-operator</text>
+<text x="16" y="1001" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.78s" dur="0.01s" fill="freeze"/>[demo]   seq=4 event=APPROVED actor=demo-operator</text>
+<text x="16" y="1019" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.85s" dur="0.01s" fill="freeze"/>[demo]   seq=5 event=CONSUMED actor=system</text>
+<text x="16" y="1037" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.92s" dur="0.01s" fill="freeze"/>[demo]   seq=6 event=REQUESTED actor=agent:demo-approve</text>
+<text x="16" y="1055" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="3.99s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="1073" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.06s" dur="0.01s" fill="freeze"/>=== 4:20  In-process verify ===</text>
+<text x="16" y="1091" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.13s" dur="0.01s" fill="freeze"/>[demo] verify ok=True checked=6 head=061b26c916bfecc9db0b4974307cfb263280c0b5eceef6d607741e339556d4bf</text>
+<text x="16" y="1109" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.2s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="1127" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.27s" dur="0.01s" fill="freeze"/>=== 4:50  Export + offline scripts/demo_verify.py --pin ===</text>
+<text x="16" y="1145" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.34s" dur="0.01s" fill="freeze"/>[demo] export /agent/repos/hermes-synapse/backend/data/demo/hermes-decisions-default-2026-11-28-2026-11-28.zip</text>
+<text x="16" y="1163" fill="#10b981" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.41s" dur="0.01s" fill="freeze"/>[demo] offline ok checked=6 head=061b26c916bfecc9db0b4974307cfb263280c0b5eceef6d607741e339556d4bf</text>
+<text x="16" y="1181" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.48s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="1199" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.55s" dur="0.01s" fill="freeze"/>=== 5:40  Tamper one record — verification breaks ===</text>
+<text x="16" y="1217" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.62s" dur="0.01s" fill="freeze"/>[demo] rewrote reason on seq=1 in decisions.tampered.zip</text>
+<text x="16" y="1235" fill="#ef4444" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.69s" dur="0.01s" fill="freeze"/>[demo] offline tamper FAIL seq=1 entry_hash mismatch</text>
+<text x="16" y="1253" fill="#c8d0dc" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.76s" dur="0.01s" fill="freeze"/></text>
+<text x="16" y="1271" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.83s" dur="0.01s" fill="freeze"/>=== 6:40  Recap ===</text>
+<text x="16" y="1289" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.9s" dur="0.01s" fill="freeze"/>[demo] rejected delete never ran; approved code ran once; replay is a new PENDING</text>
+<text x="16" y="1307" fill="#f59e0b" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="4.97s" dur="0.01s" fill="freeze"/>[demo] R1-2: execute_code waits at gate_tool; CODE_AGENTS_ENABLED=false is DISABLED</text>
+<text x="16" y="1325" fill="#00f0ff" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.04s" dur="0.01s" fill="freeze"/>[demo] chain is tamper-evident, not signed. Pin the head hash.</text>
+<text x="16" y="1343" fill="#10b981" xml:space="preserve"><animate attributeName="opacity" from="0" to="1" begin="5.11s" dur="0.01s" fill="freeze"/>[demo] DEMO_OK</text>
+</svg>
