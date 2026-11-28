@@ -7,6 +7,7 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 ## 🚀 [Unreleased]
 
 ### 🛡️ Pilot compose hardening
+- OpenAPI-to-MCP proxy (`backend/mcp_openapi_proxy.py`) has no default host; unset `OPENAPI_URL` exits instead of calling a third-party URL.
 - Default `docker-compose.yml` requires `POSTGRES_PASSWORD`, `QDRANT_API_KEY`, and `JWT_SECRET`; refuses known defaults at backend startup when `ENV=production`.
 - Postgres, Qdrant, and the backend API are no longer published. Dashboard binds to `127.0.0.1:9119`.
 - `/var/run/docker.sock` removed; opt-in overlay `docker-compose.docker-sock.yml` with a warning sidecar.

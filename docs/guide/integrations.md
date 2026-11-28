@@ -25,7 +25,7 @@ The dashboard MCP tab and `backend/mcp_client.py` connect to servers listed in `
 
 Write-shaped MCP tools wait for a human. A tool skips the gate only when its annotations say `readOnlyHint: true` or `destructiveHint: false`. Missing annotations follow MCP defaults (not read-only, destructive) and wait.
 
-An OpenAPI-to-MCP helper lives at `backend/mcp_openapi_proxy.py` if you need to wrap a REST spec. It is a helper, not a hosted third-party service we ship.
+An OpenAPI-to-MCP helper lives at `backend/mcp_openapi_proxy.py` if you need to wrap a REST spec. Set `OPENAPI_URL` (and `AUTH_TOKEN_URL` if the spec needs a token). There is no default host: an unset `OPENAPI_URL` exits the proxy instead of calling an external service.
 
 ## Plugin boundary and SDK
 
