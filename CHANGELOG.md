@@ -6,6 +6,10 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 
 ## 🚀 [Unreleased]
 
+### 🎬 7-minute demo stand
+- `make demo` / `make demo-reset` run a scripted agent against real `gate_tool`, payload-bound approve/reject, and offline decision-log verify (no LLM keys; risky tool bodies mocked).
+- Talk track: `docs/demo/DEMO.md`. Headless coverage: `backend/tests/test_demo_flow.py`.
+
 ### 🛡️ R1-2: gate `execute_code`
 - Code Engineer / Data Analyst sandbox calls go through `gate_tool` (permission intersection, one-shot payload-bound HITL, decision log).
 - Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set.

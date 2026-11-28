@@ -119,6 +119,7 @@ export default defineConfig({
         items: [
           { text: 'Quick start', link: '/guide/getting-started' },
           { text: 'Approvals walkthrough', link: '/guide/approvals' },
+          { text: '7-minute demo', link: '/demo/DEMO' },
           { text: 'Video demos', link: '/videos/' },
         ],
       },

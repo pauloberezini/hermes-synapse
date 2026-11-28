@@ -7,6 +7,8 @@ description: Human-in-the-loop approvals in Hermes Synapse - evidence bundles, C
 
 This guide walks through human-in-the-loop governance in Hermes Synapse: tool calls that need authorization capture evidence bundles, record a tamper-evident decision log, and can be checked offline.
 
+A 7-minute stand with no LLM keys: `make demo`. Talk track: [DEMO.md](../demo/DEMO.md).
+
 ---
 
 ## 1. Overview & Architecture

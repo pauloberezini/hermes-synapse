@@ -79,6 +79,7 @@ coverage.xml
 *.py,cover
 
 # Project specific
+backend/data/demo/
 backend/data/*.db
 backend/data/*.sqlite
 backend/data/*.db-wal

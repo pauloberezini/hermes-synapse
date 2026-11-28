@@ -323,7 +323,9 @@ docker compose -f docker-compose.dev.yml up
 
 ## Demo walkthrough
 
-Use Sys Ops (`shell_execution` → `execute_command`) or Code Engineer (`python_sandbox` → `execute_code`). Both wait for Approve, then a retry of the identical payload. Never put a real key in the prompt.
+No LLM key, no Docker: **`make demo`**. Scripted agent, real `gate_tool`, mocked tool bodies. Talk track: [docs/demo/DEMO.md](docs/demo/DEMO.md). `make demo-reset` wipes the isolated demo DB.
+
+A live dashboard run still uses Sys Ops (`shell_execution` → `execute_command`) or Code Engineer (`python_sandbox` → `execute_code`). Both wait for Approve, then a retry of the identical payload. Never put a real key in the prompt.
 
 1. New chat, for example "Disk check". Send: `Ask Sys Ops to run \`df -h /\` on the server.`
 2. Execution stops. The Approvals badge counts up. Open **Governance Approvals**.
