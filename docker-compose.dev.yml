@@ -29,6 +29,7 @@ services:
       # DEV ONLY: code agents on so local iteration can hit the sandbox.
       # Pilot compose (docker-compose.yml) defaults this to false.
       CODE_AGENTS_ENABLED: "true"
+      HERMES_REQUIRE_SIGNING: ${HERMES_REQUIRE_SIGNING:-false}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       LLM_API_BASE: ${LLM_API_BASE:-https://openrouter.ai/api/v1}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -41,6 +42,7 @@ services:
     volumes:
       # Mount backend source for hot-reload
       - ./backend:/app/backend
+      - ./hermes_audit_verify.py:/app/hermes_audit_verify.py
       - ./.env:/app/.env
     depends_on:
       - qdrant

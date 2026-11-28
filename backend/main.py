@@ -132,6 +132,8 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB, Qdrant/RAG and run the Telegram bot
     from backend.database import init_db
     init_db()
+    from backend.audit_signing import enforce_install_key
+    enforce_install_key()
     
     from backend.rag import init_rag
     init_rag()
@@ -1019,6 +1021,40 @@ async def export_decisions_api(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+def _signing_unavailable() -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": "signing unavailable"})
+
+
+@app.get("/api/governance/decisions/export.signed.json")
+async def export_signed_decisions_api(
+    since: Optional[str] = Query(default=None, alias="from"),
+    until: Optional[str] = Query(default=None, alias="to"),
+    tenant: str = "default",
+) -> Response:
+    """Download a signed JSON audit bundle (records + checkpoints + public key)."""
+    from backend.audit_signing import SigningUnavailable
+    from backend.decision_log import export_signed_bundle
+
+    try:
+        body, filename = export_signed_bundle(tenant, since=since, until=until)
+    except SigningUnavailable:
+        return _signing_unavailable()
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.get("/api/governance/audit/key")
+async def audit_key_api():
+    """Read-only installation public key and fingerprint. Auth via existing middleware."""
+    from backend.audit_signing import SigningUnavailable, ensure_install_key
+
+    try:
+        return ensure_install_key().public_info()
+    except SigningUnavailable:
+        return _signing_unavailable()
 
 @app.post("/api/governance/approvals/{request_id}/resolve")
 async def resolve_approval_api(

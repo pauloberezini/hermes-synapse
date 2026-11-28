@@ -7,6 +7,8 @@ description: Human-in-the-loop approvals in Hermes Synapse - evidence bundles, C
 
 This guide walks through human-in-the-loop governance in Hermes Synapse: tool calls that need authorization capture evidence bundles, record a tamper-evident decision log, and can be checked offline.
 
+A 7-minute stand with no LLM keys: `make demo`. Talk track: [DEMO.md](../demo/DEMO.md).
+
 ---
 
 ## 1. Overview & Architecture
@@ -145,3 +147,5 @@ If a row or hash was altered, the script prints `FAIL seq=N reason` to stderr an
 | `/api/governance/decisions/verify` | `GET` | Run in-database chain verification |
 | `/api/governance/decisions/export` | `GET` | Export the audit zip (`decisions.jsonl`, evidence, manifest, `VERIFY.md`) |
 | `/api/governance/decisions/export.zip` | `GET` | Same archive as `/export` |
+| `/api/governance/decisions/export.signed.json` | `GET` | Signed JSON bundle (records + checkpoints + public key). Offline: `python -m hermes_audit_verify`. See [signed audit log](../security/signed-audit-log.md). |
+| `/api/governance/audit/key` | `GET` | Installation public key and fingerprint |

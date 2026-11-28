@@ -12,6 +12,7 @@ _temp_db_dir = tempfile.mkdtemp(prefix="jarvis_pytest_")
 _temp_db_path = os.path.join(_temp_db_dir, "test_hermes.db")
 
 os.environ["DATABASE_URL"] = ""
+os.environ["HERMES_AUDIT_KEY_PATH"] = os.path.join(_temp_db_dir, "audit_ed25519.key")
 
 # Tests run inside the live container inherit prod secrets: never let a test
 # send real notifications.
@@ -63,6 +64,11 @@ def clean_test_database():
     _assert_test_db_isolation()
 
     db_mod.init_db()
+    try:
+        from backend.audit_signing import reset_for_tests
+        reset_for_tests()
+    except Exception:
+        pass
     with backend.connect() as conn:
         cur = conn.cursor()
         for trigger in (
@@ -74,7 +80,7 @@ def clean_test_database():
                 cur.execute(f"DROP TRIGGER IF EXISTS {trigger}")
             except Exception:
                 pass
-        for table in ["app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_evidence", "approval_requests", "approval_decisions", "auth_sessions", "auth_otp"]:
+        for table in ["app_settings", "tasks", "subagent_memory", "session_metadata", "rss_feed_items", "graph_nodes", "graph_edges", "messages", "market_activity", "distilled_skills", "subagents", "approval_evidence", "approval_requests", "approval_decisions", "decision_log_checkpoints", "auth_sessions", "auth_otp"]:
             try:
                 cur.execute(f"DELETE FROM {table}")
             except Exception:

@@ -1,0 +1,12 @@
+@page { size: A4; margin: 10mm 13mm; }
+body { font-family: "DejaVu Sans", sans-serif; font-size: 7.6pt; line-height: 1.25; color:#111; }
+h1 { font-size: 14pt; margin: 0 0 3pt; font-weight: 700; }
+h2 { font-size: 10pt; margin: 7pt 0 2pt; font-weight: 700; }
+p { margin: 0 0 3.5pt; }
+ul { margin: 0 0 3pt; padding-left: 14pt; }
+li { margin: 0 0 2pt; }
+code { font-size: 7.2pt; font-family: "DejaVu Sans Mono", monospace; }
+pre { font-family: "DejaVu Sans Mono", monospace; font-size: 7.2pt; line-height: 1.3; margin: 2pt 0 4pt; padding: 3pt 6pt; background: #f4f4f4; white-space: pre-wrap; }
+pre code { font-size: 7.2pt; }
+a { color:#1a4fa0; text-decoration:none; }
+strong { font-weight: 700; }

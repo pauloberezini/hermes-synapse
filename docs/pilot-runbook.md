@@ -77,6 +77,7 @@ cp .env.example .env
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `TELEGRAM_ADMIN_ID` | production OTP | BotFather + `@userinfobot` |
 | `ALLOW_LOCAL_AUTH_FALLBACK` | no Telegram | set `1` so `/api/auth/request-code` writes `/app/backend/data/.current_otp` |
 | `CODE_AGENTS_ENABLED` | no | **off by default.** Set `true` only if you want Code Engineer / Data Analyst sandbox execution (still HITL-gated). Unset and unrecognised values fail closed |
+| `HERMES_REQUIRE_SIGNING` | no | **off by default.** Set `true` only after the Ed25519 key exists on `backend_data` and you have pinned the fingerprint. Unset keeps generate-on-first-use |
 | `POSTGRES_USER` / `POSTGRES_DB` | no | default `hermes` / `hermes` |
 
 Generate the three compose secrets (do not reuse the sample output):
@@ -332,9 +333,15 @@ python3 scripts/verify_decision_log.py decisions.zip
 python3 scripts/verify_decision_log.py decisions.zip --pin H
 ```
 
-Zip layout: `decisions.jsonl`, `evidence/<id>.json`, `manifest.json`, `VERIFY.md`. Exit 0 = chain + evidence hashes match. `--pin` fails if that `entry_hash` is missing (truncated tail). Tamper-evident, not a signature.
+Zip layout: `decisions.jsonl`, `evidence/<id>.json`, `manifest.json`, `VERIFY.md`. Exit 0 = chain + evidence hashes match. `--pin` fails if that `entry_hash` is missing (truncated tail). The zip export is tamper-evident when you pin the head hash and carries no signatures. The JSON export carries signatures on checkpoints. The zip export is tamper-evident with `--pin` and carries no signatures. The signature check adds one package (cryptography). The private key lives on the same host as the log.
 
 Verified here: `ok checked=3` then `--pin` on the 64-char head.
+
+## Fail-closed signing (opt-in)
+
+Do **not** set `HERMES_REQUIRE_SIGNING=true` on the first `docker compose up`. The process generates `audit_ed25519.key` on `backend_data` only when the flag is off. Pin `pubkey_fingerprint` from `GET /api/governance/audit/key` (or `python -m backend.audit_signing`) off-host, then set the flag and recreate the backend.
+
+If you enable it on an empty volume, startup prints `FATAL: audit signing key missing…` and exits 1. `restart: unless-stopped` crash-loops until you set the flag back to `false` or restore the key file. Zip `export.zip` still works when the process is up; `export.signed.json` returns 503 if the key is gone. See [signed audit log](security/signed-audit-log.md#fail-closed).
 
 ## Troubleshooting (from this install)
 
@@ -350,6 +357,7 @@ Verified here: `ok checked=3` then `--pin` on the 64-char head.
 | volume tarballs missing after `docker run -v /tmp/backup:/backup` | `DOCKER_HOST` is a **remote** engine; that bind-mount is the engine host | stream `tar czf -` to stdout, as in Backup |
 | UI chat never creates a PENDING row | no working LLM | configure OpenRouter/Ollama, or use the `gate_tool` API path above |
 | Code Engineer returns `DISABLED` | `CODE_AGENTS_ENABLED` defaults to false | set `true` in `.env` and `--force-recreate --no-deps backend` (see [Enabling code agents](#enabling-code-agents-explicit)) |
+| backend crash-loops `FATAL: audit signing key missing` | `HERMES_REQUIRE_SIGNING=true` before the key exists | set `false`, let one boot create the key, pin the fingerprint, then set `true` |
 | `.env` change has no effect | env_file is read at **container start** | `--force-recreate --no-deps backend` |
 
 Containers run as `10001` (backend) and `10002` (sandbox). Frontend compose user is `101:101` (nginx). Postgres alpine uses uid `70`. Qdrant in this stack writes its volume as root.

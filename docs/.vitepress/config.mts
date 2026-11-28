@@ -3,7 +3,7 @@ import { defineConfig, type HeadConfig } from 'vitepress'
 const SITE = 'https://pauloberezini.github.io/hermes-synapse'
 const TITLE = 'Hermes Synapse'
 const DESCRIPTION =
-  'Runtime governance and a human approval layer for AI agents. Self-hosted DAG orchestrator with payload-bound approvals, an append-only decision log, and offline verification.'
+  'Hermes Synapse holds risky AI agent tool calls until a person approves that exact call, and writes every step to a hash-chained log you can verify offline. Self-hosted, MIT.'
 const OG_IMAGE = `${SITE}/og-image.png`
 const KEYWORDS =
   'Hermes Synapse, AI agent governance, human-in-the-loop, approval gate, runtime governance, multi-agent orchestrator, DAG agents, MCP, decision log, payload hash, bundle hash, self-hosted AI, Paperclip governance, SupplyAlpha'
@@ -87,7 +87,7 @@ export default defineConfig({
     const canonical = canonicalFor(pageData.relativePath)
     const pageTitle = pageData.title
       ? `${pageData.title} | ${TITLE}`
-      : `${TITLE} | Runtime governance for AI agents`
+      : `${TITLE} | Runtime governance and human approvals for AI agents`
     const pageDesc = pageData.description || DESCRIPTION
     const extra: HeadConfig[] = [
       ['link', { rel: 'canonical', href: canonical }],
@@ -108,9 +108,11 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Quick start', link: '/guide/getting-started' },
+      { text: 'Approvals', link: '/guide/approvals' },
+      { text: 'Comparison', link: '/guide/comparison' },
+      { text: 'Regulated fintech', link: '/use-cases/regulated-fintech' },
       { text: 'Security', link: '/guide/security' },
       { text: 'Integrations', link: '/guide/integrations' },
-      { text: 'Approvals', link: '/guide/approvals' },
       { text: 'GitHub', link: 'https://github.com/pauloberezini/hermes-synapse' },
     ],
     sidebar: [
@@ -120,13 +122,22 @@ export default defineConfig({
           { text: 'Quick start', link: '/guide/getting-started' },
           { text: 'Pilot runbook', link: '/pilot-runbook' },
           { text: 'Approvals walkthrough', link: '/guide/approvals' },
+          { text: 'Comparison', link: '/guide/comparison' },
+          { text: '7-minute demo', link: '/demo/DEMO' },
           { text: 'Video demos', link: '/videos/' },
+        ],
+      },
+      {
+        text: 'Use cases',
+        items: [
+          { text: 'Regulated fintech', link: '/use-cases/regulated-fintech' },
         ],
       },
       {
         text: 'Product',
         items: [
           { text: 'Security model', link: '/guide/security' },
+          { text: 'Signed audit log', link: '/security/signed-audit-log' },
           { text: 'Integrations', link: '/guide/integrations' },
           { text: 'Budgeting and governance', link: '/guide/paperclip-governance' },
           { text: 'Task engine and Kanban', link: '/guide/task-engine' },

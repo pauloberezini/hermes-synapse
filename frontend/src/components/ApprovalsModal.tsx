@@ -209,7 +209,7 @@ export function ApprovalsModal({ isOpen, onClose, onResolved }: ApprovalsModalPr
                 GOVERNANCE APPROVALS
               </h2>
               <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                Human-in-the-loop audit & evidence verification
+                Approve or reject gated tool calls
               </span>
             </div>
             {/* Filter Tabs: Pending | All */}

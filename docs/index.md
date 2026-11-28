@@ -1,61 +1,50 @@
 ---
 layout: home
-title: Runtime governance for AI agents
+title: Runtime governance and human approvals for AI agents
 titleTemplate: :title | Hermes Synapse
-description: Self-hosted runtime governance and a human approval layer for AI agents. Payload-bound approvals, an append-only decision log, and offline verification. MIT.
+description: Hermes Synapse holds risky AI agent tool calls until a person approves that exact call, and writes every step to a hash-chained log you can verify offline. Self-hosted, MIT.
 head:
   - - meta
     - name: keywords
-      content: Hermes Synapse, AI agent governance, human-in-the-loop, approval gate, runtime governance, multi-agent orchestrator, MCP, decision log, SupplyAlpha
+      content: Hermes Synapse, AI agent governance, human-in-the-loop, approval gate, runtime governance, MCP, decision log, audit log, SecOps, SRE, AI platform
 hero:
   name: HERMES SYNAPSE
-  text: Runtime governance for AI agents
-  tagline: Approve the exact payload. Consume it once. Verify the chain offline. Self-hosted DAG orchestrator with a human approval layer, MIT licensed.
+  text: Runtime governance and human approvals for AI agents.
+  tagline: Your agent works in the demo. Security will not sign off on production, because nobody can show who approved what it did. Hermes holds risky tool calls until a person approves that exact call, and logs every step in a chain you can check offline.
   image:
     src: /og-image.png
     alt: Hermes Synapse Communication Link showing a Sys Ops command waiting for human approval
   actions:
     - theme: brand
-      text: Quick start
-      link: /guide/getting-started
+      text: Run the approvals demo
+      link: /guide/approvals
     - theme: alt
-      text: Security model
-      link: /guide/security
-    - theme: alt
-      text: Star on GitHub
-      link: https://github.com/pauloberezini/hermes-synapse
+      text: Talk about a pilot
+      link: https://www.linkedin.com/in/pauloberezini/
 
 features:
-  - icon: 🛡️
-    title: Payload-bound approvals
-    details: Risky tools stop at PENDING until a human reviews CLAIM, SOURCE, args, and bundle_hash. Approve does not run the tool. The next identical call is CONSUMED once.
-  - icon: 🔗
-    title: Append-only decision log
-    details: REQUESTED, APPROVED, REJECTED, and CONSUMED events form a hash chain. Export a zip and check it offline with a stdlib Python script and --pin.
-  - icon: 🧠
-    title: DAG orchestration
-    details: Visual canvas of orchestrators and specialists. Dynamic LLM planning, cycle-safe graphs, and permission intersection so children cannot gain tools the parent does not have.
-  - icon: 🔌
-    title: MCP, plugins, OpenAI-compatible LLMs
-    details: Talk to any OpenAI-compatible API (OpenRouter, Ollama, vLLM). Connect MCP servers. Drop a backend plugin without the core importing it by name.
-  - icon: 💸
-    title: BudgetGuard
-    details: Per-session and global USD caps before the next LLM call. Paperclip-inspired spend control for runaway agent loops.
-  - icon: 🏢
-    title: Office, Kanban, mesh
-    details: 2.5D pixel office, atomic task checkout, heartbeat pulses, team presets, and a P2P agent mesh for capability matching.
+  - title: An approval covers one call.
+    details: Approving only records your decision. The agent then sends the same call again and it runs once. Change an argument and you get a new request.
+  - title: Security can check the log without us.
+    details: Requests, approvals, rejections and uses are chained with SHA-256. Export the log and run one Python script from the standard library. It needs no Hermes install and no network.
+  - title: Agents only get narrower.
+    details: A child agent gets the tools in both its own list and its parent's. BudgetGuard stops LLM calls when a session or global spend cap is reached.
 ---
 
-## Why Hermes Synapse
+## Who it is for
 
-Most multi-agent stacks are either hardwired workflows or unbounded chat loops. Hermes sits in the middle, then adds the control plane those stacks leave as a TODO.
+SecOps, SRE and AI platform teams at companies of roughly 50 to 500 people. You have an agent that is almost useful. Security or compliance wants to know who can make it act, who approved what, and whether the record can be trusted. Hermes is the layer that answers those three questions.
+
+## What is in the box
 
 - A visual DAG of orchestrators and specialists. No cycles. Children inherit only the intersection of their skills and the parent's.
-- Dynamic LLM planning, not a hardcoded pipeline.
-- A real gate on risky tools: the operator reviews the claim and the source, approves a payload hash, then the agent must send the **same** call again before anything runs. A replay is a new `PENDING` request, not a free pass.
+- Dynamic LLM planning instead of a hardcoded pipeline.
+- A gate on risky tools. The operator reads the claim and the source, approves a payload hash, and then the agent has to send the same call again before anything runs. A replay is a new `PENDING` request.
 - An append-only, hash-chained decision log you can export and check with `scripts/verify_decision_log.py`. No Hermes install. No network.
 
 Self-hosted. MIT. Docker Compose. Built by [Pavel Bereznichenko](https://github.com/pauloberezini) at [SupplyAlpha.ai](https://supplyalpha.ai).
+
+Where it fits next to Microsoft Agent Governance Toolkit, LangGraph human-in-the-loop and a Slack button: [comparison](/guide/comparison). Under financial regulation, such as the Israel Securities Authority draft directive on AI: [regulated fintech](/use-cases/regulated-fintech).
 
 <div class="cta-row">
   <a class="primary" href="https://github.com/pauloberezini/hermes-synapse">Get the code on GitHub</a>
@@ -206,7 +195,7 @@ Documented in full on [Integrations](/guide/integrations). What the tree actuall
 
 Approvals are bound to **session + action + payload**. `bundle_hash` is SHA-256 over a canonical view of the redacted evidence (args, plan, upstream hashes, flags). `description` and `links` are not in that hash. Approve does not execute. Consume is one-shot. The decision log is append-only and tamper-evident when you pin the head hash. Secrets that match known formats are redacted in evidence.
 
-The **Code Engineer** (and Data Analyst) `execute_code` path is **off by default** (`CODE_AGENTS_ENABLED=false`). When enabled it goes through `gate_tool` like other high-risk tools: one-shot, payload-bound approval, decision-log entry. Unrecognised values fail closed.
+The **Code Engineer** (and Data Analyst) `execute_code` path is **off by default** (`CODE_AGENTS_ENABLED=false`). When enabled it goes through `gate_tool` like other high-risk tools: one-shot, payload-bound approval, decision-log entry. Unrecognised values fail closed. Approvals cover agents running in Hermes, including their calls to external MCP tools. There is no gateway in front of Claude Code, Cursor or other MCP clients.
 
 Full write-up: [Security model](/guide/security).
 
