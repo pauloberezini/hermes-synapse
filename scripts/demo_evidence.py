@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Assemble docs/demo/evidence/ from a finished `make demo` run.
+"""Assemble or verify docs/demo/evidence/.
 
 No backend/frontend edits. Uses the demo export zip as-is, plus a byte copy
 of scripts/verify_decision_log.py on a clean copy and a tampered copy.
 
-`--repack` rewrites only MANIFEST.json and hermes-evidence-sample.zip from
-files already in the evidence folder. It does not re-export the decision
-logs or rewrite README.md / SUMMARY.md / SUMMARY.pdf.
+Default (`make evidence`): if a committed pack is already in the folder,
+verify it and exit non-zero on drift. Do not rewrite.
 
-`assemble` keeps those PMM files and the decision-log zips when they
-already exist, so `make evidence` cannot overwrite them.
+`--force-rebuild` / `make evidence-rebuild`: assemble from a demo export.
+`--repack` / `make evidence-repack`: rewrite only MANIFEST.json and the
+sample zip from files already on disk.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -435,6 +436,106 @@ def _zip_sample(out_dir: Path, dest: Path) -> None:
             archive.write(path, arcname=path.relative_to(out_dir).as_posix())
 
 
+def committed_pack_present(out_dir: Path) -> bool:
+    return all(
+        (out_dir / name).is_file()
+        for name in (SAMPLE_ZIP, "MANIFEST.json", DECISION_ZIP, TAMPER_ZIP, "README.md", "SUMMARY.md")
+    )
+
+
+def verify_committed_pack(out_dir: Path) -> None:
+    """Check the committed pack. Raise SystemExit with a diff on drift."""
+    problems: list[str] = []
+    sample = out_dir / SAMPLE_ZIP
+    manifest_path = out_dir / "MANIFEST.json"
+    if not sample.is_file():
+        problems.append(f"missing {SAMPLE_ZIP}")
+    if not manifest_path.is_file():
+        problems.append("missing MANIFEST.json")
+    if problems:
+        raise SystemExit("[evidence] drift:\n" + "\n".join(f"  - {p}" for p in problems))
+
+    listed = json.loads(manifest_path.read_text(encoding="utf-8")).get("files") or {}
+    on_disk = {
+        path.relative_to(out_dir).as_posix()
+        for path in _pack_paths(out_dir)
+        if path.name != "MANIFEST.json"
+    }
+    for rel, meta in listed.items():
+        path = out_dir / rel
+        if not path.is_file():
+            problems.append(f"MANIFEST lists {rel} but the file is missing")
+            continue
+        digest = _sha256(path)
+        size = path.stat().st_size
+        if digest != meta.get("sha256"):
+            problems.append(f"{rel} sha256 disk={digest} manifest={meta.get('sha256')}")
+        if size != meta.get("size"):
+            problems.append(f"{rel} size disk={size} manifest={meta.get('size')}")
+    for rel in sorted(on_disk - set(listed)):
+        problems.append(f"on disk but not in MANIFEST: {rel}")
+    for rel in sorted(set(listed) - on_disk):
+        problems.append(f"in MANIFEST but not on disk: {rel}")
+
+    pmm = ("README.md", "SUMMARY.md", "SUMMARY.pdf")
+    logs = (DECISION_ZIP, TAMPER_ZIP)
+    for name in (*pmm, *logs):
+        if not (out_dir / name).is_file():
+            problems.append(f"missing {name}")
+
+    with zipfile.ZipFile(sample) as archive:
+        names = set(archive.namelist())
+        if "SPEC.md" in names:
+            problems.append("zip contains SPEC.md")
+        if any(name.startswith("src/") for name in names):
+            problems.append("zip contains src/")
+        if "MANIFEST.json" not in names:
+            problems.append("zip missing MANIFEST.json")
+        elif archive.read("MANIFEST.json") != manifest_path.read_bytes():
+            problems.append("zip MANIFEST.json differs from disk")
+        for rel in listed:
+            if rel not in names:
+                problems.append(f"zip missing {rel}")
+                continue
+            if not (out_dir / rel).is_file():
+                continue
+            if archive.read(rel) != (out_dir / rel).read_bytes():
+                problems.append(f"zip differs from disk: {rel}")
+        for rel in sorted(names - set(listed) - {"MANIFEST.json"}):
+            problems.append(f"zip extra member {rel}")
+        for name in (*pmm, *logs):
+            if name in names and (out_dir / name).is_file():
+                if archive.read(name) != (out_dir / name).read_bytes():
+                    problems.append(f"zip {name} differs from disk")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        extracted = Path(tmp)
+        with zipfile.ZipFile(sample) as archive:
+            archive.extractall(extracted)
+        verifier = extracted / "verifier" / "verify_decision_log.py"
+        pin = (extracted / "pinned-head-hash.txt").read_text(encoding="utf-8").strip()
+        clean = extracted / DECISION_ZIP
+        tampered = extracted / TAMPER_ZIP
+        ok_code, ok_text = _verify(verifier, clean)
+        pin_code, pin_text = _verify(verifier, clean, pin=pin)
+        bad_code, _bad_text = _verify(verifier, clean, pin="a" * 64)
+        fail_code, fail_text = _verify(verifier, tampered)
+        expected_ok = f"ok checked=6 head={pin}\n"
+        if (ok_code, pin_code, bad_code, fail_code) != (0, 0, 1, 1):
+            problems.append(
+                f"verifier exits {ok_code}/{pin_code}/{bad_code}/{fail_code}, expected 0/0/1/1"
+            )
+        if ok_text != expected_ok:
+            problems.append(f"clean check output {ok_text.strip()!r}")
+        if pin_text != expected_ok:
+            problems.append(f"pinned check output {pin_text.strip()!r}")
+        if "FAIL seq=1 entry_hash mismatch" not in fail_text:
+            problems.append(f"tampered output {fail_text.strip()!r}")
+
+    if problems:
+        raise SystemExit("[evidence] drift:\n" + "\n".join(f"  - {p}" for p in problems))
+
+
 def _clear(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for item in out_dir.iterdir():
@@ -524,8 +625,16 @@ def main(argv: list[str] | None = None) -> int:
         sample = repack(OUT_DEFAULT)
         print(f"[evidence] repack {sample} bytes={sample.stat().st_size}")
         return 0
+    if args in (["--force-rebuild"], ["--rebuild"]):
+        sample = assemble(export_dir=demo_export_dir(), out_dir=OUT_DEFAULT)
+        print(f"[evidence] rebuilt {sample} bytes={sample.stat().st_size}")
+        return 0
     if args:
-        raise SystemExit("usage: demo_evidence.py [--repack]")
+        raise SystemExit("usage: demo_evidence.py [--repack | --force-rebuild]")
+    if committed_pack_present(OUT_DEFAULT):
+        verify_committed_pack(OUT_DEFAULT)
+        print(f"[evidence] committed pack ok {OUT_DEFAULT / SAMPLE_ZIP}")
+        return 0
     sample = assemble(export_dir=demo_export_dir(), out_dir=OUT_DEFAULT)
     print(f"[evidence] wrote {sample} bytes={sample.stat().st_size}")
     return 0

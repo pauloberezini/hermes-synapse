@@ -108,7 +108,9 @@ def test_makefile_has_demo_targets() -> None:
     assert "demo:" in text
     assert "demo-reset:" in text
     assert "evidence:" in text
-    assert ".PHONY: demo demo-reset evidence" in text
+    assert "evidence-rebuild:" in text
+    assert "--force-rebuild" in text
+    assert ".PHONY: demo demo-reset evidence evidence-rebuild evidence-repack" in text
 
 
 def test_demo_offline_verify_goes_through_wrapper() -> None:
@@ -355,6 +357,40 @@ def test_repack_rebuilds_manifest_and_zip_only(tmp_path: Path) -> None:
     assert "SPEC.md" not in names
     assert "src/summary.css" not in names
     assert "hermes-evidence-sample.zip" not in names
+
+
+def test_verify_committed_pack_ok() -> None:
+    _evidence().verify_committed_pack(_ROOT / "docs" / "demo" / "evidence")
+
+
+def test_verify_committed_pack_reports_drift(tmp_path: Path) -> None:
+    dest = tmp_path / "evidence"
+    shutil.copytree(_ROOT / "docs" / "demo" / "evidence", dest)
+    (dest / "README.md").write_bytes((dest / "README.md").read_bytes() + b"\n# drift\n")
+    with pytest.raises(SystemExit, match="drift") as caught:
+        _evidence().verify_committed_pack(dest)
+    assert "README.md" in str(caught.value)
+
+
+def test_evidence_default_does_not_rewrite_committed_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = tmp_path / "evidence"
+    shutil.copytree(_ROOT / "docs" / "demo" / "evidence", dest)
+    before = {
+        path.relative_to(dest).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in dest.rglob("*")
+        if path.is_file()
+    }
+    mod = _evidence()
+    monkeypatch.setattr(mod, "OUT_DEFAULT", dest)
+    assert mod.main([]) == 0
+    after = {
+        path.relative_to(dest).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in dest.rglob("*")
+        if path.is_file()
+    }
+    assert before == after
 
 
 def test_demo_guide_drops_false_security_claims() -> None:
