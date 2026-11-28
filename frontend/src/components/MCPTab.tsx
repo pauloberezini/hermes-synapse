@@ -254,7 +254,7 @@ export function MCPTab() {
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                   <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>OpenAPI Specification URL (openapi.json or swagger.json)</label>
-                  <input className="form-input" value={openapiUrl} onChange={e => setOpenapiUrl(e.target.value)} placeholder="e.g. https://mcp-antonbustrov.waw0.amvera.tech/openapi.json" required />
+                  <input className="form-input" value={openapiUrl} onChange={e => setOpenapiUrl(e.target.value)} placeholder="e.g. https://your-service.example/openapi.json" required />
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
@@ -274,7 +274,7 @@ export function MCPTab() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                       <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Token Endpoint URL</label>
-                      <input className="form-input" value={authTokenUrl} onChange={e => setAuthTokenUrl(e.target.value)} placeholder="e.g. https://mcp-antonbustrov.waw0.amvera.tech/token" />
+                      <input className="form-input" value={authTokenUrl} onChange={e => setAuthTokenUrl(e.target.value)} placeholder="e.g. https://your-service.example/token" />
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>

@@ -42,7 +42,16 @@ def get_qdrant_client() -> Optional[Any]:
         return None
     if _qdrant_client is None:
         logger.info(f"Connecting to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}...")
-        _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
+        api_key = os.getenv("QDRANT_API_KEY") or None
+        # api_key makes qdrant-client default to HTTPS; compose Qdrant is HTTP.
+        https = os.getenv("QDRANT_HTTPS", "").lower() in ("1", "true", "yes")
+        _qdrant_client = QdrantClient(
+            host=QDRANT_HOST,
+            port=QDRANT_PORT,
+            api_key=api_key,
+            https=https,
+            check_compatibility=False,
+        )
     return _qdrant_client
 
 def raw_init_rag():

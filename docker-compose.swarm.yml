@@ -1,3 +1,5 @@
+# EXAMPLE ONLY — not hardened for a pilot (default passwords, published API, no secrets).
+# Self-hosted pilots should use docker-compose.yml. See docs/guide/getting-started.md.
 version: '3.8'
 
 services:

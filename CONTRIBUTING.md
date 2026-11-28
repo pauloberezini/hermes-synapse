@@ -32,16 +32,18 @@ cp .env.example .env
 docker compose -f docker-compose.dev.yml up
 ```
 
-This starts:
-- **Backend** on `http://localhost:8000` with file-watching (uvicorn `--reload`)
-- **Frontend** on `http://localhost:5173` with Vite HMR
-- **Qdrant** on `http://localhost:6333`
+This starts the **dev-only** stack (do not use for a pilot):
+- **Backend** on `http://127.0.0.1:8000` with file-watching (uvicorn `--reload`)
+- **Frontend** on `http://127.0.0.1:5173` with Vite HMR
+- **Qdrant** on `http://127.0.0.1:6333` (no API key)
+
+Pilot / shared host: `docker compose up` (requires `POSTGRES_PASSWORD`, `QDRANT_API_KEY`, `JWT_SECRET`). See `docs/guide/getting-started.md`.
 
 ### 4. Verify Everything Works
 
 ```bash
-curl http://localhost:8000/health     # → {"status": "ok"}
-open http://localhost:5173             # → Hermes Dashboard
+curl http://127.0.0.1:8000/api/status     # → {"status": "online", ...}
+open http://127.0.0.1:5173                # → Hermes Dashboard
 ```
 
 ---
@@ -164,7 +166,7 @@ Before opening a PR, verify:
 Hermes enforces these principles to stay community-friendly:
 
 1. **No vendor lock-in** — any OpenAI-compatible LLM works (Ollama, vLLM, OpenRouter)
-2. **Zero-friction local dev** — `docker compose up` with no cloud accounts required
+2. **Zero-friction local dev** — `docker compose -f docker-compose.dev.yml up` with no cloud accounts required. The default `docker-compose.yml` is the secret-gated pilot stack.
 3. **Modular skills** — add/remove capabilities without touching core orchestration
 
 PRs that violate these principles will be kindly redirected to an OSS-compatible approach.

@@ -103,7 +103,7 @@ Export the decision log as a zip of `decisions.jsonl`, `evidence/N.json`, a plai
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  "http://localhost:8000/api/governance/decisions/export.zip" \
+  "http://127.0.0.1:9119/api/governance/decisions/export.zip" \
   -o decisions.zip
 ```
 

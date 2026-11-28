@@ -11,6 +11,14 @@ All notable changes to **Hermes (Jarvis)** will be documented in this file.
 - Nested orchestrators skip the code/analyst step when `python_sandbox` is not in the effective skill set.
 - Kill switch `CODE_AGENTS_ENABLED` (default true); unrecognised values fail closed.
 
+### 🛡️ Pilot compose hardening
+- OpenAPI-to-MCP proxy (`backend/mcp_openapi_proxy.py`) has no default host; unset `OPENAPI_URL` exits instead of calling a third-party URL.
+- Default `docker-compose.yml` requires `POSTGRES_PASSWORD`, `QDRANT_API_KEY`, and `JWT_SECRET`; refuses known defaults at backend startup when `ENV=production`.
+- Postgres, Qdrant, and the backend API are no longer published. Dashboard binds to `127.0.0.1:9119`.
+- `/var/run/docker.sock` removed; opt-in overlay `docker-compose.docker-sock.yml` with a warning sidecar.
+- Non-root users, `cap_drop: ALL`, `no-new-privileges`, and read-only rootfs where practical. Qdrant API key wired into the backend client.
+- `docker-compose.dev.yml` stays a clearly marked dev-only hot-reload path.
+
 ## 🚀 [v1.5.0] - 2026-11-01
 
 ### 🏛️ Hierarchical Governance & Approval System

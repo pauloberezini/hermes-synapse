@@ -12,9 +12,22 @@ def log(msg):
     sys.stderr.write(f"[OpenAPI-Proxy] {msg}\n")
     sys.stderr.flush()
 
-# Load settings from environment
-OPENAPI_URL = os.getenv("OPENAPI_URL", "https://mcp-antonbustrov.waw0.amvera.tech/openapi.json")
-AUTH_TOKEN_URL = os.getenv("AUTH_TOKEN_URL", "https://mcp-antonbustrov.waw0.amvera.tech/token")
+MISSING_OPENAPI_URL = (
+    "OPENAPI_URL is not set. Set it to your OpenAPI spec URL; "
+    "this proxy has no default host and will not call an external service."
+)
+
+
+def require_openapi_url(url: str | None = None) -> str:
+    value = (url if url is not None else os.getenv("OPENAPI_URL") or "").strip()
+    if not value:
+        raise SystemExit(MISSING_OPENAPI_URL)
+    return value
+
+
+# Load settings from environment. No default host — unset OPENAPI_URL disables the proxy.
+OPENAPI_URL = (os.getenv("OPENAPI_URL") or "").strip()
+AUTH_TOKEN_URL = (os.getenv("AUTH_TOKEN_URL") or "").strip()
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "")
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
 STATIC_BEARER_TOKEN = os.getenv("STATIC_BEARER_TOKEN", "")
@@ -34,6 +47,10 @@ def get_token():
         return token
 
     if not AUTH_USERNAME or not AUTH_PASSWORD:
+        return ""
+
+    if not AUTH_TOKEN_URL:
+        log("AUTH_TOKEN_URL is not set; cannot fetch a token.")
         return ""
 
     log(f"Fetching token from {AUTH_TOKEN_URL}...")
@@ -65,9 +82,10 @@ def get_token():
 
 def load_openapi_spec():
     global openapi_spec
-    log(f"Loading OpenAPI specification from {OPENAPI_URL}...")
+    spec_url = require_openapi_url(OPENAPI_URL)
+    log(f"Loading OpenAPI specification from {spec_url}...")
     try:
-        with urllib.request.urlopen(OPENAPI_URL, timeout=15) as response:
+        with urllib.request.urlopen(spec_url, timeout=15) as response:
             openapi_spec = json.loads(response.read().decode("utf-8"))
         log("OpenAPI specification loaded successfully.")
         parse_tools()

@@ -115,7 +115,7 @@ The checker is **not** inside the zip. It lives at `scripts/verify_decision_log.
 
 ```bash
 curl -f -H "Authorization: Bearer <TOKEN>" \
-  "http://localhost:8000/api/governance/decisions/export.zip" -o decisions.zip
+  "http://127.0.0.1:9119/api/governance/decisions/export.zip" -o decisions.zip
 
 python3 scripts/verify_decision_log.py decisions.zip --pin <head_hash>
 ```
@@ -153,5 +153,9 @@ Do not write "everything is gated." These items are open on `main`:
 | PIIGuard | Known regexes only. |
 
 Demo guidance: Sys Ops `execute_command` and Code Engineer `execute_code` both wait for Approve, then a retry of the identical payload.
+
+## Compose defaults (pilot)
+
+`docker compose up` requires `POSTGRES_PASSWORD`, `QDRANT_API_KEY`, and a 32+ character `JWT_SECRET`. The dashboard binds to `127.0.0.1:9119`. Postgres, Qdrant, and port 8000 are not published. Containers drop capabilities and run as non-root where practical. `/var/run/docker.sock` is not mounted; the opt-in overlay is host-root equivalent. Details: [Getting started — Pilot deployment](./getting-started.md#pilot-deployment).
 
 Operator walkthrough: [Approvals](./approvals.md). Product roadmap: [ROADMAP.md](https://github.com/pauloberezini/hermes-synapse/blob/main/ROADMAP.md).
