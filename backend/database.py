@@ -191,6 +191,10 @@ class PostgresBackend(DatabaseBackend):
             s = s.replace("INSERT OR IGNORE INTO undistillable_logs", "INSERT INTO undistillable_logs")
             if "ON CONFLICT" not in s:
                 s = s.rstrip().rstrip(";") + " ON CONFLICT (decision_log_id) DO NOTHING"
+        elif "INSERT OR IGNORE INTO decision_log_checkpoints" in s:
+            s = s.replace("INSERT OR IGNORE INTO decision_log_checkpoints", "INSERT INTO decision_log_checkpoints")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip().rstrip(";") + " ON CONFLICT (tenant_id, seq) DO NOTHING"
         elif "INSERT OR REPLACE INTO subagents" in s:
             s = s.replace("INSERT OR REPLACE INTO subagents", "INSERT INTO subagents")
             if "ON CONFLICT" not in s:
@@ -294,6 +298,22 @@ def install_approval_decisions(cursor) -> None:
             SELECT RAISE(ABORT, 'approval_decisions is append-only');
         END
     """)
+    install_decision_log_checkpoints(cursor)
+
+
+def install_decision_log_checkpoints(cursor) -> None:
+    """Idempotent checkpoint table. Same SQL on SQLite and Postgres."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS decision_log_checkpoints (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            seq INTEGER NOT NULL,
+            head_hash TEXT NOT NULL,
+            signed_at TEXT NOT NULL,
+            installation_id TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, seq)
+        )
+    """)
 
 
 def install_approval_evidence(cursor) -> None:
@@ -375,6 +395,7 @@ def install_approval_decisions_postgres(cursor) -> None:
         BEFORE DELETE ON approval_decisions
         FOR EACH ROW EXECUTE PROCEDURE approval_decisions_append_only()
     """)
+    install_decision_log_checkpoints(cursor)
 
 
 # ---------------------------------------------------------------------------

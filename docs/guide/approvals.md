@@ -147,3 +147,5 @@ If a row or hash was altered, the script prints `FAIL seq=N reason` to stderr an
 | `/api/governance/decisions/verify` | `GET` | Run in-database chain verification |
 | `/api/governance/decisions/export` | `GET` | Export the audit zip (`decisions.jsonl`, evidence, manifest, `VERIFY.md`) |
 | `/api/governance/decisions/export.zip` | `GET` | Same archive as `/export` |
+| `/api/governance/decisions/export.signed.json` | `GET` | Signed JSON bundle (records + checkpoints + public key). Offline: `python -m hermes_audit_verify`. See [signed audit log](../security/signed-audit-log.md). |
+| `/api/governance/audit/key` | `GET` | Installation public key and fingerprint |

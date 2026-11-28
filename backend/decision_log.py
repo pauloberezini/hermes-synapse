@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import threading
 import zipfile
 from contextvars import ContextVar
@@ -16,6 +17,8 @@ from typing import Any, Iterator
 
 from backend.canonical import canonical_json, sha256_hex
 from backend.identity import Principal
+
+logger = logging.getLogger("hermes.decision_log")
 
 GENESIS = "0" * 64
 
@@ -289,6 +292,107 @@ def export_zip(
     return buf.getvalue(), filename
 
 
+def export_signed_bundle(
+    tenant_id: str = "default",
+    *,
+    since: str | None = None,
+    until: str | None = None,
+) -> tuple[bytes, str]:
+    """Pack records, signed checkpoints, and the installation public key as JSON.
+
+    Always signs the current chain head before packing. The offline checker is
+    ``python -m hermes_audit_verify``.
+    """
+    from backend.audit_signing import ensure_install_key
+
+    since = since or None
+    until = until or None
+    rows = [_public_row(row) for row in _rows(tenant_id, since, until)]
+    if rows:
+        checkpoint_head(tenant_id, int(rows[-1]["seq"]), str(rows[-1]["entry_hash"]), force=True)
+    first_seq = int(rows[0]["seq"]) if rows else 0
+    last_seq = int(rows[-1]["seq"]) if rows else 0
+    key = ensure_install_key()
+    bundle = {
+        "version": 1,
+        "installation_id": key.installation_id,
+        "public_key": key.public_key,
+        "pubkey_fingerprint": key.fingerprint,
+        "tenant_id": tenant_id,
+        "exported_at": datetime.now(UTC).isoformat(),
+        "records": rows,
+        "checkpoints": list_checkpoints(tenant_id, first_seq, last_seq),
+    }
+    body = json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+    filename = f"hermes-audit-{_slug(tenant_id)}.json"
+    return body, filename
+
+
+def checkpoint_interval() -> int:
+    """``HERMES_AUDIT_CHECKPOINT_EVERY`` (default 100). ``<=0`` disables periodic checkpoints."""
+    import os
+
+    raw = os.environ.get("HERMES_AUDIT_CHECKPOINT_EVERY", "100").strip() or "100"
+    try:
+        return int(raw)
+    except ValueError:
+        return 100
+
+
+def checkpoint_head(tenant_id: str, seq: int, head_hash: str, *, force: bool = False) -> None:
+    """Sign and store a checkpoint for ``seq`` if due (or ``force``)."""
+    from backend.audit_signing import sign_checkpoint
+    from backend.database import _execute
+
+    interval = checkpoint_interval()
+    if not force and (interval <= 0 or int(seq) % interval != 0):
+        return
+    rec = sign_checkpoint(int(seq), head_hash)
+    _execute(
+        "INSERT OR IGNORE INTO decision_log_checkpoints "
+        "(tenant_id, seq, head_hash, signed_at, installation_id, signature) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            tenant_id,
+            rec["seq"],
+            rec["head_hash"],
+            rec["timestamp"],
+            rec["installation_id"],
+            rec["signature"],
+        ),
+    )
+
+
+def list_checkpoints(tenant_id: str, first_seq: int = 0, last_seq: int | None = None) -> list[dict[str, Any]]:
+    """Return stored checkpoints in seq order, optionally clipped to a seq span."""
+    from backend.database import _execute
+
+    if last_seq is None:
+        raws = _execute(
+            "SELECT seq, head_hash, signed_at, installation_id, signature "
+            "FROM decision_log_checkpoints WHERE tenant_id = ? AND seq >= ? ORDER BY seq",
+            (tenant_id, first_seq),
+        )
+    else:
+        raws = _execute(
+            "SELECT seq, head_hash, signed_at, installation_id, signature "
+            "FROM decision_log_checkpoints WHERE tenant_id = ? AND seq >= ? AND seq <= ? ORDER BY seq",
+            (tenant_id, first_seq, last_seq),
+        )
+    out: list[dict[str, Any]] = []
+    for seq, head_hash, signed_at, installation_id, signature in raws:
+        out.append(
+            {
+                "seq": int(seq),
+                "head_hash": head_hash,
+                "timestamp": signed_at,
+                "installation_id": installation_id,
+                "signature": signature,
+            }
+        )
+    return out
+
+
 def _public_row(row: dict[str, Any]) -> dict[str, Any]:
     out = {key: row[key] for key in _COLUMNS}
     out["seq"] = int(out["seq"])
@@ -397,4 +501,44 @@ def _insert(conn: Any, backend: Any, row: dict[str, Any], *, immediate: bool) ->
             except Exception:
                 pass
         raise
+    _try_checkpoint(cur, backend, row["tenant_id"], digest)
     return digest
+
+
+def _try_checkpoint(cur: Any, backend: Any, tenant_id: str, digest: str) -> None:
+    """Best-effort periodic checkpoint on the writer connection. Never fails append."""
+    interval = checkpoint_interval()
+    if interval <= 0:
+        return
+    try:
+        select_sql = backend.translate_placeholder(
+            "SELECT seq FROM approval_decisions WHERE tenant_id = ? AND entry_hash = ?"
+        )
+        cur.execute(select_sql, (tenant_id, digest))
+        fetched = cur.fetchone()
+        if not fetched:
+            return
+        seq = int(fetched[0])
+        if seq % interval != 0:
+            return
+        from backend.audit_signing import sign_checkpoint
+
+        rec = sign_checkpoint(seq, digest)
+        insert_sql = backend.translate_placeholder(
+            "INSERT OR IGNORE INTO decision_log_checkpoints "
+            "(tenant_id, seq, head_hash, signed_at, installation_id, signature) "
+            "VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        cur.execute(
+            insert_sql,
+            (
+                tenant_id,
+                rec["seq"],
+                rec["head_hash"],
+                rec["timestamp"],
+                rec["installation_id"],
+                rec["signature"],
+            ),
+        )
+    except Exception:
+        logger.exception("decision log checkpoint failed tenant=%s", tenant_id)
